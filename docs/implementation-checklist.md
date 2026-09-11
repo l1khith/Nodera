@@ -31,18 +31,18 @@
 - [x] Tasks
 
 ## Index
-- [ ] SQLite schema
-- [ ] Incremental index
-- [ ] Rebuild
-- [ ] Tantivy index
-- [ ] Search
-- [ ] Result snippets
+- [x] SQLite schema
+- [x] Incremental index
+- [x] Rebuild
+- [x] Tantivy index
+- [x] Search
+- [x] Result snippets
 
 ## Tasks
-- [ ] Global task view
-- [ ] Toggle from task view
-- [ ] Navigate to source
-- [ ] Date grouping only after syntax decision
+- [x] Global task view
+- [x] Toggle from task view
+- [x] Navigate to source
+- [x] Date grouping only after syntax decision
 
 ## PDF
 - [ ] Converter trait
@@ -56,10 +56,10 @@
 - [ ] 600-page benchmark
 
 ## UX
-- [ ] Three-pane shell
+- [x] Three-pane shell
 - [ ] Resizable panes
-- [ ] Hideable panes
-- [ ] Command palette
+- [x] Hideable panes
+- [x] Command palette
 - [ ] Keyboard shortcuts
 - [ ] Empty states
 - [ ] Error states

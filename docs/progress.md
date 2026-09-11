@@ -1,15 +1,16 @@
 # Progress
 
 ## Current Phase
-Phase 3 — Search and Tasks
+Phase 4 — PDF Import
 
 ## Completed Phases
 - Phase 0 — Foundation: VERIFIED_COMPLETE
 - Phase 1 — Notes MVP: VERIFIED_COMPLETE
 - Phase 2 — Markdown + Knowledge System: VERIFIED_COMPLETE
+- Phase 3 — Search and Tasks: VERIFIED_COMPLETE
 
 ## Current Slice
-Phase 3, Slice 3.1: SQLite derived index schema & tables (`files`, `links`, `tasks`, `tags`, `properties`)
+Phase 4, Slice 4.1: PDF converter trait, native extraction engine, and background conversion job runner
 
 ## Status
 IN_PROGRESS
@@ -36,6 +37,14 @@ IN_PROGRESS
 - Validation: Format PASS (`cargo fmt --all -- --check`), Clippy PASS (`cargo clippy --workspace --all-targets -- -D warnings`)
 - Behavior: Robust `nodera-markdown` crate providing YAML frontmatter parsing, tag indexing (filtering headers and hex colors), Wikilink parsing and rewriting, task parsing and atomic line toggle (`toggle_task_at_line`), semantic HTML rendering via `pulldown-cmark`, and bidirectional link graph (`LinkGraph`). Fully integrated into `AppState` with reading mode renderer, dynamic incoming backlinks list, outgoing link inspector with auto-create behavior for missing targets, tag chips, note statistics, and integration tests (`crates/nodera-desktop/tests/knowledge_layer_test.rs`).
 
+### Phase 3: Search and Tasks
+- Status: VERIFIED_COMPLETE
+- Requirement: FR-016 (Global task view), FR-017 (Task checkbox toggling synced to source Markdown and index), FR-018 (Task filtering by state and query), FR-019 (Full-text search engine), FR-020 (Search query scoring and title boost), FR-021 (Search snippets and match highlights), FR-022 (Command palette `Ctrl+P` note jump & commands), FR-023 (Rebuild index).
+- Build: PASS — `cargo check --workspace`
+- Tests: PASS — `cargo test --workspace` (61 passed, 0 failed)
+- Validation: Format PASS (`cargo fmt --all -- --check`), Clippy PASS (`cargo clippy --workspace --all-targets -- -D warnings`)
+- Behavior: Implemented `nodera-index` crate with SQLite schema (`files`, `links`, `tasks`, `tags`, `properties`, `meta`), WAL mode, and Tantivy FTS engine (`title`, `body`, `headings`, `tags`) with boost and snippet generation. Implemented `VaultIndex` unified coordinator. Connected into `AppState` with live sidebar search results, `TaskView` global task interface with two-way sync, `CommandPalette` (`Ctrl+P`) with fuzzy filtering and note navigation, index rebuild action, and comprehensive integration tests (`crates/nodera-desktop/tests/search_and_tasks_test.rs`).
+
 ## Current Blockers
 None
 
@@ -43,7 +52,7 @@ None
 `cargo fmt --all -- --check` → PASS
 `cargo check --workspace` → PASS
 `cargo clippy --workspace --all-targets -- -D warnings` → PASS
-`cargo test --workspace` → PASS (58 passed, 0 failed)
+`cargo test --workspace` → PASS (61 passed, 0 failed)
 
 ## Next Slice
-Phase 3, Slice 3.1: SQLite derived index schema & tables (`files`, `links`, `tasks`, `tags`, `properties`)
+Phase 4, Slice 4.1: PDF converter trait, native extraction engine, and background conversion job runner

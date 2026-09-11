@@ -10,3 +10,9 @@ nodera-markdown.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 tracing.workspace = true
+rusqlite.workspace = true
+tantivy.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

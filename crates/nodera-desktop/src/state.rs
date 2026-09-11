@@ -74,6 +74,35 @@ impl AppPreferences {
     }
 }
 
+use nodera_index::{IndexedTask, SearchResult, TaskFilter, VaultIndex};
+use std::sync::{Arc, Mutex};
+
+/// Primary workspace view mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActiveView {
+    #[default]
+    Editor,
+    Tasks,
+}
+
+/// Action item displayed inside the Command Palette.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteItem {
+    pub title: String,
+    pub description: String,
+    pub action: PaletteAction,
+}
+
+/// Executable command triggered by Command Palette selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaletteAction {
+    OpenNote(PathBuf),
+    CreateNote,
+    SwitchView(ActiveView),
+    ToggleTheme,
+    RebuildIndex,
+}
+
 /// Runtime application state driving the UI.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -86,6 +115,12 @@ pub struct AppState {
     pub editor_content: String,
     pub is_dirty: bool,
     pub is_reading_mode: bool,
+
+    pub active_view: ActiveView,
+    pub vault_index: Option<Arc<Mutex<VaultIndex>>>,
+    pub search_query: String,
+    pub search_results: Vec<SearchResult>,
+    pub task_filter: TaskFilter,
 
     pub theme: Theme,
     pub sidebar_open: bool,
@@ -101,6 +136,8 @@ pub struct AppState {
     pub note_to_delete: Option<PathBuf>,
     pub show_rename_dialog: bool,
     pub note_to_rename: Option<PathBuf>,
+    pub show_command_palette: bool,
+    pub command_palette_query: String,
 }
 
 impl Default for AppState {
@@ -119,6 +156,12 @@ impl Default for AppState {
             is_dirty: false,
             is_reading_mode: false,
 
+            active_view: ActiveView::Editor,
+            vault_index: None,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            task_filter: TaskFilter::default(),
+
             theme: initial_theme,
             sidebar_open: true,
             context_panel_open: false,
@@ -132,6 +175,8 @@ impl Default for AppState {
             note_to_delete: None,
             show_rename_dialog: false,
             note_to_rename: None,
+            show_command_palette: false,
+            command_palette_query: String::new(),
         }
     }
 }
@@ -161,10 +206,23 @@ impl AppState {
             }
         }
 
+        // Initialize derived VaultIndex (SQLite + Tantivy)
+        let vault_index = match VaultIndex::open(p) {
+            Ok(mut idx) => {
+                let _ = idx.rebuild(&service);
+                Some(Arc::new(Mutex::new(idx)))
+            }
+            Err(e) => {
+                error!("Failed to initialize vault index: {e}");
+                None
+            }
+        };
+
         self.vault_path = Some(p.to_path_buf());
         self.vault_name = name;
         self.entries = entries;
         self.vault_service = Some(service);
+        self.vault_index = vault_index;
         self.link_graph = link_graph;
         self.active_note = None;
         self.editor_content.clear();
@@ -185,10 +243,19 @@ impl AppState {
         let service = VaultService::new(vault);
         let entries = service.list_entries()?;
 
+        let vault_index = match VaultIndex::open(p) {
+            Ok(idx) => Some(Arc::new(Mutex::new(idx))),
+            Err(e) => {
+                error!("Failed to initialize vault index on create: {e}");
+                None
+            }
+        };
+
         self.vault_path = Some(p.to_path_buf());
         self.vault_name = vault_name;
         self.entries = entries;
         self.vault_service = Some(service);
+        self.vault_index = vault_index;
         self.link_graph = LinkGraph::new();
         self.active_note = None;
         self.editor_content.clear();
@@ -226,12 +293,203 @@ impl AppState {
             let updated = service.write_note(&note.relative_path, &self.editor_content)?;
             if let Ok(parsed) = parse_document(&self.editor_content) {
                 self.link_graph
-                    .update_note_links(note.relative_path.clone(), parsed.wikilinks);
+                    .update_note_links(note.relative_path.clone(), parsed.wikilinks.clone());
+
+                if let Some(index_arc) = &self.vault_index {
+                    if let Ok(mut idx) = index_arc.lock() {
+                        let _ = idx.index_note(&updated, &parsed);
+                    }
+                }
             }
             self.active_note = Some(updated);
             self.is_dirty = false;
             self.status_message = "Saved".to_string();
             self.refresh_entries()?;
+        }
+        Ok(())
+    }
+
+    /// Deletes a note from disk and closes it if active.
+    pub fn delete_note(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
+        let rel = rel_path.as_ref();
+        if let Some(service) = &self.vault_service {
+            service.delete_note(rel)?;
+            self.link_graph.remove_note(rel);
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    let _ = idx.remove_note(rel);
+                }
+            }
+            if let Some(active) = &self.active_note {
+                if active.relative_path == rel {
+                    self.active_note = None;
+                    self.editor_content.clear();
+                    self.is_dirty = false;
+                }
+            }
+            self.status_message = format!("Deleted '{}'", rel.display());
+            self.refresh_entries()?;
+        }
+        Ok(())
+    }
+
+    /// Executes full-text search across vault using Tantivy index.
+    pub fn execute_search(&mut self, query: &str) {
+        self.search_query = query.to_string();
+        if query.trim().is_empty() {
+            self.search_results.clear();
+            return;
+        }
+
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(idx) = index_arc.lock() {
+                self.search_results = idx.search(query, 25).unwrap_or_default();
+            }
+        }
+    }
+
+    /// Queries tasks across the vault according to current filter criteria.
+    pub fn get_vault_tasks(&self) -> Vec<IndexedTask> {
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(idx) = index_arc.lock() {
+                return idx.query_tasks(&self.task_filter).unwrap_or_default();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Toggles a task checkbox in any note file and syncs both source Markdown and SQLite/Tantivy index.
+    pub fn toggle_task_and_sync(&mut self, note_rel_path: &Path, line_number: usize) -> Result<()> {
+        if let Some(service) = &self.vault_service {
+            let note = service.read_note(note_rel_path)?;
+            let toggled_content = nodera_markdown::toggle_task_at_line(&note.content, line_number)?;
+            let updated_note = service.write_note(note_rel_path, &toggled_content)?;
+
+            // If this note is currently open in the active editor, sync editor content too!
+            if let Some(active) = &self.active_note {
+                if active.relative_path == note_rel_path {
+                    self.editor_content = toggled_content.clone();
+                    self.active_note = Some(updated_note.clone());
+                    self.is_dirty = false;
+                }
+            }
+
+            // Update derived index
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(&toggled_content) {
+                        let _ = idx.index_note(&updated_note, &parsed);
+                    }
+                }
+            }
+
+            self.refresh_entries()?;
+        }
+        Ok(())
+    }
+
+    /// Rebuilds the entire vault derived index from source Markdown files.
+    pub fn rebuild_vault_index(&mut self) -> Result<usize> {
+        if let (Some(service), Some(index_arc)) = (&self.vault_service, &self.vault_index) {
+            if let Ok(mut idx) = index_arc.lock() {
+                let count = idx.rebuild(service)?;
+                self.status_message = format!("Index rebuilt ({count} notes)");
+                return Ok(count);
+            }
+        }
+        Ok(0)
+    }
+
+    /// Returns matching items for the Command Palette based on current query.
+    pub fn get_command_palette_items(&self) -> Vec<CommandPaletteItem> {
+        let q = self.command_palette_query.trim().to_lowercase();
+        let mut items = Vec::new();
+
+        // 1. Note jumping items
+        for entry in &self.entries {
+            if let VaultEntry::Note(summary) = entry {
+                if q.is_empty()
+                    || summary.title.to_lowercase().contains(&q)
+                    || summary
+                        .relative_path
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .contains(&q)
+                {
+                    items.push(CommandPaletteItem {
+                        title: summary.title.clone(),
+                        description: format!("Note · {}", summary.relative_path.display()),
+                        action: PaletteAction::OpenNote(summary.relative_path.clone()),
+                    });
+                }
+            }
+        }
+
+        // 2. System Commands
+        let system_commands = [
+            (
+                "Switch to Notes Editor",
+                "View and edit markdown notes",
+                PaletteAction::SwitchView(ActiveView::Editor),
+            ),
+            (
+                "Switch to Tasks View",
+                "Global task list across all vault notes",
+                PaletteAction::SwitchView(ActiveView::Tasks),
+            ),
+            (
+                "Create New Note",
+                "Create a new note in default folder",
+                PaletteAction::CreateNote,
+            ),
+            (
+                "Toggle Theme",
+                "Switch between dark and light themes",
+                PaletteAction::ToggleTheme,
+            ),
+            (
+                "Rebuild Search Index",
+                "Clean and recreate SQLite metadata and Tantivy FTS",
+                PaletteAction::RebuildIndex,
+            ),
+        ];
+
+        for (title, desc, action) in system_commands {
+            if q.is_empty() || title.to_lowercase().contains(&q) || desc.to_lowercase().contains(&q)
+            {
+                items.push(CommandPaletteItem {
+                    title: title.to_string(),
+                    description: desc.to_string(),
+                    action,
+                });
+            }
+        }
+
+        items
+    }
+
+    /// Executes a selected command palette action.
+    pub fn execute_palette_action(&mut self, action: PaletteAction) -> Result<()> {
+        self.show_command_palette = false;
+        self.command_palette_query.clear();
+
+        match action {
+            PaletteAction::OpenNote(path) => {
+                self.active_view = ActiveView::Editor;
+                self.select_note(&path)?;
+            }
+            PaletteAction::CreateNote => {
+                self.show_new_note_dialog = true;
+            }
+            PaletteAction::SwitchView(view) => {
+                self.active_view = view;
+            }
+            PaletteAction::ToggleTheme => {
+                self.toggle_theme();
+            }
+            PaletteAction::RebuildIndex => {
+                self.rebuild_vault_index()?;
+            }
         }
         Ok(())
     }
@@ -334,31 +592,20 @@ impl AppState {
         let rel = rel_path.as_ref();
         if let Some(service) = &self.vault_service {
             let renamed = service.rename_note(rel, new_title)?;
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    let _ = idx.remove_note(rel);
+                    if let Ok(parsed) = parse_document(&renamed.content) {
+                        let _ = idx.index_note(&renamed, &parsed);
+                    }
+                }
+            }
             if let Some(active) = &self.active_note {
                 if active.relative_path == rel {
                     self.active_note = Some(renamed);
                 }
             }
             self.status_message = format!("Renamed to '{new_title}'");
-            self.refresh_entries()?;
-        }
-        Ok(())
-    }
-
-    /// Deletes a note from disk and closes it if active.
-    pub fn delete_note(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
-        let rel = rel_path.as_ref();
-        if let Some(service) = &self.vault_service {
-            service.delete_note(rel)?;
-            self.link_graph.remove_note(rel);
-            if let Some(active) = &self.active_note {
-                if active.relative_path == rel {
-                    self.active_note = None;
-                    self.editor_content.clear();
-                    self.is_dirty = false;
-                }
-            }
-            self.status_message = format!("Deleted '{}'", rel.display());
             self.refresh_entries()?;
         }
         Ok(())

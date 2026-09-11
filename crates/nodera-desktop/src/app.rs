@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 use tracing::info;
 
-use crate::components::{Dialogs, Editor, Sidebar, StatusBar};
-use crate::state::AppState;
+use crate::components::{CommandPalette, Dialogs, Editor, Sidebar, StatusBar, TaskView};
+use crate::state::{ActiveView, AppState};
 use crate::theme::BASE_CSS;
 
 #[component]
@@ -39,7 +39,25 @@ pub fn App() -> Element {
     rsx! {
         style { "{BASE_CSS}" }
 
-        div { class: "app-container {theme_class}",
+        div {
+            class: "app-container {theme_class}",
+            tabindex: "0",
+            onkeydown: move |evt: KeyboardEvent| {
+                if evt.modifiers().ctrl() || evt.modifiers().meta() {
+                    match evt.key() {
+                        Key::Character(ref c) if c == "p" || c == "P" => {
+                            let mut s = state.write();
+                            s.show_command_palette = !s.show_command_palette;
+                        }
+                        Key::Character(ref c) if c == "n" || c == "N" => {
+                            let mut s = state.write();
+                            s.show_new_note_dialog = true;
+                        }
+                        _ => {}
+                    }
+                }
+            },
+
             // Top App Bar
             header { class: "top-bar",
                 div { class: "top-bar-left",
@@ -65,12 +83,25 @@ pub fn App() -> Element {
                 div { class: "top-bar-center",
                     span {
                         style: "font-weight: 500; font-size: 13px; color: var(--text-secondary);",
-                        "{active_note_title}"
+                        if app_state.active_view == ActiveView::Tasks {
+                            "Global Tasks"
+                        } else {
+                            "{active_note_title}"
+                        }
                     }
                 }
 
                 div { class: "top-bar-right",
                     if has_vault {
+                        button {
+                            class: "btn-action",
+                            title: "Search & Command Palette (Ctrl+P)",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_command_palette = true;
+                            },
+                            "🔍 Palette"
+                        }
                         button {
                             class: "btn-action",
                             title: "New Note (Ctrl+N)",
@@ -79,6 +110,15 @@ pub fn App() -> Element {
                                 s.show_new_note_dialog = true;
                             },
                             "➕ Note"
+                        }
+                        button {
+                            class: "btn-icon",
+                            title: "Rebuild Search Index",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                let _ = s.rebuild_vault_index();
+                            },
+                            "🔄"
                         }
                     }
                     button {
@@ -102,15 +142,18 @@ pub fn App() -> Element {
                 }
             }
 
-            // Main Workspace (Sidebar + Editor + Context)
+            // Main Workspace (Sidebar + Center View + Context)
             div { class: "main-workspace",
                 // Left pane: Sidebar / File Explorer
                 if sidebar_open {
                     Sidebar { state }
                 }
 
-                // Center pane: Markdown Editor / Reading mode
-                Editor { state }
+                // Center pane: Markdown Editor or Global Tasks View
+                match app_state.active_view {
+                    ActiveView::Editor => rsx! { Editor { state } },
+                    ActiveView::Tasks => rsx! { TaskView { state } },
+                }
 
                 // Right pane: Contextual Panel (Backlinks / Properties)
                 if context_open {
@@ -220,6 +263,7 @@ pub fn App() -> Element {
 
             // Modals
             Dialogs { state }
+            CommandPalette { state }
         }
     }
 }

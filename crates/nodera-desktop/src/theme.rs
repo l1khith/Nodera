@@ -337,4 +337,5 @@ input, textarea {
 .link-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; color: var(--text-primary); background-color: var(--bg-surface); border: 1px solid var(--border-subtle); transition: background-color 0.1s, border-color 0.1s; text-align: left; width: 100%; }
 .link-item:hover { background-color: var(--bg-hover); border-color: var(--accent); }
 .link-item-unresolved { color: var(--text-muted); font-style: italic; }
+.command-palette-row:hover { background-color: var(--bg-hover); }
 "#;

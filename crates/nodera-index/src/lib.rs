@@ -1,15 +1,11 @@
 //! Indexing and search derivation crate for Nodera.
 
-pub fn placeholder() -> &'static str {
-    "nodera-index"
-}
+pub mod indexer;
+pub mod models;
+pub mod sqlite;
+pub mod tantivy_index;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_placeholder() {
-        assert_eq!(placeholder(), "nodera-index");
-    }
-}
+pub use indexer::VaultIndex;
+pub use models::{IndexedTask, SearchResult, TagCount, TaskFilter};
+pub use sqlite::SqliteIndex;
+pub use tantivy_index::TantivyIndex;

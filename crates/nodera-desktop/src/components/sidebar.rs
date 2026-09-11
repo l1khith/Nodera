@@ -71,23 +71,60 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
             // Navigation items: Notes, Tasks, Library
             div {
                 style: "padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 2px;",
-                div {
-                    style: "padding: 4px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 500; display: flex; align-items: center; gap: 8px;",
+                button {
+                    style: if app_state.active_view == crate::state::ActiveView::Editor { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
+                    onclick: move |_| {
+                        let mut s = state.write();
+                        s.active_view = crate::state::ActiveView::Editor;
+                    },
                     "📝 Notes"
                 }
-                div {
-                    style: "padding: 4px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; cursor: not-allowed; opacity: 0.7;",
-                    title: "Coming in Phase 3",
+                button {
+                    style: if app_state.active_view == crate::state::ActiveView::Tasks { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
+                    onclick: move |_| {
+                        let mut s = state.write();
+                        s.active_view = crate::state::ActiveView::Tasks;
+                    },
                     "✅ Tasks"
                 }
                 div {
-                    style: "padding: 4px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; cursor: not-allowed; opacity: 0.7;",
+                    style: "padding: 5px 8px; border-radius: 4px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; opacity: 0.6; cursor: not-allowed;",
                     title: "Coming in Phase 5",
                     "📚 Library"
                 }
             }
 
-            // File tree section
+            // Quick Search Input
+            if has_vault {
+                div {
+                    style: "padding: 8px 12px; border-bottom: 1px solid var(--border-subtle);",
+                    div {
+                        style: "display: flex; align-items: center; background-color: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; gap: 6px;",
+                        span { style: "font-size: 11px; opacity: 0.7;", "🔍" }
+                        input {
+                            style: "flex: 1; border: none; background: transparent; font-size: 12px; outline: none; color: var(--text-primary);",
+                            placeholder: "Search vault...",
+                            value: "{app_state.search_query}",
+                            oninput: move |evt| {
+                                let mut s = state.write();
+                                s.execute_search(&evt.value());
+                            }
+                        }
+                        if !app_state.search_query.is_empty() {
+                            button {
+                                style: "font-size: 10px; color: var(--text-muted); cursor: pointer;",
+                                onclick: move |_| {
+                                    let mut s = state.write();
+                                    s.execute_search("");
+                                },
+                                "✕"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // File tree / Search Results section
             div {
                 style: "flex: 1; overflow-y: auto; padding: 8px;",
                 if !has_vault {
@@ -104,6 +141,45 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                 }
                             },
                             "Open Vault Folder"
+                        }
+                    }
+                } else if !app_state.search_query.is_empty() {
+                    // Display search results
+                    div { style: "display: flex; flex-direction: column; gap: 4px;",
+                        div { style: "font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; padding: 0 4px;",
+                            "SEARCH RESULTS ({app_state.search_results.len()})"
+                        }
+                        if app_state.search_results.is_empty() {
+                            p { style: "font-size: 12px; color: var(--text-muted); padding: 8px;", "No matching notes found." }
+                        } else {
+                            for res in app_state.search_results.iter() {
+                                {
+                                    let path_buf = std::path::PathBuf::from(&res.path);
+                                    let path_clone = path_buf.clone();
+                                    let title = res.title.clone();
+                                    let snippet = res.snippet.clone();
+                                    rsx! {
+                                        button {
+                                            key: "{res.path}",
+                                            class: "link-item",
+                                            style: "flex-direction: column; align-items: flex-start; gap: 3px; padding: 8px;",
+                                            onclick: move |_| {
+                                                let mut s = state.write();
+                                                s.active_view = crate::state::ActiveView::Editor;
+                                                let _ = s.select_note(&path_clone);
+                                            },
+                                            span { style: "font-weight: 600; font-size: 12px; color: var(--text-primary);", "📄 {title}" }
+                                            span { style: "font-size: 10px; color: var(--text-muted);", "{path_buf.display()}" }
+                                            if !snippet.is_empty() {
+                                                div {
+                                                    style: "font-size: 11px; color: var(--text-secondary); line-height: 1.4; margin-top: 2px;",
+                                                    dangerous_inner_html: "{snippet}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } else if entries.is_empty() {
