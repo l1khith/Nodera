@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nodera-core",
+    "crates/nodera-markdown",
+    "crates/nodera-index",
+    "crates/nodera-pdf",
+    "crates/nodera-desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Nodera Contributors"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+nodera-core = { path = "crates/nodera-core" }
+nodera-markdown = { path = "crates/nodera-markdown" }
+nodera-index = { path = "crates/nodera-index" }
+nodera-pdf = { path = "crates/nodera-pdf" }
+
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tempfile = "3.17"
+tokio = { version = "1.43", features = ["full"] }
+uuid = { version = "1.15", features = ["v4", "serde"] }

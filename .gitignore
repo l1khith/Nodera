@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Nodera internal directories
+.nodera/
+
+# IDE / editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

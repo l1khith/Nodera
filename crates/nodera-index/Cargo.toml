@@ -1,0 +1,12 @@
+[package]
+name = "nodera-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nodera-core.workspace = true
+nodera-markdown.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+tracing.workspace = true
