@@ -9,3 +9,9 @@ nodera-core.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 tracing.workspace = true
+lopdf.workspace = true
+regex.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

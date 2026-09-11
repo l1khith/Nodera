@@ -75,6 +75,7 @@ impl AppPreferences {
 }
 
 use nodera_index::{IndexedTask, SearchResult, TaskFilter, VaultIndex};
+use nodera_pdf::{CancellationToken, ConversionOptions, ConversionProgress, ImportResult};
 use std::sync::{Arc, Mutex};
 
 /// Primary workspace view mode.
@@ -98,6 +99,7 @@ pub struct CommandPaletteItem {
 pub enum PaletteAction {
     OpenNote(PathBuf),
     CreateNote,
+    ImportPdf,
     SwitchView(ActiveView),
     ToggleTheme,
     RebuildIndex,
@@ -138,6 +140,15 @@ pub struct AppState {
     pub note_to_rename: Option<PathBuf>,
     pub show_command_palette: bool,
     pub command_palette_query: String,
+
+    // PDF Import modal
+    pub show_pdf_import_modal: bool,
+    pub pdf_selected_path: Option<PathBuf>,
+    pub pdf_import_options: ConversionOptions,
+    pub pdf_progress: Option<ConversionProgress>,
+    pub pdf_cancellation: Option<CancellationToken>,
+    pub pdf_last_result: Option<ImportResult>,
+    pub pdf_error: Option<String>,
 }
 
 impl Default for AppState {
@@ -177,6 +188,14 @@ impl Default for AppState {
             note_to_rename: None,
             show_command_palette: false,
             command_palette_query: String::new(),
+
+            show_pdf_import_modal: false,
+            pdf_selected_path: None,
+            pdf_import_options: ConversionOptions::default(),
+            pdf_progress: None,
+            pdf_cancellation: None,
+            pdf_last_result: None,
+            pdf_error: None,
         }
     }
 }
@@ -443,6 +462,11 @@ impl AppState {
                 PaletteAction::CreateNote,
             ),
             (
+                "Import PDF as Markdown",
+                "Convert PDF document to Markdown (Ctrl+Shift+I)",
+                PaletteAction::ImportPdf,
+            ),
+            (
                 "Toggle Theme",
                 "Switch between dark and light themes",
                 PaletteAction::ToggleTheme,
@@ -480,6 +504,9 @@ impl AppState {
             }
             PaletteAction::CreateNote => {
                 self.show_new_note_dialog = true;
+            }
+            PaletteAction::ImportPdf => {
+                self.open_pdf_import_modal();
             }
             PaletteAction::SwitchView(view) => {
                 self.active_view = view;
@@ -624,6 +651,85 @@ impl AppState {
         self.theme = self.theme.toggle();
         self.preferences.theme = self.theme;
         self.preferences.save();
+    }
+
+    /// Opens the PDF import dialog.
+    pub fn open_pdf_import_modal(&mut self) {
+        self.show_pdf_import_modal = true;
+        self.pdf_selected_path = None;
+        self.pdf_progress = None;
+        self.pdf_cancellation = None;
+        self.pdf_last_result = None;
+        self.pdf_error = None;
+    }
+
+    /// Closes the PDF import dialog, cancelling any ongoing conversion.
+    pub fn close_pdf_import_modal(&mut self) {
+        if let Some(token) = &self.pdf_cancellation {
+            token.cancel();
+        }
+        self.show_pdf_import_modal = false;
+        self.pdf_selected_path = None;
+        self.pdf_progress = None;
+        self.pdf_cancellation = None;
+        self.pdf_last_result = None;
+        self.pdf_error = None;
+    }
+
+    /// Sets the selected PDF file path for import.
+    pub fn set_pdf_selected_path(&mut self, path: PathBuf) {
+        self.pdf_selected_path = Some(path);
+        self.pdf_error = None;
+    }
+
+    /// Requests cancellation of active PDF conversion.
+    pub fn cancel_pdf_import(&mut self) {
+        if let Some(token) = &self.pdf_cancellation {
+            token.cancel();
+        }
+        self.pdf_cancellation = None;
+        self.pdf_progress = None;
+        self.status_message = "PDF conversion cancelled".to_string();
+    }
+
+    /// Completes the PDF import by refreshing vault entries, indexing the new note,
+    /// and updating UI completion state.
+    pub fn complete_pdf_import(&mut self, result: ImportResult) {
+        let _ = self.refresh_entries();
+
+        // Automatically index the newly imported note in SQLite and Tantivy
+        if let (Some(vault), Some(index_arc)) = (&self.vault_service, &self.vault_index) {
+            if let Ok(note) = vault.read_note(&result.relative_vault_path) {
+                if let Ok(parsed) = parse_document(&note.content) {
+                    if let Ok(mut idx) = index_arc.lock() {
+                        let _ = idx.index_note(&note, &parsed);
+                    }
+                }
+            }
+        }
+
+        self.pdf_last_result = Some(result);
+        self.pdf_cancellation = None;
+        self.pdf_progress = None;
+        self.pdf_error = None;
+        self.status_message = "PDF import completed successfully".to_string();
+    }
+
+    /// Opens the newly imported note in the Editor and closes the modal.
+    pub fn open_imported_note(&mut self) {
+        if let Some(res) = &self.pdf_last_result {
+            let rel_path = res.relative_vault_path.clone();
+            self.show_pdf_import_modal = false;
+            self.active_view = ActiveView::Editor;
+            let _ = self.select_note(&rel_path);
+        }
+    }
+
+    /// Records an error during PDF import.
+    pub fn set_pdf_error(&mut self, error: String) {
+        self.pdf_error = Some(error);
+        self.pdf_cancellation = None;
+        self.pdf_progress = None;
     }
 }
 

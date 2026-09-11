@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use tracing::info;
 
-use crate::components::{CommandPalette, Dialogs, Editor, Sidebar, StatusBar, TaskView};
+use crate::components::{
+    CommandPalette, Dialogs, Editor, PdfImportModal, Sidebar, StatusBar, TaskView,
+};
 use crate::state::{ActiveView, AppState};
 use crate::theme::BASE_CSS;
 
@@ -45,6 +47,10 @@ pub fn App() -> Element {
             onkeydown: move |evt: KeyboardEvent| {
                 if evt.modifiers().ctrl() || evt.modifiers().meta() {
                     match evt.key() {
+                        Key::Character(ref c) if (c == "i" || c == "I") && evt.modifiers().shift() => {
+                            let mut s = state.write();
+                            s.open_pdf_import_modal();
+                        }
                         Key::Character(ref c) if c == "p" || c == "P" => {
                             let mut s = state.write();
                             s.show_command_palette = !s.show_command_palette;
@@ -264,6 +270,7 @@ pub fn App() -> Element {
             // Modals
             Dialogs { state }
             CommandPalette { state }
+            PdfImportModal { state }
         }
     }
 }

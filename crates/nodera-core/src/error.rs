@@ -148,6 +148,19 @@ pub enum PdfError {
     #[error("Invalid or unreadable PDF file at {path}: {reason}")]
     InvalidPdf { path: PathBuf, reason: String },
 
+    #[error("Invalid input at {path}: {reason}")]
+    InvalidInput { path: PathBuf, reason: String },
+
+    #[error("PDF document at {path} is encrypted: {reason}")]
+    Encrypted { path: PathBuf, reason: String },
+
+    #[error("Text extraction failed for {path} at page {page}: {reason}")]
+    ExtractionFailed {
+        path: PathBuf,
+        page: usize,
+        reason: String,
+    },
+
     #[error("PDF conversion failed for {path} at page {page}: {reason}")]
     ConversionFailed {
         path: PathBuf,
@@ -160,6 +173,9 @@ pub enum PdfError {
 
     #[error("PDF conversion timed out after {timeout_secs}s")]
     Timeout { timeout_secs: u64 },
+
+    #[error("PDF conversion was cancelled by user")]
+    Cancelled,
 }
 
 /// Errors validating user inputs, paths, settings, or identifiers.

@@ -34,3 +34,5 @@ pulldown-cmark = "0.13"
 serde_yaml = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tantivy = "0.22"
+lopdf = "0.45"
+regex = "1.11"

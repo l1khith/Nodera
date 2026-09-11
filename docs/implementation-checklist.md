@@ -45,15 +45,15 @@
 - [x] Date grouping only after syntax decision
 
 ## PDF
-- [ ] Converter trait
-- [ ] Rust PDF backend
-- [ ] Conversion job
-- [ ] Progress
-- [ ] Cancellation
-- [ ] Header/footer cleanup
-- [ ] Heading detection
-- [ ] Output naming
-- [ ] 600-page benchmark
+- [x] Converter trait
+- [x] Rust PDF backend
+- [x] Conversion job
+- [x] Progress
+- [x] Cancellation
+- [x] Header/footer cleanup
+- [x] Heading detection
+- [x] Output naming
+- [x] 600-page benchmark
 
 ## UX
 - [x] Three-pane shell

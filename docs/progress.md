@@ -1,19 +1,20 @@
 # Progress
 
 ## Current Phase
-Phase 4 — PDF Import
+Phase 5 — Library & Reading Mode
 
 ## Completed Phases
 - Phase 0 — Foundation: VERIFIED_COMPLETE
 - Phase 1 — Notes MVP: VERIFIED_COMPLETE
 - Phase 2 — Markdown + Knowledge System: VERIFIED_COMPLETE
 - Phase 3 — Search and Tasks: VERIFIED_COMPLETE
+- Phase 4 — PDF Import: VERIFIED_COMPLETE
 
 ## Current Slice
-Phase 4, Slice 4.1: PDF converter trait, native extraction engine, and background conversion job runner
+Phase 5, Slice 5.1: Library view and long-form document browsing
 
 ## Status
-IN_PROGRESS
+READY
 
 ## Completed Slices
 
@@ -45,6 +46,15 @@ IN_PROGRESS
 - Validation: Format PASS (`cargo fmt --all -- --check`), Clippy PASS (`cargo clippy --workspace --all-targets -- -D warnings`)
 - Behavior: Implemented `nodera-index` crate with SQLite schema (`files`, `links`, `tasks`, `tags`, `properties`, `meta`), WAL mode, and Tantivy FTS engine (`title`, `body`, `headings`, `tags`) with boost and snippet generation. Implemented `VaultIndex` unified coordinator. Connected into `AppState` with live sidebar search results, `TaskView` global task interface with two-way sync, `CommandPalette` (`Ctrl+P`) with fuzzy filtering and note navigation, index rebuild action, and comprehensive integration tests (`crates/nodera-desktop/tests/search_and_tasks_test.rs`).
 
+### Phase 4: PDF Import
+- Status: VERIFIED_COMPLETE
+- Requirement: FR-024 (PdfConverter interface & NativePdfConverter backend with lopdf), FR-025 (PDF validation, magic byte checking, password encryption detection), FR-026 (Monotonic progress & cooperative cancellation via CancellationToken), FR-027 (Running header/footer and standalone page number cleanup), FR-028 (Heading & chapter pattern detection, paragraph line-unwrapping), FR-029 (Collision handling under `Books/<title>.md`, YAML frontmatter, deterministic page markers, auto SQLite/Tantivy indexing, and editor note opening).
+- Build: PASS — `cargo check --workspace`
+- Tests: PASS — `cargo test --workspace` (78 passed, 0 failed, 1 benchmark passed when executed)
+- Benchmark: PASS — `cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture` (600 pages converted in 1.51s, ~397 pages/sec throughput, 20 chapters detected, 192KB clean Markdown generated, monotonic progress verified across 604 events).
+- Validation: Format PASS (`cargo fmt --all -- --check`), Clippy PASS (`cargo clippy --workspace --all-targets -- -D warnings`)
+- Behavior: Pure-Rust PDF-to-Markdown pipeline with `NativePdfConverter` adhering to ADR-0004 (no Docker/Podman), clean separation of concerns (`nodera-pdf` does not depend on Dioxus or database implementations), background worker via `tokio::task::spawn_blocking` and `mpsc` progress streaming, responsive cancellation, desktop UI modal with drag/drop, browse via `rfd`, option checkboxes, live progress bar, completion view, and instant indexing into SQLite and Tantivy.
+
 ## Current Blockers
 None
 
@@ -52,7 +62,8 @@ None
 `cargo fmt --all -- --check` → PASS
 `cargo check --workspace` → PASS
 `cargo clippy --workspace --all-targets -- -D warnings` → PASS
-`cargo test --workspace` → PASS (61 passed, 0 failed)
+`cargo test --workspace` → PASS (78 passed, 0 failed, 1 ignored benchmark)
+`cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture` → PASS (600 pages, 1.51s)
 
 ## Next Slice
-Phase 4, Slice 4.1: PDF converter trait, native extraction engine, and background conversion job runner
+Phase 5, Slice 5.1: Library view and long-form document browsing

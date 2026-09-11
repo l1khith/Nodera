@@ -51,6 +51,15 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                         if has_vault {
                             button {
                                 class: "btn-icon",
+                                title: "Import PDF as Markdown (Ctrl+Shift+I)",
+                                onclick: move |_| {
+                                    let mut s = state.write();
+                                    s.open_pdf_import_modal();
+                                },
+                                "📥"
+                            }
+                            button {
+                                class: "btn-icon",
                                 title: "New Note (Ctrl+N)",
                                 onclick: move |_| {
                                     let mut s = state.write();
