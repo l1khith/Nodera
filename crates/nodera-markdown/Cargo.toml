@@ -9,3 +9,5 @@ nodera-core.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 tracing.workspace = true
+pulldown-cmark.workspace = true
+serde_yaml.workspace = true

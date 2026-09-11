@@ -1,15 +1,17 @@
 //! Markdown processing and knowledge extraction crate for Nodera.
 
-pub fn placeholder() -> &'static str {
-    "nodera-markdown"
-}
+pub mod frontmatter;
+pub mod links;
+pub mod parser;
+pub mod renderer;
+pub mod tags;
+pub mod task_parser;
+pub mod wikilink;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_placeholder() {
-        assert_eq!(placeholder(), "nodera-markdown");
-    }
-}
+pub use frontmatter::{parse_frontmatter, Frontmatter};
+pub use links::LinkGraph;
+pub use parser::{parse_document, Heading, ParsedDocument};
+pub use renderer::render_to_html;
+pub use tags::extract_tags;
+pub use task_parser::{extract_tasks, parse_task_line, toggle_task_at_line, ParsedTask};
+pub use wikilink::{extract_wikilinks, rewrite_wikilinks, Wikilink};

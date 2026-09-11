@@ -21,14 +21,14 @@
 - [x] Recent notes
 
 ## Markdown
-- [ ] Parser
-- [ ] Renderer
-- [ ] Wikilinks
-- [ ] Link resolution
-- [ ] Backlinks
-- [ ] Tags
-- [ ] Frontmatter
-- [ ] Tasks
+- [x] Parser
+- [x] Renderer
+- [x] Wikilinks
+- [x] Link resolution
+- [x] Backlinks
+- [x] Tags
+- [x] Frontmatter
+- [x] Tasks
 
 ## Index
 - [ ] SQLite schema

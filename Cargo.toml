@@ -30,3 +30,5 @@ tokio = { version = "1.43", features = ["full"] }
 uuid = { version = "1.15", features = ["v4", "serde"] }
 dioxus = { version = "0.6", features = ["desktop"] }
 rfd = "0.15"
+pulldown-cmark = "0.13"
+serde_yaml = "0.9"

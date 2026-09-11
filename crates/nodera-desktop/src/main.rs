@@ -2,12 +2,7 @@ use dioxus::desktop::{Config, WindowBuilder};
 use dioxus::prelude::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod app;
-mod components;
-mod state;
-mod theme;
-
-use app::App;
+use nodera_desktop::App;
 
 fn main() {
     tracing_subscriber::registry()

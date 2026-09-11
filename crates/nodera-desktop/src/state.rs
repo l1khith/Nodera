@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
 
 use nodera_core::{Note, Result, Vault, VaultEntry, VaultService};
+use nodera_markdown::{parse_document, LinkGraph};
 
 use crate::theme::Theme;
 
@@ -92,6 +93,7 @@ pub struct AppState {
     pub status_message: String,
 
     pub preferences: AppPreferences,
+    pub link_graph: LinkGraph,
 
     // Modal dialogs
     pub show_new_note_dialog: bool,
@@ -123,6 +125,7 @@ impl Default for AppState {
             status_message: "Ready".to_string(),
 
             preferences: prefs,
+            link_graph: LinkGraph::new(),
 
             show_new_note_dialog: false,
             show_delete_confirm_dialog: false,
@@ -145,10 +148,24 @@ impl AppState {
 
         let entries = service.list_entries()?;
 
+        // Index note links into LinkGraph
+        let mut link_graph = LinkGraph::new();
+        for entry in &entries {
+            if let VaultEntry::Note(summary) = entry {
+                if let Ok(note) = service.read_note(&summary.relative_path) {
+                    if let Ok(parsed) = parse_document(&note.content) {
+                        link_graph
+                            .update_note_links(summary.relative_path.clone(), parsed.wikilinks);
+                    }
+                }
+            }
+        }
+
         self.vault_path = Some(p.to_path_buf());
         self.vault_name = name;
         self.entries = entries;
         self.vault_service = Some(service);
+        self.link_graph = link_graph;
         self.active_note = None;
         self.editor_content.clear();
         self.is_dirty = false;
@@ -172,6 +189,7 @@ impl AppState {
         self.vault_name = vault_name;
         self.entries = entries;
         self.vault_service = Some(service);
+        self.link_graph = LinkGraph::new();
         self.active_note = None;
         self.editor_content.clear();
         self.is_dirty = false;
@@ -206,11 +224,93 @@ impl AppState {
     pub fn save_active_note(&mut self) -> Result<()> {
         if let (Some(service), Some(note)) = (&self.vault_service, &self.active_note) {
             let updated = service.write_note(&note.relative_path, &self.editor_content)?;
+            if let Ok(parsed) = parse_document(&self.editor_content) {
+                self.link_graph
+                    .update_note_links(note.relative_path.clone(), parsed.wikilinks);
+            }
             self.active_note = Some(updated);
             self.is_dirty = false;
             self.status_message = "Saved".to_string();
             self.refresh_entries()?;
         }
+        Ok(())
+    }
+
+    /// Returns list of notes that have Wikilinks pointing to the currently active note.
+    pub fn get_current_backlinks(&self) -> Vec<PathBuf> {
+        if let Some(active) = &self.active_note {
+            let note_paths: Vec<PathBuf> = self
+                .entries
+                .iter()
+                .filter_map(|e| match e {
+                    VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                    _ => None,
+                })
+                .collect();
+
+            self.link_graph
+                .get_backlinks(&active.relative_path, &note_paths)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Returns list of outgoing Wikilinks in current editor content and whether they resolve to an existing note.
+    pub fn get_current_outgoing_links(&self) -> Vec<(nodera_markdown::Wikilink, Option<PathBuf>)> {
+        let note_paths: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let links = nodera_markdown::extract_wikilinks(&self.editor_content);
+        links
+            .into_iter()
+            .map(|l| {
+                let resolved = LinkGraph::resolve_target(&l.target, &note_paths);
+                (l, resolved)
+            })
+            .collect()
+    }
+
+    /// Returns extracted tags from current editor content.
+    pub fn get_current_note_tags(&self) -> Vec<String> {
+        if let Ok(parsed) = parse_document(&self.editor_content) {
+            parsed.tags
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Opens an existing note or creates a new one for a Wikilink target.
+    pub fn open_or_create_target(&mut self, target: &str) -> Result<()> {
+        let note_paths: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if let Some(existing) = LinkGraph::resolve_target(target, &note_paths) {
+            self.select_note(&existing)?;
+        } else {
+            self.create_note(target, None)?;
+        }
+        Ok(())
+    }
+
+    /// Toggles a task checkbox at a specific 1-based line number and saves.
+    #[allow(dead_code)]
+    pub fn toggle_task_at_line(&mut self, line_number: usize) -> Result<()> {
+        let updated = nodera_markdown::toggle_task_at_line(&self.editor_content, line_number)?;
+        self.editor_content = updated;
+        self.is_dirty = true;
+        self.save_active_note()?;
         Ok(())
     }
 
@@ -250,6 +350,7 @@ impl AppState {
         let rel = rel_path.as_ref();
         if let Some(service) = &self.vault_service {
             service.delete_note(rel)?;
+            self.link_graph.remove_note(rel);
             if let Some(active) = &self.active_note {
                 if active.relative_path == rel {
                     self.active_note = None;
@@ -326,5 +427,53 @@ mod tests {
         assert_ne!(state.theme, initial);
         state.toggle_theme();
         assert_eq!(state.theme, initial);
+    }
+
+    #[test]
+    fn test_app_state_links_and_tasks() {
+        let tmp = tempdir().unwrap();
+        let vault_path = tmp.path().join("LinksVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Links Vault".to_string()))
+            .unwrap();
+
+        // 1. Create Source Note with Wikilinks, tags, and tasks
+        state.create_note("Source Note", None).unwrap();
+        let source_path = state.active_note.as_ref().unwrap().relative_path.clone();
+        state.update_editor_content(
+            "# Source Note\nLinks to [[Target Note]] and [[New Note]]. Tags: #rust #project\n\n- [ ] Task 1\n- [x] Task 2"
+                .to_string(),
+        );
+        state.save_active_note().unwrap();
+
+        // Check tags
+        let tags = state.get_current_note_tags();
+        assert!(tags.contains(&"rust".to_string()));
+        assert!(tags.contains(&"project".to_string()));
+
+        // Check outgoing links (Target Note is unresolved initially)
+        let outgoing = state.get_current_outgoing_links();
+        assert_eq!(outgoing.len(), 2);
+        assert!(outgoing[0].1.is_none());
+
+        // 2. Open or create target note
+        state.open_or_create_target("Target Note").unwrap();
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Target Note");
+
+        // Check backlinks for Target Note
+        let backlinks = state.get_current_backlinks();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(
+            backlinks[0].file_stem().unwrap().to_string_lossy(),
+            "Source Note"
+        );
+
+        // 3. Switch back to Source Note and test task toggling
+        state.select_note(&source_path).unwrap();
+        // Line 4 is "- [ ] Task 1"
+        state.toggle_task_at_line(4).unwrap();
+        assert!(state.editor_content.contains("- [x] Task 1"));
     }
 }

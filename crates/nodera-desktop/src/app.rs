@@ -32,6 +32,10 @@ pub fn App() -> Element {
         .map(|n| n.title.as_str())
         .unwrap_or("Nodera");
 
+    let backlinks = app_state.get_current_backlinks();
+    let outgoing_links = app_state.get_current_outgoing_links();
+    let current_tags = app_state.get_current_note_tags();
+
     rsx! {
         style { "{BASE_CSS}" }
 
@@ -116,13 +120,91 @@ pub fn App() -> Element {
                             "Context & Links"
                         }
                         div {
-                            style: "padding: 16px; color: var(--text-muted); font-size: 12px; line-height: 1.6;",
-                            p { style: "font-weight: 500; color: var(--text-secondary); margin-bottom: 6px;", "Backlinks" }
-                            p { "No incoming links detected." }
-                            div { style: "margin-top: 16px; border-top: 1px solid var(--border-subtle); padding-top: 12px;",
-                                p { style: "font-weight: 500; color: var(--text-secondary); margin-bottom: 6px;", "Note Properties" }
+                            style: "flex: 1; overflow-y: auto; padding: 16px; color: var(--text-muted); font-size: 12px; line-height: 1.6; display: flex; flex-direction: column; gap: 16px;",
+
+                            // Backlinks section
+                            div {
+                                p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;", "Incoming Links ({backlinks.len()})" }
+                                if backlinks.is_empty() {
+                                    p { style: "font-style: italic; color: var(--text-muted);", "No incoming links detected." }
+                                } else {
+                                    div { class: "link-list",
+                                        for backlink in backlinks.iter() {
+                                            {
+                                                let p = backlink.clone();
+                                                let display_title = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Note").to_string();
+                                                rsx! {
+                                                    button {
+                                                        key: "{p.display()}",
+                                                        class: "link-item",
+                                                        title: "{p.display()}",
+                                                        onclick: move |_| {
+                                                            let mut s = state.write();
+                                                            let _ = s.select_note(&p);
+                                                        },
+                                                        span { "🔗 {display_title}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Outgoing links section
+                            div {
+                                p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;", "Outgoing Links ({outgoing_links.len()})" }
+                                if outgoing_links.is_empty() {
+                                    p { style: "font-style: italic; color: var(--text-muted);", "No outgoing links in note." }
+                                } else {
+                                    div { class: "link-list",
+                                        for (link, resolved) in outgoing_links.iter() {
+                                            {
+                                                let target = link.target.clone();
+                                                let label = link.label().to_string();
+                                                let is_resolved = resolved.is_some();
+                                                rsx! {
+                                                    button {
+                                                        key: "{target}",
+                                                        class: if is_resolved { "link-item" } else { "link-item link-item-unresolved" },
+                                                        title: if is_resolved { format!("Open '{target}'") } else { format!("Create '{target}'") },
+                                                        onclick: move |_| {
+                                                            let mut s = state.write();
+                                                            let _ = s.open_or_create_target(&target);
+                                                        },
+                                                        span {
+                                                            if is_resolved { "↗️ " } else { "➕ " }
+                                                            "{label}"
+                                                        }
+                                                        if !is_resolved {
+                                                            span { style: "font-size: 10px; opacity: 0.7;", "new" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Tags section
+                            if !current_tags.is_empty() {
+                                div {
+                                    p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;", "Tags ({current_tags.len()})" }
+                                    div { style: "display: flex; flex-wrap: wrap; gap: 4px;",
+                                        for tag in current_tags.iter() {
+                                            span { key: "{tag}", class: "tag-badge", "#{tag}" }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Properties section
+                            div { style: "border-top: 1px solid var(--border-subtle); padding-top: 12px;",
+                                p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;", "Note Properties" }
                                 if let Some(note) = &app_state.active_note {
                                     div { "Path: {note.relative_path.display()}" }
+                                    div { "Words: {app_state.editor_content.split_whitespace().count()}" }
                                     div { "Chars: {app_state.editor_content.len()}" }
                                 } else {
                                     div { "Select a note to inspect details." }
