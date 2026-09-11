@@ -10,15 +10,15 @@
 - [x] Implement atomic file writes
 
 ## Notes
-- [ ] File tree
-- [ ] Create note
-- [ ] Open note
-- [ ] Edit note
-- [ ] Save note
-- [ ] Rename
-- [ ] Move
-- [ ] Delete confirmation
-- [ ] Recent notes
+- [x] File tree
+- [x] Create note
+- [x] Open note
+- [x] Edit note
+- [x] Save note
+- [x] Rename
+- [x] Move
+- [x] Delete confirmation
+- [x] Recent notes
 
 ## Markdown
 - [ ] Parser

@@ -28,3 +28,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tempfile = "3.17"
 tokio = { version = "1.43", features = ["full"] }
 uuid = { version = "1.15", features = ["v4", "serde"] }
+dioxus = { version = "0.6", features = ["desktop"] }
+rfd = "0.15"
