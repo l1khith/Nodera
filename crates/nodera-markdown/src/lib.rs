@@ -9,7 +9,7 @@ pub mod task_parser;
 pub mod wikilink;
 
 pub use frontmatter::{parse_frontmatter, Frontmatter};
-pub use links::LinkGraph;
+pub use links::{GraphData, GraphEdge, GraphNode, LinkGraph};
 pub use parser::{parse_document, Heading, ParsedDocument};
 pub use renderer::render_to_html;
 pub use tags::extract_tags;

@@ -25,45 +25,77 @@ impl Theme {
 
 pub const BASE_CSS: &str = r#"
 :root, .theme-dark {
-    --bg-app: #121316;
-    --bg-sidebar: #18191d;
-    --bg-surface: #1e2025;
-    --bg-surface-elevated: #262930;
-    --bg-hover: #2b2e36;
-    --bg-active: #323640;
-    --border: #2c2f38;
-    --border-subtle: #22252c;
-    --text-primary: #f0f2f5;
-    --text-secondary: #9da3b4;
-    --text-muted: #646a78;
-    --accent: #5e81ac;
-    --accent-hover: #81a1c1;
-    --accent-focus: rgba(94, 129, 172, 0.4);
-    --danger: #bf616a;
-    --danger-hover: #d08770;
-    --success: #a3be8c;
+    --bg-app: #0D0F14;
+    --bg-sidebar: #11141B;
+    --bg-sidebar-hover: #191D27;
+    --bg-sidebar-active: #252A3A;
+    --bg-surface: #141720;
+    --bg-surface-elevated: #1A1E29;
+    --bg-hover: #202533;
+    --bg-active: #282D40;
+    --border: #292E3A;
+    --border-strong: #383F4F;
+    --border-subtle: #1E232F;
+    --text-primary: #F1F3F8;
+    --text-secondary: #A7ADBC;
+    --text-muted: #747B8C;
+    --text-disabled: #525866;
+    --accent: #5B6CFF;
+    --accent-hover: #7182FF;
+    --accent-pressed: #4A55E8;
+    --accent-secondary: #9A4BFF;
+    --accent-focus: rgba(91, 108, 255, 0.35);
+    --danger: #E45B63;
+    --danger-hover: #F06A72;
+    --warning: #E3A93B;
+    --success: #35B875;
+    --info: #4FA3E3;
+    --graph-node: #5B6CFF;
+    --graph-node-current: #9A4BFF;
+    --graph-node-hover: #7182FF;
+    --graph-node-connected: #7E8CFF;
+    --graph-edge: #444A5B;
+    --graph-edge-highlight: #7182FF;
+    --graph-label: #D7DBE6;
+    --graph-grid-dot: rgba(255, 255, 255, 0.08);
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-editor: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
 }
 
 .theme-light {
-    --bg-app: #fcfcfc;
-    --bg-sidebar: #f4f5f7;
-    --bg-surface: #ffffff;
-    --bg-surface-elevated: #ebeef2;
-    --bg-hover: #e5e9f0;
-    --bg-active: #d8dee9;
-    --border: #d8dee9;
-    --border-subtle: #e5e9f0;
-    --text-primary: #2e3440;
-    --text-secondary: #4c566a;
-    --text-muted: #7e889b;
-    --accent: #4c6a92;
-    --accent-hover: #5e81ac;
-    --accent-focus: rgba(76, 106, 146, 0.3);
-    --danger: #bf616a;
-    --danger-hover: #d08770;
-    --success: #8fbcbb;
+    --bg-app: #F7F8FC;
+    --bg-sidebar: #F1F3F8;
+    --bg-sidebar-hover: #E8EBF3;
+    --bg-sidebar-active: #DFE3F0;
+    --bg-surface: #FFFFFF;
+    --bg-surface-elevated: #FFFFFF;
+    --bg-hover: #F0F2F8;
+    --bg-active: #E8EBF5;
+    --border: #DEE2EC;
+    --border-strong: #C8CDD9;
+    --border-subtle: #EBEFF7;
+    --text-primary: #171A23;
+    --text-secondary: #565D6D;
+    --text-muted: #7A8190;
+    --text-disabled: #A7ACB7;
+    --accent: #4F5FEF;
+    --accent-hover: #4050D8;
+    --accent-pressed: #3544B8;
+    --accent-secondary: #8744E8;
+    --accent-focus: rgba(79, 95, 239, 0.3);
+    --danger: #E45B63;
+    --danger-hover: #D04850;
+    --warning: #E3A93B;
+    --success: #35B875;
+    --info: #4FA3E3;
+    --graph-node: #4F5FEF;
+    --graph-node-current: #8744E8;
+    --graph-node-hover: #7182FF;
+    --graph-node-connected: #7E8CFF;
+    --graph-edge: #C8CDD9;
+    --graph-edge-highlight: #4F5FEF;
+    --graph-label: #565D6D;
+    --graph-grid-dot: rgba(23, 26, 35, 0.07);
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-editor: "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
 }
@@ -380,4 +412,119 @@ input, textarea {
 .link-item:hover { background-color: var(--bg-hover); border-color: var(--accent); }
 .link-item-unresolved { color: var(--text-muted); font-style: italic; }
 .command-palette-row:hover { background-color: var(--bg-hover); }
+
+/* 2D Knowledge Graph Styling */
+.graph-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    flex: 1;
+    overflow: hidden;
+    background-color: var(--bg-app);
+    user-select: none;
+}
+
+.graph-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: grab;
+}
+
+.graph-canvas:active {
+    cursor: grabbing;
+}
+
+.graph-toolbar {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    z-index: 10;
+    backdrop-filter: blur(10px);
+}
+
+.graph-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 13px;
+    color: var(--text-secondary);
+    transition: background-color 0.1s, color 0.1s;
+}
+
+.graph-btn:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.graph-zoom-label {
+    font-size: 11px;
+    font-weight: 500;
+    min-width: 36px;
+    text-align: center;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.graph-divider {
+    width: 1px;
+    height: 14px;
+    background-color: var(--border);
+    margin: 0 2px;
+}
+
+.graph-stats {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+    backdrop-filter: blur(10px);
+}
+
+.graph-search-bar {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    z-index: 10;
+    min-width: 200px;
+    backdrop-filter: blur(10px);
+}
+
+.local-graph-box {
+    width: 100%;
+    height: 220px;
+    position: relative;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+}
 "#;

@@ -16,6 +16,7 @@ pub mod nav {
     pub const NOTES: &str = "Notes";
     pub const TASKS: &str = "Tasks";
     pub const LIBRARY: &str = "Library";
+    pub const GRAPH: &str = "Graph";
     pub const GLOBAL_TASKS: &str = "Global Tasks";
 }
 
@@ -26,6 +27,11 @@ pub mod actions {
     pub const NEW_VAULT: &str = "New Vault";
     pub const OPEN_VAULT: &str = "Open Vault";
     pub const OPEN_EXISTING_VAULT: &str = "Open Existing Vault";
+    pub const OPEN_GRAPH: &str = "Open Graph View";
+    pub const ZOOM_IN: &str = "Zoom In";
+    pub const ZOOM_OUT: &str = "Zoom Out";
+    pub const RESET_VIEW: &str = "Reset View";
+    pub const REFRESH_GRAPH: &str = "Re-layout Graph";
     pub const IMPORT_PDF: &str = "Import PDF as Markdown";
     pub const IMPORT_PDF_BTN: &str = "Import PDF";
     pub const SAVE: &str = "Save";
@@ -88,6 +94,7 @@ pub mod placeholders {
     pub const SEARCH_PALETTE: &str = "Type a command or search notes...";
     pub const SEARCH_LIBRARY: &str = "Search library...";
     pub const FILTER_TASKS: &str = "Filter tasks...";
+    pub const FILTER_GRAPH: &str = "Filter graph notes...";
     pub const TYPE_MARKDOWN: &str = "Start typing Markdown here...";
 }
 
@@ -114,6 +121,12 @@ pub mod empty_states {
     pub const NO_OUTGOING_LINKS: &str = "No outgoing links in note.";
     pub const NO_PALETTE_MATCHES: &str = "No matching commands or notes found.";
     pub const NO_FILE_OPEN: &str = "No file open";
+    pub const NO_GRAPH_NODES_TITLE: &str = "No Notes in Vault";
+    pub const NO_GRAPH_NODES_DESC: &str =
+        "Create notes with [[wikilinks]] to visualize your knowledge graph.";
+    pub const NO_LOCAL_GRAPH: &str = "No links connected to this note.";
+    pub const NO_LOCAL_GRAPH_DESC: &str =
+        "Link notes using [[wikilinks]] to see this note's local graph.";
 }
 
 pub mod dialogs {
@@ -157,6 +170,10 @@ pub mod palette {
     pub const SWITCH_TO_LIBRARY: (&str, &str) = (
         "Switch to Library View",
         "Browse books and imported PDF documents",
+    );
+    pub const SWITCH_TO_GRAPH: (&str, &str) = (
+        "Switch to Graph View",
+        "Interactive 2D visual knowledge graph of interconnected notes",
     );
     pub const TOGGLE_READING: (&str, &str) = (
         "Toggle Edit / Reading Mode",

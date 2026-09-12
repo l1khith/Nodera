@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 use tracing::info;
 
 use crate::components::{
-    CommandPalette, Dialogs, Editor, ErrorDialog, LibraryView, PdfImportModal, SettingsModal,
-    Sidebar, StatusBar, TaskView,
+    CommandPalette, Dialogs, Editor, ErrorDialog, GraphView, LibraryView, LocalGraphView,
+    PdfImportModal, SettingsModal, Sidebar, StatusBar, TaskView,
 };
 use crate::icons::*;
 use crate::state::{ActiveView, AppState};
@@ -61,7 +61,11 @@ pub fn App() -> Element {
                         },
                         IconMenu { size: 16 }
                     }
-                    span { class: "brand-title", "{app_strings::BRAND_TITLE}" }
+                    div {
+                        style: "display: inline-flex; align-items: center; gap: 8px;",
+                        IconNoderaLogo { size: 22 }
+                        span { class: "brand-title", "{app_strings::BRAND_TITLE}" }
+                    }
                     if let Some(vault_path) = &app_state.vault_path {
                         span {
                             class: "vault-badge",
@@ -78,6 +82,10 @@ pub fn App() -> Element {
                         style: "font-weight: 500; font-size: 13px; color: var(--text-secondary);",
                         if app_state.active_view == ActiveView::Tasks {
                             "{nav::GLOBAL_TASKS}"
+                        } else if app_state.active_view == ActiveView::Library {
+                            "{nav::LIBRARY}"
+                        } else if app_state.active_view == ActiveView::Graph {
+                            "{nav::GRAPH}"
                         } else {
                             "{active_note_title}"
                         }
@@ -108,6 +116,15 @@ pub fn App() -> Element {
                         }
                         button {
                             class: "btn-icon",
+                            title: tooltips::IMPORT_PDF,
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_pdf_import_modal = true;
+                            },
+                            IconImport { size: 16 }
+                        }
+                        button {
+                            class: "btn-icon",
                             title: tooltips::REBUILD_INDEX,
                             onclick: move |_| {
                                 let mut s = state.write();
@@ -120,7 +137,8 @@ pub fn App() -> Element {
                         class: "btn-icon",
                         title: tooltips::SETTINGS,
                         onclick: move |_| {
-                            state.write().open_settings();
+                            let mut s = state.write();
+                            s.open_settings();
                         },
                         IconSettings { size: 16 }
                     }
@@ -128,7 +146,8 @@ pub fn App() -> Element {
                         class: "btn-icon",
                         title: tooltips::TOGGLE_THEME,
                         onclick: move |_| {
-                            state.write().toggle_theme();
+                            let mut s = state.write();
+                            s.toggle_theme();
                         },
                         if app_state.theme == crate::theme::Theme::Dark {
                             IconSun { size: 16 }
@@ -140,10 +159,10 @@ pub fn App() -> Element {
                         class: "btn-icon",
                         title: tooltips::TOGGLE_CONTEXT,
                         onclick: move |_| {
-                            let cur = state.read().context_panel_open;
-                            state.write().context_panel_open = !cur;
+                            let mut s = state.write();
+                            s.context_panel_open = !s.context_panel_open;
                         },
-                        IconInfo { size: 16 }
+                        IconList { size: 16 }
                     }
                 }
             }
@@ -165,11 +184,12 @@ pub fn App() -> Element {
                     }
                 }
 
-                // Center pane: Markdown Editor, Global Tasks View, or Library View
+                // Center pane: Markdown Editor, Global Tasks View, Library View, or Graph View
                 match app_state.active_view {
                     ActiveView::Editor => rsx! { Editor { state } },
                     ActiveView::Tasks => rsx! { TaskView { state } },
                     ActiveView::Library => rsx! { LibraryView { state } },
+                    ActiveView::Graph => rsx! { GraphView { state } },
                 }
 
                 // Right pane: Contextual Panel (Backlinks / Properties)
@@ -190,6 +210,12 @@ pub fn App() -> Element {
                         }
                         div {
                             style: "flex: 1; overflow-y: auto; padding: 16px; color: var(--text-muted); font-size: 12px; line-height: 1.6; display: flex; flex-direction: column; gap: 16px;",
+
+                            // Local 2D Graph section
+                            div {
+                                p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;", "{nav::GRAPH}" }
+                                LocalGraphView { state }
+                            }
 
                             // Backlinks section
                             div {

@@ -127,6 +127,7 @@ pub enum ActiveView {
     Editor,
     Tasks,
     Library,
+    Graph,
 }
 
 /// Action item displayed inside the Command Palette.
@@ -563,6 +564,11 @@ impl AppState {
                 PaletteAction::SwitchView(ActiveView::Library),
             ),
             (
+                palette::SWITCH_TO_GRAPH.0,
+                palette::SWITCH_TO_GRAPH.1,
+                PaletteAction::SwitchView(ActiveView::Graph),
+            ),
+            (
                 palette::TOGGLE_READING.0,
                 palette::TOGGLE_READING.1,
                 PaletteAction::ToggleReadingMode,
@@ -697,6 +703,39 @@ impl AppState {
             parsed.tags
         } else {
             Vec::new()
+        }
+    }
+
+    /// Returns knowledge graph data for the entire vault.
+    pub fn get_full_graph_data(&self) -> nodera_markdown::GraphData {
+        let note_paths: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        self.link_graph.to_graph_data(&note_paths)
+    }
+
+    /// Returns local knowledge graph data centered on the currently active note.
+    pub fn get_local_graph_data(&self, depth: usize) -> nodera_markdown::GraphData {
+        if let Some(active) = &self.active_note {
+            let note_paths: Vec<PathBuf> = self
+                .entries
+                .iter()
+                .filter_map(|e| match e {
+                    VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                    _ => None,
+                })
+                .collect();
+
+            self.link_graph
+                .to_local_graph_data(&active.relative_path, &note_paths, depth)
+        } else {
+            nodera_markdown::GraphData::default()
         }
     }
 
@@ -893,12 +932,13 @@ impl AppState {
         self.status_message = "Layout reset to default".to_string();
     }
 
-    /// Cycles through active view modes: Editor -> Tasks -> Library -> Editor.
+    /// Cycles through active view modes: Editor -> Tasks -> Library -> Graph -> Editor.
     pub fn cycle_view(&mut self) {
         self.active_view = match self.active_view {
             ActiveView::Editor => ActiveView::Tasks,
             ActiveView::Tasks => ActiveView::Library,
-            ActiveView::Library => ActiveView::Editor,
+            ActiveView::Library => ActiveView::Graph,
+            ActiveView::Graph => ActiveView::Editor,
         };
     }
 
