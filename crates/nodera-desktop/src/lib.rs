@@ -1,6 +1,7 @@
 pub mod app;
 pub mod components;
 pub mod icons;
+pub mod logo_data;
 pub mod shortcuts;
 pub mod state;
 pub mod strings;

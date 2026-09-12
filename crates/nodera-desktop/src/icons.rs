@@ -675,3 +675,164 @@ pub fn IconCornerDownLeft(props: IconProps) -> Element {
         }
     }
 }
+
+/// Nodera official brand folded-book N logo (full color from docs/icons/nodera-logo.svg)
+#[component]
+pub fn IconNoderaLogo(props: IconProps) -> Element {
+    rsx! {
+        img {
+            class: "icon-logo {props.class}",
+            src: "{crate::logo_data::NODERA_LOGO_DATA_URI}",
+            width: "{props.size}",
+            height: "{props.size}",
+            alt: "Nodera",
+            style: "display: inline-block; vertical-align: middle; object-fit: contain; flex-shrink: 0;",
+        }
+    }
+}
+
+/// Monochrome variant of Nodera folded-book N logo
+#[component]
+pub fn IconNoderaLogoMono(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 512 512",
+            path { d: "M92 128Q90 102 117 92L211 132V344Q211 370 187 382L105 425Q86 435 86 410Z", fill: "currentColor" }
+            path { d: "M211 132L315 224V379Q315 407 291 420L214 461V342L260 319L214 279Z", fill: "currentColor" }
+            path { d: "M315 224L390 126Q406 105 429 115L442 121Q463 132 463 155V403Q463 429 440 441L343 489Q315 501 315 470Z", fill: "currentColor" }
+            path { d: "M214 132L326 62Q349 49 370 61L390 73L315 168Z", fill: "currentColor" }
+            path { d: "M265 139L355 82Q378 68 397 80L414 91L342 185Z", fill: "currentColor" }
+        }
+    }
+}
+
+/// Graph / Network nodes and links icon (for 2D Knowledge Graph view)
+#[component]
+pub fn IconGraph(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "18", cy: "5", r: "3" }
+            circle { cx: "6", cy: "12", r: "3" }
+            circle { cx: "18", cy: "19", r: "3" }
+            line { x1: "8.59", y1: "13.51", x2: "15.42", y2: "17.49" }
+            line { x1: "15.41", y1: "6.51", x2: "8.59", y2: "10.49" }
+        }
+    }
+}
+
+/// Maximize / Expand icon
+#[component]
+pub fn IconMaximize(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polyline { points: "15 3 21 3 21 9" }
+            polyline { points: "9 21 3 21 3 15" }
+            line { x1: "21", y1: "3", x2: "14", y2: "10" }
+            line { x1: "3", y1: "21", x2: "10", y2: "14" }
+        }
+    }
+}
+
+/// Minimize / Contract icon
+#[component]
+pub fn IconMinimize(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polyline { points: "4 14 10 14 10 20" }
+            polyline { points: "20 10 14 10 14 4" }
+            line { x1: "14", y1: "10", x2: "21", y2: "3" }
+            line { x1: "3", y1: "21", x2: "10", y2: "14" }
+        }
+    }
+}
+
+/// Filter icon
+#[component]
+pub fn IconFilter(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polygon { points: "22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" }
+        }
+    }
+}
+
+/// Minus icon
+#[component]
+pub fn IconMinus(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            line { x1: "5", y1: "12", x2: "19", y2: "12" }
+        }
+    }
+}
+
+/// Crosshair / Center icon
+#[component]
+pub fn IconCrosshair(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "12", r: "8" }
+            line { x1: "12", y1: "2", x2: "12", y2: "6" }
+            line { x1: "12", y1: "18", x2: "12", y2: "22" }
+            line { x1: "2", y1: "12", x2: "6", y2: "12" }
+            line { x1: "18", y1: "12", x2: "22", y2: "12" }
+        }
+    }
+}
