@@ -234,7 +234,6 @@ impl TantivyIndex {
     /// Clears all documents in Tantivy index.
     pub fn clear_all(&mut self) -> Result<()> {
         self.writer.delete_all_documents().map_err(search_err)?;
-        self.commit()?;
         info!("Cleared all Tantivy index documents");
         Ok(())
     }

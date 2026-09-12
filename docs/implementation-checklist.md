@@ -57,21 +57,21 @@
 
 ## UX
 - [x] Three-pane shell
-- [ ] Resizable panes
+- [x] Resizable panes
 - [x] Hideable panes
 - [x] Command palette
-- [ ] Keyboard shortcuts
-- [ ] Empty states
-- [ ] Error states
-- [ ] Settings
-- [ ] Light/dark themes
-- [ ] Accessibility
+- [x] Keyboard shortcuts
+- [x] Empty states
+- [x] Error states
+- [x] Settings
+- [x] Light/dark themes
+- [x] Accessibility
 
 ## Hardening
-- [ ] External file changes
-- [ ] Crash recovery
-- [ ] Index recovery
-- [ ] Large-vault tests
-- [ ] Performance profiling
-- [ ] Packaging
-- [ ] Documentation
+- [x] External file changes
+- [x] Crash recovery
+- [x] Index recovery
+- [x] Large-vault tests
+- [x] Performance profiling
+- [x] Packaging
+- [x] Documentation

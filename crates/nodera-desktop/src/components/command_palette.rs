@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 
+use crate::icons::{IconClose, IconCornerDownLeft, IconSearch};
 use crate::state::AppState;
+use crate::strings::{empty_states, placeholders, tooltips};
 
 #[component]
 pub fn CommandPalette(state: Signal<AppState>) -> Element {
@@ -30,10 +32,10 @@ pub fn CommandPalette(state: Signal<AppState>) -> Element {
                 // Search Header
                 div {
                     style: "display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); gap: 10px; background-color: var(--bg-surface-elevated);",
-                    span { style: "font-size: 16px; opacity: 0.7;", "🔍" }
+                    IconSearch { size: 16, class: "icon text-muted" }
                     input {
                         style: "flex: 1; border: none; background: transparent; font-size: 14px; outline: none; color: var(--text-primary);",
-                        placeholder: "Type a command or search notes...",
+                        placeholder: placeholders::SEARCH_PALETTE,
                         value: "{query}",
                         autofocus: true,
                         oninput: move |evt| {
@@ -49,12 +51,13 @@ pub fn CommandPalette(state: Signal<AppState>) -> Element {
                     }
                     button {
                         class: "btn-icon",
-                        style: "font-size: 11px; width: 20px; height: 20px;",
+                        title: tooltips::CLOSE_ESC,
+                        style: "width: 24px; height: 24px;",
                         onclick: move |_| {
                             let mut s = state.write();
                             s.show_command_palette = false;
                         },
-                        "✕"
+                        IconClose { size: 12 }
                     }
                 }
 
@@ -64,7 +67,7 @@ pub fn CommandPalette(state: Signal<AppState>) -> Element {
                     if items.is_empty() {
                         div {
                             style: "padding: 24px; text-align: center; color: var(--text-muted); font-size: 12px;",
-                            "No matching commands or notes found."
+                            "{empty_states::NO_PALETTE_MATCHES}"
                         }
                     } else {
                         for item in items {
@@ -83,7 +86,9 @@ pub fn CommandPalette(state: Signal<AppState>) -> Element {
                                             span { style: "font-size: 13px; font-weight: 500; color: var(--text-primary);", "{item.title}" }
                                             span { style: "font-size: 11px; color: var(--text-muted);", "{item.description}" }
                                         }
-                                        span { style: "font-size: 10px; color: var(--text-muted);", "↵" }
+                                        span { style: "color: var(--text-muted);",
+                                            IconCornerDownLeft { size: 12 }
+                                        }
                                     }
                                 }
                             }

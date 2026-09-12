@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 
+use crate::icons::{IconBook, IconCheck, IconEdit, IconList, IconNotes, IconPlus, IconSave};
 use crate::state::AppState;
+use crate::strings::{actions, app as app_strings, empty_states, placeholders, tooltips};
 
 #[component]
 pub fn Editor(state: Signal<AppState>) -> Element {
@@ -10,7 +12,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
         .active_note
         .as_ref()
         .map(|n| n.title.clone())
-        .unwrap_or_else(|| "No Note Selected".to_string());
+        .unwrap_or_else(|| empty_states::NO_NOTE_SELECTED_TITLE.to_string());
     let note_path = app_state
         .active_note
         .as_ref()
@@ -36,10 +38,10 @@ pub fn Editor(state: Signal<AppState>) -> Element {
             if !has_note {
                 div {
                     style: "flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-muted); padding: 40px;",
-                    div { style: "font-size: 48px;", "📝" }
-                    h2 { style: "font-size: 18px; font-weight: 600; color: var(--text-secondary);", "No Note Selected" }
+                    IconNotes { size: 48 }
+                    h2 { style: "font-size: 18px; font-weight: 600; color: var(--text-secondary);", "{empty_states::NO_NOTE_SELECTED_TITLE}" }
                     p { style: "max-width: 360px; text-align: center; line-height: 1.5;",
-                        "Select a note from the explorer on the left, or create a new note to begin writing."
+                        "{empty_states::NO_NOTE_SELECTED_DESC}"
                     }
                     if app_state.vault_service.is_some() {
                         button {
@@ -48,7 +50,8 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                                 let mut s = state.write();
                                 s.show_new_note_dialog = true;
                             },
-                            "➕ Create Note (Ctrl+N)"
+                            IconPlus { size: 14 }
+                            span { "{actions::CREATE_NOTE}" }
                         }
                     }
                     div {
@@ -72,13 +75,15 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                         }
                         if is_dirty {
                             span {
-                                style: "background-color: var(--accent-focus); color: var(--accent-hover); font-size: 11px; padding: 2px 6px; border-radius: 3px;",
-                                "● Unsaved"
+                                style: "background-color: var(--accent-focus); color: var(--accent-hover); font-size: 11px; padding: 2px 6px; border-radius: 3px; display: inline-flex; align-items: center; gap: 5px;",
+                                span { style: "width: 6px; height: 6px; border-radius: 50%; background-color: currentColor; display: inline-block;" }
+                                span { "{actions::UNSAVED}" }
                             }
                         } else {
                             span {
-                                style: "color: var(--success); font-size: 11px;",
-                                "✓ Saved"
+                                style: "color: var(--success); font-size: 11px; display: inline-flex; align-items: center; gap: 4px;",
+                                IconCheck { size: 12 }
+                                span { "{actions::SAVED}" }
                             }
                         }
                     }
@@ -89,43 +94,130 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                         }
                         button {
                             class: "btn-action",
-                            title: "Toggle Reading Mode (Ctrl+E)",
+                            title: tooltips::TOGGLE_READING,
                             onclick: move |_| {
                                 let mut s = state.write();
                                 s.is_reading_mode = !s.is_reading_mode;
                             },
-                            if is_reading_mode { "✏️ Edit Mode" } else { "📖 Reading Mode" }
+                            if is_reading_mode {
+                                IconEdit { size: 14 }
+                                span { "{actions::EDIT_MODE}" }
+                            } else {
+                                IconBook { size: 14 }
+                                span { "{actions::READING_MODE}" }
+                            }
                         }
                         button {
                             class: "btn-action btn-primary",
-                            title: "Save Note (Ctrl+S)",
+                            title: tooltips::SAVE_NOTE,
                             onclick: move |_| {
                                 let mut s = state.write();
                                 let _ = s.save_active_note();
                             },
-                            "💾 Save"
+                            IconSave { size: 14 }
+                            span { "{actions::SAVE}" }
                         }
                     }
                 }
 
-                // Editor Content Surface
+                // Editor / Reader Content Surface
                 div {
-                    style: "flex: 1; display: flex; flex-direction: column; overflow: hidden; background-color: var(--bg-app);",
+                    style: "flex: 1; display: flex; overflow: hidden; background-color: var(--bg-app); position: relative;",
+
                     if !is_reading_mode {
                         textarea {
                             class: "editor-textarea",
-                            style: "flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: 14px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);",
+                            style: format!("flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: {}px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
                             value: "{content}",
-                            placeholder: "Start typing Markdown here...",
+                            placeholder: placeholders::TYPE_MARKDOWN,
                             oninput: move |evt| {
                                 let mut s = state.write();
                                 s.update_editor_content(evt.value());
                             }
                         }
+                    } else {
+                        // Reading Mode Layout: Optional Table of Contents + Reading Document
                         div {
-                            class: "reading-view",
-                            style: "flex: 1; padding: 32px 48px; overflow-y: auto; line-height: 1.7; font-size: 15px; color: var(--text-primary); max-width: 800px; margin: 0 auto; width: 100%;",
-                            dangerous_inner_html: "{rendered_html}"
+                            style: "flex: 1; display: flex; height: 100%; overflow: hidden;",
+
+                            // Floating or side Table of Contents if headings exist
+                            if !app_state.toc_headings.is_empty() {
+                                div {
+                                    class: "reading-toc",
+                                    style: "width: 220px; border-right: 1px solid var(--border-color); background: var(--bg-secondary); overflow-y: auto; padding: 16px 12px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;",
+
+                                    div {
+                                        style: "font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;",
+                                        IconList { size: 14 }
+                                        span { "{app_strings::CONTENTS}" }
+                                    }
+
+                                    for (depth, heading_text) in &app_state.toc_headings {
+                                        div {
+                                            key: "{heading_text}",
+                                            style: format!("padding: 4px 8px; border-radius: 4px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: {}px; cursor: pointer;", (depth - 1) * 12 + 8),
+                                            title: "{heading_text}",
+                                            "{heading_text}"
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Reading Document Body
+                            div {
+                                style: "flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden;",
+
+                                div {
+                                    class: "reading-view markdown-body",
+                                    style: format!("flex: 1; padding: 40px 60px; overflow-y: auto; line-height: 1.8; font-size: {}px; color: var(--text-primary); max-width: 780px; margin: 0 auto; width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;", app_state.preferences.reading_font_size),
+                                    dangerous_inner_html: "{rendered_html}"
+                                }
+
+                                // Reading Progress Footer Bar
+                                if let Some(active) = &app_state.active_note {
+                                    {
+                                        let path_for_input = active.relative_path.clone();
+                                        let path_for_finish = active.relative_path.clone();
+                                        let cur_progress = app_state.preferences.reading_progress.get(&path_for_input.to_string_lossy().to_string()).copied().unwrap_or(0);
+
+                                        rsx! {
+                                            div {
+                                                style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 24px; border-top: 1px solid var(--border-color); background: var(--bg-secondary); font-size: 12px; color: var(--text-muted);",
+
+                                                div {
+                                                    style: "display: flex; align-items: center; gap: 12px; flex: 1; max-width: 360px;",
+                                                    span { "Reading progress:" }
+                                                    input {
+                                                        r#type: "range",
+                                                        min: "0",
+                                                        max: "100",
+                                                        value: "{cur_progress}",
+                                                        style: "flex: 1; cursor: pointer;",
+                                                        oninput: move |evt| {
+                                                            if let Ok(val) = evt.value().parse::<u32>() {
+                                                                state.write().set_reading_progress(&path_for_input, val);
+                                                            }
+                                                        }
+                                                    }
+                                                    span { style: "font-weight: 500; min-width: 32px;", "{cur_progress}%" }
+                                                }
+
+                                                div {
+                                                    style: "display: flex; gap: 8px;",
+                                                    button {
+                                                        class: "btn-action",
+                                                        style: "padding: 3px 8px; font-size: 11px;",
+                                                        onclick: move |_| {
+                                                            state.write().set_reading_progress(&path_for_finish, 100);
+                                                        },
+                                                        "Mark Finished"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

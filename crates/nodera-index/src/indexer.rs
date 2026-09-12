@@ -24,14 +24,37 @@ impl std::fmt::Debug for VaultIndex {
 
 impl VaultIndex {
     /// Opens the vault index located in `.nodera/` subdirectory of the vault root.
+    ///
+    /// If an index is corrupt (e.g. malformed SQLite file, invalid Tantivy directory),
+    /// it automatically quarantines/clears the corrupt cache and initialises a fresh, empty
+    /// index ready for immediate rebuilding from canonical Markdown files.
     pub fn open(vault_root: impl AsRef<Path>) -> Result<Self> {
         let root = vault_root.as_ref();
         let nodera_dir = root.join(".nodera");
         let sqlite_path = nodera_dir.join("index.sqlite");
         let tantivy_path = nodera_dir.join("tantivy");
 
-        let sqlite = SqliteIndex::open(sqlite_path)?;
-        let tantivy = TantivyIndex::open(tantivy_path)?;
+        let sqlite = match SqliteIndex::open(&sqlite_path) {
+            Ok(idx) => idx,
+            Err(e) => {
+                tracing::warn!(
+                    "SQLite index failed to open ({e}), executing self-healing recovery"
+                );
+                let _ = std::fs::remove_file(&sqlite_path);
+                SqliteIndex::open(&sqlite_path)?
+            }
+        };
+
+        let tantivy = match TantivyIndex::open(&tantivy_path) {
+            Ok(idx) => idx,
+            Err(e) => {
+                tracing::warn!(
+                    "Tantivy index failed to open ({e}), executing self-healing recovery"
+                );
+                let _ = std::fs::remove_dir_all(&tantivy_path);
+                TantivyIndex::open(&tantivy_path)?
+            }
+        };
 
         Ok(Self { sqlite, tantivy })
     }
@@ -43,8 +66,8 @@ impl VaultIndex {
         Ok(Self { sqlite, tantivy })
     }
 
-    /// Incrementally indexes or updates a note in both SQLite and Tantivy indexes.
-    pub fn index_note(&mut self, note: &Note, parsed: &ParsedDocument) -> Result<()> {
+    /// Stages indexing for a note without immediate Tantivy commit. Used for batch indexing.
+    pub fn index_note_uncommitted(&mut self, note: &Note, parsed: &ParsedDocument) -> Result<()> {
         let path_str = note.relative_path.to_string_lossy().replace('\\', "/");
         let title = parsed.title.clone().unwrap_or_else(|| note.title.clone());
 
@@ -102,8 +125,14 @@ impl VaultIndex {
             &parsed.body,
             &tags_str,
         )?;
-        self.tantivy.commit()?;
 
+        Ok(())
+    }
+
+    /// Incrementally indexes or updates a note in both SQLite and Tantivy indexes, committing changes immediately.
+    pub fn index_note(&mut self, note: &Note, parsed: &ParsedDocument) -> Result<()> {
+        self.index_note_uncommitted(note, parsed)?;
+        self.tantivy.commit()?;
         Ok(())
     }
 
@@ -117,8 +146,8 @@ impl VaultIndex {
     }
 
     /// Executes full-text search with ranking and snippets.
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        self.tantivy.search(query, limit)
+    pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        self.tantivy.search(query_str, limit)
     }
 
     /// Queries tasks across the vault with filtering criteria.
@@ -149,13 +178,14 @@ impl VaultIndex {
             if let VaultEntry::Note(summary) = entry {
                 if let Ok(note) = vault_service.read_note(&summary.relative_path) {
                     if let Ok(parsed) = parse_document(&note.content) {
-                        self.index_note(&note, &parsed)?;
+                        self.index_note_uncommitted(&note, &parsed)?;
                         count += 1;
                     }
                 }
             }
         }
 
+        self.tantivy.commit()?;
         info!(indexed_notes = count, "Completed full vault index rebuild");
         Ok(count)
     }

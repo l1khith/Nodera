@@ -36,3 +36,4 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tantivy = "0.22"
 lopdf = "0.45"
 regex = "1.11"
+notify = "8.0"

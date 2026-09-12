@@ -3,7 +3,9 @@ use nodera_pdf::{CancellationToken, ConversionProgress, NativePdfConverter, PdfI
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::icons::{IconCheck, IconClose, IconEdit, IconFile, IconImport};
 use crate::state::AppState;
+use crate::strings::{actions, dialogs, tooltips};
 
 #[component]
 pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
@@ -39,24 +41,27 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                 // Header
                 div {
                     style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px;",
-                    span { style: "font-weight: 600; font-size: 15px; color: var(--text-primary);",
+                    div {
+                        style: "display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: var(--text-primary);",
                         if last_result.is_some() {
-                            "✓ Conversion Complete"
+                            IconCheck { size: 16 }
+                            span { "{dialogs::PDF_COMPLETE_TITLE}" }
                         } else if is_converting {
-                            "Converting PDF..."
+                            span { "{dialogs::PDF_CONVERTING_TITLE}" }
                         } else {
-                            "Import PDF as Markdown"
+                            IconImport { size: 16 }
+                            span { "{dialogs::PDF_IMPORT_TITLE}" }
                         }
                     }
                     if !is_converting {
                         button {
                             class: "btn-icon",
-                            style: "font-size: 12px;",
+                            title: tooltips::CLOSE_ESC,
                             onclick: move |_| {
                                 let mut s = state.write();
                                 s.close_pdf_import_modal();
                             },
-                            "✕"
+                            IconClose { size: 12 }
                         }
                     }
                 }
@@ -67,7 +72,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                         style: "display: flex; flex-direction: column; gap: 14px;",
                         div {
                             style: "padding: 14px; background-color: var(--bg-surface-elevated); border-radius: 6px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;",
-                            div { style: "font-size: 13px; font-weight: 600; color: var(--text-primary);", "Note Created" }
+                            div { style: "font-size: 13px; font-weight: 600; color: var(--text-primary);", "{dialogs::PDF_NOTE_CREATED}" }
                             div { style: "font-size: 12px; color: var(--accent); word-break: break-all;", "{res.relative_vault_path.display()}" }
                             div {
                                 style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border-subtle); font-size: 12px;",
@@ -94,15 +99,17 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                     let mut s = state.write();
                                     s.close_pdf_import_modal();
                                 },
-                                "Close"
+                                "{actions::CLOSE}"
                             }
                             button {
                                 class: "btn-primary",
+                                style: "display: inline-flex; align-items: center; gap: 6px;",
                                 onclick: move |_| {
                                     let mut s = state.write();
                                     s.open_imported_note();
                                 },
-                                "📝 Open Markdown Note"
+                                IconEdit { size: 14 }
+                                span { "{actions::OPEN_NOTE}" }
                             }
                         }
                     }
@@ -154,7 +161,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                             let mut s = state.write();
                                             s.cancel_pdf_import();
                                         },
-                                        "Cancel Conversion"
+                                        "{actions::CANCEL_CONVERSION}"
                                     }
                                 }
                             }
@@ -172,7 +179,11 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                 style: "padding: 12px; background-color: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; justify-content: space-between;",
                                 div {
                                     style: "display: flex; flex-direction: column; gap: 2px;",
-                                    span { style: "font-weight: 500; font-size: 13px;", "📄 {path.file_name().and_then(|s| s.to_str()).unwrap_or(\"document.pdf\")}" }
+                                    div {
+                                        style: "display: flex; align-items: center; gap: 6px; font-weight: 500; font-size: 13px;",
+                                        IconFile { size: 14 }
+                                        span { "{path.file_name().and_then(|s| s.to_str()).unwrap_or(\"document.pdf\")}" }
+                                    }
                                     span { style: "font-size: 11px; color: var(--text-muted);", "Destination: Books/{path.file_stem().and_then(|s| s.to_str()).unwrap_or(\"document\")}.md" }
                                 }
                                 button {
@@ -186,14 +197,16 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                             }
                                         });
                                     },
-                                    "Change"
+                                    "{actions::CHANGE}"
                                 }
                             }
                         } else {
                             div {
                                 style: "border: 2px dashed var(--border); border-radius: 8px; padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px;",
-                                span { style: "font-size: 28px;", "📄" }
-                                span { style: "font-size: 13px; color: var(--text-secondary);", "Select a text-based PDF to import as Markdown" }
+                                div { style: "color: var(--text-muted); opacity: 0.6;",
+                                    IconFile { size: 36 }
+                                }
+                                span { style: "font-size: 13px; color: var(--text-secondary);", "{dialogs::PDF_SELECT_PROMPT}" }
                                 button {
                                     class: "btn-secondary",
                                     onclick: move |_| {
@@ -204,7 +217,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                             }
                                         });
                                     },
-                                    "Choose PDF File..."
+                                    "{actions::CHOOSE_PDF}"
                                 }
                             }
                         }
@@ -212,7 +225,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                         // Options Checkboxes
                         div {
                             style: "display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; background-color: var(--bg-surface-elevated); border-radius: 6px; border: 1px solid var(--border-subtle);",
-                            span { style: "font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px;", "Conversion Options" }
+                            span { style: "font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px;", "{dialogs::PDF_OPTIONS_TITLE}" }
                             label {
                                 style: "display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;",
                                 input {
@@ -223,7 +236,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                         s.pdf_import_options.detect_headings = evt.checked();
                                     }
                                 }
-                                "Detect chapter & section headings"
+                                "{dialogs::PDF_OPT_HEADINGS}"
                             }
                             label {
                                 style: "display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;",
@@ -235,7 +248,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                         s.pdf_import_options.remove_repeated_headers = evt.checked();
                                     }
                                 }
-                                "Remove repeated running headers & footers"
+                                "{dialogs::PDF_OPT_HEADERS}"
                             }
                             label {
                                 style: "display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;",
@@ -247,7 +260,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                         s.pdf_import_options.remove_page_numbers = evt.checked();
                                     }
                                 }
-                                "Remove standalone page numbers"
+                                "{dialogs::PDF_OPT_PAGE_NUMBERS}"
                             }
                             label {
                                 style: "display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;",
@@ -259,7 +272,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                         s.pdf_import_options.add_page_markers = evt.checked();
                                     }
                                 }
-                                "Insert page comment markers (<!-- nodera:page=N -->)"
+                                "{dialogs::PDF_OPT_PAGE_MARKERS}"
                             }
                         }
 
@@ -280,7 +293,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                     let mut s = state.write();
                                     s.close_pdf_import_modal();
                                 },
-                                "Cancel"
+                                "{actions::CANCEL}"
                             }
                             button {
                                 class: "btn-primary",
@@ -353,7 +366,7 @@ pub fn PdfImportModal(mut state: Signal<AppState>) -> Element {
                                         }
                                     });
                                 },
-                                "Convert to Markdown"
+                                "{actions::CONVERT_TO_MD}"
                             }
                         }
                     }

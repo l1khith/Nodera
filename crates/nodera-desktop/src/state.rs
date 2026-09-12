@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
@@ -6,7 +7,27 @@ use tracing::{debug, error, info};
 use nodera_core::{Note, Result, Vault, VaultEntry, VaultService};
 use nodera_markdown::{parse_document, LinkGraph};
 
+use crate::strings::palette;
 use crate::theme::Theme;
+
+fn default_sidebar_width() -> u32 {
+    260
+}
+fn default_context_width() -> u32 {
+    280
+}
+fn default_editor_font_size() -> u32 {
+    14
+}
+fn default_reading_font_size() -> u32 {
+    16
+}
+fn default_true() -> bool {
+    true
+}
+fn default_autosave() -> u32 {
+    2
+}
 
 /// Persistent local state remembered across application restarts.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -14,6 +35,20 @@ pub struct AppPreferences {
     pub last_vault: Option<PathBuf>,
     pub recent_vaults: Vec<PathBuf>,
     pub theme: Theme,
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: u32,
+    #[serde(default = "default_context_width")]
+    pub context_panel_width: u32,
+    #[serde(default)]
+    pub reading_progress: HashMap<String, u32>,
+    #[serde(default = "default_editor_font_size")]
+    pub editor_font_size: u32,
+    #[serde(default = "default_reading_font_size")]
+    pub reading_font_size: u32,
+    #[serde(default = "default_true")]
+    pub show_line_numbers: bool,
+    #[serde(default = "default_autosave")]
+    pub auto_save_seconds: u32,
 }
 
 impl Default for AppPreferences {
@@ -22,6 +57,13 @@ impl Default for AppPreferences {
             last_vault: None,
             recent_vaults: Vec::new(),
             theme: Theme::Dark,
+            sidebar_width: 260,
+            context_panel_width: 280,
+            reading_progress: HashMap::new(),
+            editor_font_size: 14,
+            reading_font_size: 16,
+            show_line_numbers: true,
+            auto_save_seconds: 2,
         }
     }
 }
@@ -84,6 +126,7 @@ pub enum ActiveView {
     #[default]
     Editor,
     Tasks,
+    Library,
 }
 
 /// Action item displayed inside the Command Palette.
@@ -102,7 +145,24 @@ pub enum PaletteAction {
     ImportPdf,
     SwitchView(ActiveView),
     ToggleTheme,
+    ToggleReadingMode,
+    OpenSettings,
+    ResetLayout,
     RebuildIndex,
+}
+
+/// Book or long-form document displayed in the Library view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryBook {
+    pub relative_path: PathBuf,
+    pub title: String,
+    pub source: Option<String>,
+    pub pages: usize,
+    pub chapters: usize,
+    pub tags: Vec<String>,
+    pub word_count: usize,
+    pub char_count: usize,
+    pub reading_progress_pct: u32,
 }
 
 /// Runtime application state driving the UI.
@@ -132,6 +192,18 @@ pub struct AppState {
     pub preferences: AppPreferences,
     pub link_graph: LinkGraph,
 
+    // Layout configuration
+    pub sidebar_width: u32,
+    pub context_panel_width: u32,
+    pub is_resizing_sidebar: bool,
+    pub is_resizing_context: bool,
+
+    // Reading mode Table of Contents
+    pub toc_headings: Vec<(usize, String)>,
+
+    // Library view
+    pub library_search_query: String,
+
     // Modal dialogs
     pub show_new_note_dialog: bool,
     pub show_delete_confirm_dialog: bool,
@@ -140,6 +212,16 @@ pub struct AppState {
     pub note_to_rename: Option<PathBuf>,
     pub show_command_palette: bool,
     pub command_palette_query: String,
+
+    // Settings modal
+    pub show_settings_modal: bool,
+    pub settings_active_tab: String,
+
+    // Error alert dialog
+    pub show_error_dialog: bool,
+    pub error_dialog_title: String,
+    pub error_dialog_message: String,
+    pub error_dialog_details: Option<String>,
 
     // PDF Import modal
     pub show_pdf_import_modal: bool,
@@ -155,6 +237,8 @@ impl Default for AppState {
     fn default() -> Self {
         let prefs = AppPreferences::load();
         let initial_theme = prefs.theme;
+        let sidebar_w = prefs.sidebar_width;
+        let context_w = prefs.context_panel_width;
 
         Self {
             vault_service: None,
@@ -178,6 +262,14 @@ impl Default for AppState {
             context_panel_open: false,
             status_message: "Ready".to_string(),
 
+            sidebar_width: sidebar_w,
+            context_panel_width: context_w,
+            is_resizing_sidebar: false,
+            is_resizing_context: false,
+            toc_headings: Vec::new(),
+
+            library_search_query: String::new(),
+
             preferences: prefs,
             link_graph: LinkGraph::new(),
 
@@ -188,6 +280,14 @@ impl Default for AppState {
             note_to_rename: None,
             show_command_palette: false,
             command_palette_query: String::new(),
+
+            show_settings_modal: false,
+            settings_active_tab: "General".to_string(),
+
+            show_error_dialog: false,
+            error_dialog_title: String::new(),
+            error_dialog_message: String::new(),
+            error_dialog_details: None,
 
             show_pdf_import_modal: false,
             pdf_selected_path: None,
@@ -300,6 +400,7 @@ impl AppState {
             let note = service.read_note(rel)?;
             self.editor_content = note.content.clone();
             self.active_note = Some(note);
+            self.active_view = ActiveView::Editor;
             self.is_dirty = false;
             self.status_message = format!("Opened '{}'", rel.display());
         }
@@ -447,33 +548,53 @@ impl AppState {
         // 2. System Commands
         let system_commands = [
             (
-                "Switch to Notes Editor",
-                "View and edit markdown notes",
+                palette::SWITCH_TO_EDITOR.0,
+                palette::SWITCH_TO_EDITOR.1,
                 PaletteAction::SwitchView(ActiveView::Editor),
             ),
             (
-                "Switch to Tasks View",
-                "Global task list across all vault notes",
+                palette::SWITCH_TO_TASKS.0,
+                palette::SWITCH_TO_TASKS.1,
                 PaletteAction::SwitchView(ActiveView::Tasks),
             ),
             (
-                "Create New Note",
-                "Create a new note in default folder",
+                palette::SWITCH_TO_LIBRARY.0,
+                palette::SWITCH_TO_LIBRARY.1,
+                PaletteAction::SwitchView(ActiveView::Library),
+            ),
+            (
+                palette::TOGGLE_READING.0,
+                palette::TOGGLE_READING.1,
+                PaletteAction::ToggleReadingMode,
+            ),
+            (
+                palette::CREATE_NOTE.0,
+                palette::CREATE_NOTE.1,
                 PaletteAction::CreateNote,
             ),
             (
-                "Import PDF as Markdown",
-                "Convert PDF document to Markdown (Ctrl+Shift+I)",
+                palette::IMPORT_PDF.0,
+                palette::IMPORT_PDF.1,
                 PaletteAction::ImportPdf,
             ),
             (
-                "Toggle Theme",
-                "Switch between dark and light themes",
+                palette::OPEN_SETTINGS.0,
+                palette::OPEN_SETTINGS.1,
+                PaletteAction::OpenSettings,
+            ),
+            (
+                palette::RESET_LAYOUT.0,
+                palette::RESET_LAYOUT.1,
+                PaletteAction::ResetLayout,
+            ),
+            (
+                palette::TOGGLE_THEME.0,
+                palette::TOGGLE_THEME.1,
                 PaletteAction::ToggleTheme,
             ),
             (
-                "Rebuild Search Index",
-                "Clean and recreate SQLite metadata and Tantivy FTS",
+                palette::REBUILD_INDEX.0,
+                palette::REBUILD_INDEX.1,
                 PaletteAction::RebuildIndex,
             ),
         ];
@@ -513,6 +634,15 @@ impl AppState {
             }
             PaletteAction::ToggleTheme => {
                 self.toggle_theme();
+            }
+            PaletteAction::ToggleReadingMode => {
+                self.is_reading_mode = !self.is_reading_mode;
+            }
+            PaletteAction::OpenSettings => {
+                self.open_settings();
+            }
+            PaletteAction::ResetLayout => {
+                self.reset_layout();
             }
             PaletteAction::RebuildIndex => {
                 self.rebuild_vault_index()?;
@@ -606,6 +736,8 @@ impl AppState {
             self.editor_content.clear();
             let rel = note.relative_path.clone();
             self.active_note = Some(note);
+            self.active_view = ActiveView::Editor;
+            self.is_reading_mode = false;
             self.is_dirty = false;
             self.status_message = format!("Created '{title}'");
             self.refresh_entries()?;
@@ -721,6 +853,7 @@ impl AppState {
             let rel_path = res.relative_vault_path.clone();
             self.show_pdf_import_modal = false;
             self.active_view = ActiveView::Editor;
+            self.is_reading_mode = false;
             let _ = self.select_note(&rel_path);
         }
     }
@@ -730,6 +863,209 @@ impl AppState {
         self.pdf_error = Some(error);
         self.pdf_cancellation = None;
         self.pdf_progress = None;
+    }
+
+    /// Sets the sidebar width, clamping between 180 and 500 px, and persists it.
+    pub fn set_sidebar_width(&mut self, width: u32) {
+        let clamped = width.clamp(180, 500);
+        self.sidebar_width = clamped;
+        self.preferences.sidebar_width = clamped;
+        self.preferences.save();
+    }
+
+    /// Sets the context panel width, clamping between 200 and 500 px, and persists it.
+    pub fn set_context_panel_width(&mut self, width: u32) {
+        let clamped = width.clamp(200, 500);
+        self.context_panel_width = clamped;
+        self.preferences.context_panel_width = clamped;
+        self.preferences.save();
+    }
+
+    /// Resets sidebar and context panel widths to defaults.
+    pub fn reset_layout(&mut self) {
+        self.sidebar_width = 260;
+        self.context_panel_width = 280;
+        self.sidebar_open = true;
+        self.context_panel_open = true;
+        self.preferences.sidebar_width = 260;
+        self.preferences.context_panel_width = 280;
+        self.preferences.save();
+        self.status_message = "Layout reset to default".to_string();
+    }
+
+    /// Cycles through active view modes: Editor -> Tasks -> Library -> Editor.
+    pub fn cycle_view(&mut self) {
+        self.active_view = match self.active_view {
+            ActiveView::Editor => ActiveView::Tasks,
+            ActiveView::Tasks => ActiveView::Library,
+            ActiveView::Library => ActiveView::Editor,
+        };
+    }
+
+    /// Opens the Settings modal.
+    pub fn open_settings(&mut self) {
+        self.show_settings_modal = true;
+    }
+
+    /// Closes the Settings modal and persists preferences.
+    pub fn close_settings(&mut self) {
+        self.show_settings_modal = false;
+        self.preferences.save();
+    }
+
+    /// Displays an actionable error dialog.
+    pub fn show_error(&mut self, title: &str, message: &str, details: Option<String>) {
+        self.show_error_dialog = true;
+        self.error_dialog_title = title.to_string();
+        self.error_dialog_message = message.to_string();
+        self.error_dialog_details = details;
+    }
+
+    /// Dismisses the error dialog.
+    pub fn clear_error(&mut self) {
+        self.show_error_dialog = false;
+        self.error_dialog_title.clear();
+        self.error_dialog_message.clear();
+        self.error_dialog_details = None;
+    }
+
+    /// Updates the Table of Contents headings extracted from current note content.
+    pub fn update_toc_headings(&mut self) {
+        let mut headings = Vec::new();
+        for line in self.editor_content.lines() {
+            let trimmed = line.trim();
+            if let Some(h) = trimmed.strip_prefix("# ") {
+                headings.push((1, h.trim().to_string()));
+            } else if let Some(h) = trimmed.strip_prefix("## ") {
+                headings.push((2, h.trim().to_string()));
+            } else if let Some(h) = trimmed.strip_prefix("### ") {
+                headings.push((3, h.trim().to_string()));
+            }
+        }
+        self.toc_headings = headings;
+    }
+
+    /// Sets the reading progress percentage for a note and persists it.
+    pub fn set_reading_progress(&mut self, rel_path: &Path, pct: u32) {
+        let key = rel_path.to_string_lossy().to_string();
+        self.preferences
+            .reading_progress
+            .insert(key, pct.clamp(0, 100));
+        self.preferences.save();
+    }
+
+    /// Discovers all books and long-form documents in the vault (inside `Books/` or tagged `#book`/`#pdf-import`).
+    pub fn get_library_books(&self) -> Vec<LibraryBook> {
+        let mut books = Vec::new();
+        let query = self.library_search_query.trim().to_lowercase();
+
+        for entry in &self.entries {
+            if let VaultEntry::Note(summary) = entry {
+                let rel_str = summary.relative_path.to_string_lossy();
+                let is_in_books = rel_str.starts_with("Books/") || rel_str.starts_with("Books\\");
+
+                // Read note details if service is available
+                let (is_book, pages, chapters, source, tags, word_cnt, char_cnt) =
+                    if let Some(service) = &self.vault_service {
+                        if let Ok(note) = service.read_note(&summary.relative_path) {
+                            let word_count = note.content.split_whitespace().count();
+                            let char_count = note.content.len();
+
+                            if let Ok(doc) = parse_document(&note.content) {
+                                let mut note_tags = doc.tags;
+                                let is_tagged_book =
+                                    note_tags.iter().any(|t| t == "book" || t == "pdf-import");
+
+                                let (pages, chapters, source) = if let Some(fm) = doc.frontmatter {
+                                    let pg =
+                                        fm.extra.get("pages").and_then(|v| v.as_u64()).unwrap_or(0)
+                                            as usize;
+                                    let ch = fm
+                                        .extra
+                                        .get("chapters")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as usize;
+                                    let src = fm
+                                        .extra
+                                        .get("source")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    for t in &fm.tags {
+                                        if !note_tags.contains(t) {
+                                            note_tags.push(t.clone());
+                                        }
+                                    }
+                                    (pg, ch, src)
+                                } else {
+                                    (0, 0, None)
+                                };
+
+                                (
+                                    is_in_books || is_tagged_book || source.is_some(),
+                                    pages,
+                                    chapters,
+                                    source,
+                                    note_tags,
+                                    word_count,
+                                    char_count,
+                                )
+                            } else {
+                                (is_in_books, 0, 0, None, Vec::new(), word_count, char_count)
+                            }
+                        } else {
+                            (is_in_books, 0, 0, None, Vec::new(), 0, 0)
+                        }
+                    } else {
+                        (is_in_books, 0, 0, None, Vec::new(), 0, 0)
+                    };
+
+                if is_book {
+                    if !query.is_empty()
+                        && !summary.title.to_lowercase().contains(&query)
+                        && !tags.iter().any(|t| t.to_lowercase().contains(&query))
+                    {
+                        continue;
+                    }
+
+                    let progress_pct = self
+                        .preferences
+                        .reading_progress
+                        .get(&summary.relative_path.to_string_lossy().to_string())
+                        .copied()
+                        .unwrap_or(0);
+                    books.push(LibraryBook {
+                        relative_path: summary.relative_path.clone(),
+                        title: summary.title.clone(),
+                        source,
+                        pages,
+                        chapters,
+                        tags,
+                        word_count: word_cnt,
+                        char_count: char_cnt,
+                        reading_progress_pct: progress_pct,
+                    });
+                }
+            }
+        }
+        books
+    }
+
+    /// Opens a book in reading mode with table of contents extracted.
+    pub fn open_book_in_reader(&mut self, rel_path: &Path) -> Result<()> {
+        self.select_note(rel_path)?;
+        self.active_view = ActiveView::Editor;
+        self.is_reading_mode = true;
+        self.update_toc_headings();
+        Ok(())
+    }
+
+    /// Opens a book in standard editor mode.
+    pub fn open_book_in_editor(&mut self, rel_path: &Path) -> Result<()> {
+        self.select_note(rel_path)?;
+        self.active_view = ActiveView::Editor;
+        self.is_reading_mode = false;
+        Ok(())
     }
 }
 

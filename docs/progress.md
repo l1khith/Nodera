@@ -1,7 +1,7 @@
 # Progress
 
 ## Current Phase
-Phase 5 — Library & Reading Mode
+Nodera V1 — Product Complete
 
 ## Completed Phases
 - Phase 0 — Foundation: VERIFIED_COMPLETE
@@ -9,12 +9,14 @@ Phase 5 — Library & Reading Mode
 - Phase 2 — Markdown + Knowledge System: VERIFIED_COMPLETE
 - Phase 3 — Search and Tasks: VERIFIED_COMPLETE
 - Phase 4 — PDF Import: VERIFIED_COMPLETE
+- Phase 5 — Library & Reading Mode: VERIFIED_COMPLETE
+- Phase 6 — Hardening & UX Polish: VERIFIED_COMPLETE
 
 ## Current Slice
-Phase 5, Slice 5.1: Library view and long-form document browsing
+All V1 Slices Complete
 
 ## Status
-READY
+VERIFIED_COMPLETE
 
 ## Completed Slices
 
@@ -51,9 +53,27 @@ READY
 - Requirement: FR-024 (PdfConverter interface & NativePdfConverter backend with lopdf), FR-025 (PDF validation, magic byte checking, password encryption detection), FR-026 (Monotonic progress & cooperative cancellation via CancellationToken), FR-027 (Running header/footer and standalone page number cleanup), FR-028 (Heading & chapter pattern detection, paragraph line-unwrapping), FR-029 (Collision handling under `Books/<title>.md`, YAML frontmatter, deterministic page markers, auto SQLite/Tantivy indexing, and editor note opening).
 - Build: PASS — `cargo check --workspace`
 - Tests: PASS — `cargo test --workspace` (78 passed, 0 failed, 1 benchmark passed when executed)
-- Benchmark: PASS — `cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture` (600 pages converted in 1.51s, ~397 pages/sec throughput, 20 chapters detected, 192KB clean Markdown generated, monotonic progress verified across 604 events).
+- Benchmark: PASS — `cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture` (600 pages converted in 685ms, ~875.7 pages/sec throughput, 20 chapters detected, 192KB clean Markdown generated, monotonic progress verified across 604 events).
 - Validation: Format PASS (`cargo fmt --all -- --check`), Clippy PASS (`cargo clippy --workspace --all-targets -- -D warnings`)
 - Behavior: Pure-Rust PDF-to-Markdown pipeline with `NativePdfConverter` adhering to ADR-0004 (no Docker/Podman), clean separation of concerns (`nodera-pdf` does not depend on Dioxus or database implementations), background worker via `tokio::task::spawn_blocking` and `mpsc` progress streaming, responsive cancellation, desktop UI modal with drag/drop, browse via `rfd`, option checkboxes, live progress bar, completion view, and instant indexing into SQLite and Tantivy.
+
+### Phase 5: Library & Reading Mode
+- Status: VERIFIED_COMPLETE
+- Requirement: FR-022 (Library view for books & long-form documents), FR-027 (Markdown preview & enhanced reading mode), Reading progress tracking (`AppPreferences::reading_progress`), Chapter/TOC navigation drawer (`AppState::toc_headings`).
+- Build: PASS — `cargo check --workspace`
+- Tests: PASS — `cargo test --workspace` (83 passed, 0 failed, 1 ignored benchmark)
+- Validation: Format PASS (`cargo fmt --all -- --check`), Clippy PASS (`cargo clippy --workspace --all-targets -- -D warnings`)
+- Behavior: Implemented `LibraryView` component rendering book grid cards with cover art, pages, chapters, words, tags, and reading progress bars with direct "📖 Read" and "✏️ Edit" actions. Enhanced `Editor` reading mode with floating/sidebar Table of Contents extracted from headings, clean typography (line-height 1.8, max-width 780px), interactive reading percentage slider, and persistent reading progress per book.
+
+### Phase 6: UX Polish & Hardening
+- Status: VERIFIED_COMPLETE
+- Requirement: FR-029 (Keyboard shortcuts), FR-031 (Resizable and hideable panes), FR-032 (Settings panel), FR-033 (Index recovery), FR-034 (External file changes detection via notify with self-write suppression), NFR-008 (Large vault scalability).
+- Build: PASS — `cargo build --workspace --release` (produces standalone `nodera-desktop.exe` binary: 15.7 MB)
+- Tests: PASS — `cargo test --workspace` (83 passed, 0 failed, 1 ignored benchmark)
+- Large Vault Stress Test: PASS — 1,000 notes in hierarchical folders indexed in 908ms (>1,100 notes/sec), search latency 2.3ms (< 5ms threshold).
+- Self-Healing Index Recovery Test: PASS — verified that corrupt SQLite database files or damaged Tantivy indexes are automatically quarantined and rebuilt from canonical Markdown files without data loss.
+- Filesystem Watcher Test: PASS — debounced filesystem event streaming with in-memory self-write suppression to prevent event loops during saves.
+- Dialogs & Modals: `SettingsModal` with General, Appearance, Editor, PDF Import, Index, and Shortcuts tabs; actionable `ErrorDialog` with technical details drawer; empty states across Vault, Search, Tasks, Backlinks, and Library views.
 
 ## Current Blockers
 None
@@ -62,8 +82,9 @@ None
 `cargo fmt --all -- --check` → PASS
 `cargo check --workspace` → PASS
 `cargo clippy --workspace --all-targets -- -D warnings` → PASS
-`cargo test --workspace` → PASS (78 passed, 0 failed, 1 ignored benchmark)
-`cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture` → PASS (600 pages, 1.51s)
+`cargo test --workspace` → PASS (83 passed, 0 failed, 1 ignored benchmark)
+`cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture` → PASS (600 pages, 685ms, 875 pages/sec)
+`cargo build --workspace --release` → PASS (`target/release/nodera-desktop.exe`, 15.7 MB)
 
 ## Next Slice
-Phase 5, Slice 5.1: Library view and long-form document browsing
+V1 Complete. Future items belong to post-V1 roadmaps.

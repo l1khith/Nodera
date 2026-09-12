@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use std::path::PathBuf;
 
+use crate::icons::{IconFile, IconTasks};
 use crate::state::{ActiveView, AppState};
+use crate::strings::{actions, empty_states, nav, placeholders};
 
 #[component]
 pub fn TaskView(state: Signal<AppState>) -> Element {
@@ -18,7 +20,7 @@ pub fn TaskView(state: Signal<AppState>) -> Element {
             header {
                 style: "height: 48px; border-bottom: 1px solid var(--border); background-color: var(--bg-surface); display: flex; align-items: center; justify-content: space-between; padding: 0 20px;",
                 div { style: "display: flex; align-items: center; gap: 12px;",
-                    span { style: "font-size: 16px; font-weight: 700; color: var(--text-primary);", "Global Tasks" }
+                    span { style: "font-size: 16px; font-weight: 700; color: var(--text-primary);", "{nav::GLOBAL_TASKS}" }
                     span {
                         class: "vault-badge",
                         "{active_count} active · {completed_count} completed"
@@ -35,7 +37,7 @@ pub fn TaskView(state: Signal<AppState>) -> Element {
                                 let mut s = state.write();
                                 s.task_filter.checked = None;
                             },
-                            "All"
+                            "{actions::FILTER_ALL}"
                         }
                         button {
                             style: if current_filter.checked == Some(false) { "padding: 4px 10px; font-size: 11px; font-weight: 600; background-color: var(--accent); color: #fff;" } else { "padding: 4px 10px; font-size: 11px; color: var(--text-secondary);" },
@@ -43,7 +45,7 @@ pub fn TaskView(state: Signal<AppState>) -> Element {
                                 let mut s = state.write();
                                 s.task_filter.checked = Some(false);
                             },
-                            "To Do ({active_count})"
+                            "{actions::FILTER_TODO} ({active_count})"
                         }
                         button {
                             style: if current_filter.checked == Some(true) { "padding: 4px 10px; font-size: 11px; font-weight: 600; background-color: var(--accent); color: #fff;" } else { "padding: 4px 10px; font-size: 11px; color: var(--text-secondary);" },
@@ -51,14 +53,14 @@ pub fn TaskView(state: Signal<AppState>) -> Element {
                                 let mut s = state.write();
                                 s.task_filter.checked = Some(true);
                             },
-                            "Done ({completed_count})"
+                            "{actions::FILTER_DONE} ({completed_count})"
                         }
                     }
 
                     // Search filter within tasks
                     input {
                         style: "padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background-color: var(--bg-surface-elevated); font-size: 12px; width: 160px; color: var(--text-primary);",
-                        placeholder: "Filter tasks...",
+                        placeholder: placeholders::FILTER_TASKS,
                         value: "{current_filter.search_query.as_deref().unwrap_or_default()}",
                         oninput: move |evt| {
                             let mut s = state.write();
@@ -75,9 +77,11 @@ pub fn TaskView(state: Signal<AppState>) -> Element {
                 if tasks.is_empty() {
                     div {
                         style: "padding: 60px 20px; text-align: center; color: var(--text-muted); display: flex; flex-direction: column; align-items: center; gap: 12px;",
-                        div { style: "font-size: 40px;", "✅" }
-                        h3 { style: "font-size: 16px; color: var(--text-secondary);", "No tasks found" }
-                        p { "Tasks written as '- [ ]' in your notes will automatically appear here." }
+                        div { style: "color: var(--text-muted); opacity: 0.6;",
+                            IconTasks { size: 48 }
+                        }
+                        h3 { style: "font-size: 16px; color: var(--text-secondary);", "{empty_states::NO_TASKS_TITLE}" }
+                        p { "{empty_states::NO_TASKS_DESC}" }
                     }
                 } else {
                     for task in tasks {
@@ -112,14 +116,15 @@ pub fn TaskView(state: Signal<AppState>) -> Element {
 
                                     // Origin note link
                                     button {
-                                        style: "font-size: 11px; color: var(--text-secondary); padding: 2px 8px; border-radius: 4px; background-color: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); cursor: pointer;",
+                                        style: "display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); padding: 2px 8px; border-radius: 4px; background-color: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); cursor: pointer;",
                                         title: "Navigate to note line {task.line_number}",
                                         onclick: move |_| {
                                             let mut s = state.write();
                                             s.active_view = ActiveView::Editor;
                                             let _ = s.select_note(&note_path_nav);
                                         },
-                                        "📄 {task.note_title}:{task.line_number}"
+                                        IconFile { size: 12 }
+                                        span { "{task.note_title}:{task.line_number}" }
                                     }
                                 }
                             }

@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 
+use crate::icons::{IconEdit, IconPlus, IconTrash};
 use crate::state::AppState;
+use crate::strings::{actions, dialogs};
 
 #[component]
 pub fn Dialogs(state: Signal<AppState>) -> Element {
@@ -11,7 +13,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
     let show_rename = app_state.show_rename_dialog;
     let rename_path = app_state.note_to_rename.clone();
 
-    let mut new_note_title = use_signal(|| "Untitled Note".to_string());
+    let mut new_note_title = use_signal(|| dialogs::DEFAULT_NOTE_TITLE.to_string());
     let mut rename_note_title = use_signal(String::new);
 
     rsx! {
@@ -19,9 +21,14 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
         if show_new_note {
             div { class: "modal-overlay",
                 div { class: "modal-dialog",
-                    h3 { class: "modal-title", "Create New Note" }
+                    h3 {
+                        class: "modal-title",
+                        style: "display: flex; align-items: center; gap: 8px;",
+                        IconPlus { size: 16 }
+                        span { "{dialogs::CREATE_NOTE_TITLE}" }
+                    }
                     div { class: "modal-body",
-                        p { "Enter a title for the new Markdown note:" }
+                        p { "{dialogs::CREATE_NOTE_PROMPT}" }
                         input {
                             class: "modal-input",
                             r#type: "text",
@@ -37,7 +44,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                 let mut s = state.write();
                                 s.show_new_note_dialog = false;
                             },
-                            "Cancel"
+                            "{actions::CANCEL}"
                         }
                         button {
                             class: "btn-action btn-primary",
@@ -47,7 +54,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                 let _ = s.create_note(&title, None);
                                 s.show_new_note_dialog = false;
                             },
-                            "Create Note"
+                            "{actions::CREATE_NOTE}"
                         }
                     }
                 }
@@ -67,7 +74,12 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                 rsx! {
                     div { class: "modal-overlay",
                         div { class: "modal-dialog",
-                            h3 { class: "modal-title", "Rename Note" }
+                            h3 {
+                                class: "modal-title",
+                                style: "display: flex; align-items: center; gap: 8px;",
+                                IconEdit { size: 16 }
+                                span { "{dialogs::RENAME_NOTE_TITLE}" }
+                            }
                             div { class: "modal-body",
                                 p { "Enter new name for note '{current_stem}':" }
                                 input {
@@ -87,7 +99,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                         s.show_rename_dialog = false;
                                         s.note_to_rename = None;
                                     },
-                                    "Cancel"
+                                    "{actions::CANCEL}"
                                 }
                                 button {
                                     class: "btn-action btn-primary",
@@ -103,7 +115,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                         s.show_rename_dialog = false;
                                         s.note_to_rename = None;
                                     },
-                                    "Rename"
+                                    "{actions::RENAME}"
                                 }
                             }
                         }
@@ -123,12 +135,17 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                 rsx! {
                     div { class: "modal-overlay",
                         div { class: "modal-dialog",
-                            h3 { class: "modal-title", style: "color: var(--danger);", "Delete Note" }
+                            h3 {
+                                class: "modal-title",
+                                style: "color: var(--danger); display: flex; align-items: center; gap: 8px;",
+                                IconTrash { size: 16 }
+                                span { "{dialogs::DELETE_NOTE_TITLE}" }
+                            }
                             div { class: "modal-body",
                                 p {
-                                    "Are you sure you want to delete "
+                                    "{dialogs::DELETE_NOTE_CONFIRM}"
                                     strong { "'{display_target}'" }
-                                    "? This will permanently remove the Markdown file from disk."
+                                    "{dialogs::DELETE_NOTE_WARNING}"
                                 }
                             }
                             div { class: "modal-actions",
@@ -139,7 +156,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                         s.show_delete_confirm_dialog = false;
                                         s.note_to_delete = None;
                                     },
-                                    "Cancel"
+                                    "{actions::CANCEL}"
                                 }
                                 button {
                                     class: "btn-action btn-danger",
@@ -153,7 +170,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                         s.show_delete_confirm_dialog = false;
                                         s.note_to_delete = None;
                                     },
-                                    "Delete Permanently"
+                                    "{actions::DELETE_PERMANENTLY}"
                                 }
                             }
                         }

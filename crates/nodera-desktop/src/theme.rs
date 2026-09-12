@@ -156,7 +156,7 @@ input, textarea {
 }
 
 .pane-sidebar {
-    width: 260px;
+    width: 100%;
     min-width: 180px;
     background-color: var(--bg-sidebar);
     border-right: 1px solid var(--border);
@@ -164,6 +164,20 @@ input, textarea {
     flex-direction: column;
     overflow: hidden;
     transition: width 0.15s ease;
+}
+
+.pane-resizer {
+    width: 5px;
+    cursor: col-resize;
+    background-color: transparent;
+    border-left: 1px solid var(--border);
+    transition: background-color 0.15s ease;
+    z-index: 5;
+    flex-shrink: 0;
+}
+
+.pane-resizer:hover {
+    background-color: var(--accent);
 }
 
 .pane-center {
@@ -175,7 +189,6 @@ input, textarea {
 }
 
 .pane-context {
-    width: 260px;
     min-width: 180px;
     background-color: var(--bg-sidebar);
     border-left: 1px solid var(--border);
@@ -215,6 +228,35 @@ input, textarea {
 .btn-icon:hover {
     background-color: var(--bg-hover);
     color: var(--text-primary);
+}
+
+/* Vector Icon Utilities */
+.icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.icon-sm {
+    width: 14px;
+    height: 14px;
+}
+
+.icon-md {
+    width: 16px;
+    height: 16px;
+}
+
+.icon-lg {
+    width: 20px;
+    height: 20px;
+}
+
+.icon-hero {
+    width: 48px;
+    height: 48px;
 }
 
 .btn-action {
