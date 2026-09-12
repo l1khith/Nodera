@@ -21,3 +21,6 @@ notify.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 lopdf.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"

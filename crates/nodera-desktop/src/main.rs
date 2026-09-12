@@ -13,12 +13,20 @@ fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let icon = dioxus::desktop::tao::window::Icon::from_rgba(
+        include_bytes!("../../../assets/branding/nodera-icon-256.bin").to_vec(),
+        256,
+        256,
+    )
+    .expect("Valid Nodera window icon");
+
     let window = WindowBuilder::new()
         .with_title("Nodera — Knowledge Workspace")
+        .with_window_icon(Some(icon.clone()))
         .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(1120.0, 760.0))
         .with_min_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(720.0, 480.0));
 
-    let config = Config::new().with_window(window);
+    let config = Config::new().with_window(window).with_icon(icon);
 
     LaunchBuilder::desktop().with_cfg(config).launch(App);
 }
