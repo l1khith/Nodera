@@ -1,0 +1,28 @@
+[application]
+name = "nodera"
+default_platform = "desktop"
+asset_dir = "assets"
+
+[bundle]
+identifier = "com.nodera.workspace"
+publisher = "Nodera Contributors"
+icon = [
+    "assets/branding/nodera-icon-32.png",
+    "assets/branding/nodera-icon-128.png",
+    "assets/branding/nodera-icon-256.png",
+]
+resources = ["assets"]
+copyright = "AGPL-3.0"
+category = "Productivity"
+short_description = "Nodera — Knowledge Workspace"
+long_description = "Local-first knowledge workspace for high-speed thinking, connected notes, and instant PDF-to-Markdown digestion."
+
+[bundle.windows]
+icon_path = "assets/branding/nodera.ico"
+
+[bundle.macos]
+icon_path = "assets/branding/nodera.icns"
+identifier = "com.nodera.workspace"
+
+[bundle.deb]
+icon = "assets/branding/nodera-icon-256.png"
