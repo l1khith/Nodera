@@ -25,6 +25,10 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
             s.show_command_palette = false;
             return true;
         }
+        if s.show_template_modal {
+            s.show_template_modal = false;
+            return true;
+        }
         if s.show_pdf_import_modal {
             s.close_pdf_import_modal();
             return true;
@@ -93,6 +97,47 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
             if s.is_reading_mode {
                 s.update_toc_headings();
             }
+            true
+        }
+
+        // Ctrl+G: Cycle Views (Notes -> Tasks -> Library -> Notes)
+        // Ctrl+Shift+D: Open / Create Daily Note
+        Key::Character(ref c) if (c == "d" || c == "D") && modifiers.shift() => {
+            let mut s = state.write();
+            let _ = s.open_or_create_daily_note();
+            true
+        }
+
+        // Ctrl+T: Insert Template
+        Key::Character(ref c) if (c == "t" || c == "T") && !modifiers.shift() => {
+            let mut s = state.write();
+            if s.vault_service.is_some() {
+                s.show_template_modal = !s.show_template_modal;
+                s.template_search_query.clear();
+            }
+            true
+        }
+
+        // Ctrl+W: Close active tab
+        Key::Character(ref c) if c == "w" || c == "W" => {
+            let mut s = state.write();
+            if let Some(active_idx) = s.active_tab_index {
+                let _ = s.close_tab(active_idx);
+            }
+            true
+        }
+
+        // Ctrl+[: Navigate back
+        Key::Character(ref c) if c == "[" => {
+            let mut s = state.write();
+            let _ = s.navigate_back();
+            true
+        }
+
+        // Ctrl+]: Navigate forward
+        Key::Character(ref c) if c == "]" => {
+            let mut s = state.write();
+            let _ = s.navigate_forward();
             true
         }
 

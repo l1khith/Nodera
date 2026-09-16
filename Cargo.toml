@@ -37,3 +37,4 @@ tantivy = "0.22"
 lopdf = "0.45"
 regex = "1.11"
 notify = "8.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

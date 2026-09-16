@@ -120,6 +120,10 @@ impl VaultEntry {
             VaultEntry::Note(summary) => &summary.title,
         }
     }
+
+    pub fn is_folder(&self) -> bool {
+        matches!(self, VaultEntry::Folder { .. })
+    }
 }
 
 #[cfg(test)]

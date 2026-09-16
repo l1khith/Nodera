@@ -249,6 +249,162 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                         }
                     }
                 } else {
+                    // Bookmarks Section
+                    if !app_state.preferences.bookmarks.is_empty() {
+                        {
+                            let bookmarks = app_state.preferences.bookmarks.clone();
+                            let show_bookmarks = app_state.show_bookmarks_section;
+                            rsx! {
+                                div {
+                                    style: "margin-bottom: 8px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px;",
+                                    div {
+                                        style: "display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; cursor: pointer; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-radius: 4px;",
+                                        onclick: move |_| {
+                                            let mut s = state.write();
+                                            s.show_bookmarks_section = !s.show_bookmarks_section;
+                                        },
+                                        div { style: "display: flex; align-items: center; gap: 5px;",
+                                            if show_bookmarks {
+                                                IconChevronDown { size: 11 }
+                                            } else {
+                                                IconChevronRight { size: 11 }
+                                            }
+                                            IconBookmark { size: 12 }
+                                            span { "Bookmarks ({bookmarks.len()})" }
+                                        }
+                                    }
+                                    if show_bookmarks {
+                                        div { style: "display: flex; flex-direction: column; gap: 1px; margin-top: 2px;",
+                                            for path in &bookmarks {
+                                                {
+                                                    let p = path.clone();
+                                                    let is_act = active_path.as_ref() == Some(&p);
+                                                    let title = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string();
+                                                    let act_bg = if is_act { "var(--bg-active)" } else { "transparent" };
+                                                    let act_fg = if is_act { "var(--text-primary)" } else { "var(--text-secondary)" };
+                                                    let p_toggle = p.clone();
+                                                    let p_select = p.clone();
+                                                    rsx! {
+                                                        div {
+                                                            key: "{p.display()}",
+                                                            style: format!("padding: 3px 8px 3px 18px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; background-color: {act_bg}; color: {act_fg}; font-size: 12px;"),
+                                                            onclick: move |_| {
+                                                                let mut s = state.write();
+                                                                s.active_view = crate::state::ActiveView::Editor;
+                                                                let _ = s.select_note(&p_select);
+                                                            },
+                                                            span {
+                                                                style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; display: inline-flex; align-items: center; gap: 6px;",
+                                                                IconBookmark { size: 11 }
+                                                                span { "{title}" }
+                                                            }
+                                                            button {
+                                                                class: "btn-icon",
+                                                                style: "width: 18px; height: 18px; opacity: 0.6;",
+                                                                title: "Remove bookmark",
+                                                                onclick: move |e| {
+                                                                    e.stop_propagation();
+                                                                    state.write().toggle_bookmark(&p_toggle);
+                                                                },
+                                                                IconClose { size: 10 }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Recent Notes Section
+                    if !app_state.preferences.recent_notes.is_empty() {
+                        {
+                            let recent_notes = app_state.preferences.recent_notes.clone();
+                            let show_recent = app_state.show_recent_section;
+                            rsx! {
+                                div {
+                                    style: "margin-bottom: 8px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px;",
+                                    div {
+                                        style: "display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; cursor: pointer; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-radius: 4px;",
+                                        onclick: move |_| {
+                                            let mut s = state.write();
+                                            s.show_recent_section = !s.show_recent_section;
+                                        },
+                                        div { style: "display: flex; align-items: center; gap: 5px;",
+                                            if show_recent {
+                                                IconChevronDown { size: 11 }
+                                            } else {
+                                                IconChevronRight { size: 11 }
+                                            }
+                                            IconClock { size: 12 }
+                                            span { "Recent ({recent_notes.len()})" }
+                                        }
+                                        button {
+                                            class: "btn-icon",
+                                            style: "width: 18px; height: 18px; opacity: 0.5;",
+                                            title: "Clear recent notes",
+                                            onclick: move |e| {
+                                                e.stop_propagation();
+                                                state.write().clear_recent_notes();
+                                            },
+                                            IconClose { size: 10 }
+                                        }
+                                    }
+                                    if show_recent {
+                                        div { style: "display: flex; flex-direction: column; gap: 1px; margin-top: 2px;",
+                                            for path in &recent_notes {
+                                                {
+                                                    let p = path.clone();
+                                                    let is_act = active_path.as_ref() == Some(&p);
+                                                    let title = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string();
+                                                    let act_bg = if is_act { "var(--bg-active)" } else { "transparent" };
+                                                    let act_fg = if is_act { "var(--text-primary)" } else { "var(--text-secondary)" };
+                                                    let p_remove = p.clone();
+                                                    let p_select = p.clone();
+                                                    rsx! {
+                                                        div {
+                                                            key: "{p.display()}",
+                                                            style: format!("padding: 3px 8px 3px 18px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; background-color: {act_bg}; color: {act_fg}; font-size: 12px;"),
+                                                            onclick: move |_| {
+                                                                let mut s = state.write();
+                                                                s.active_view = crate::state::ActiveView::Editor;
+                                                                let _ = s.select_note(&p_select);
+                                                            },
+                                                            span {
+                                                                style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; display: inline-flex; align-items: center; gap: 6px;",
+                                                                IconClock { size: 11 }
+                                                                span { "{title}" }
+                                                            }
+                                                            button {
+                                                                class: "btn-icon",
+                                                                style: "width: 18px; height: 18px; opacity: 0.6;",
+                                                                title: "Remove from recent",
+                                                                onclick: move |e| {
+                                                                    e.stop_propagation();
+                                                                    state.write().remove_recent_note(&p_remove);
+                                                                },
+                                                                IconClose { size: 10 }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Vault File Tree Header
+                    div {
+                        style: "padding: 4px 8px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px;",
+                        span { "Files" }
+                    }
+
                     for entry in entries {
                         {
                             let entry_path = entry.relative_path().to_path_buf();
@@ -260,8 +416,9 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                     rsx! {
                                         div {
                                             key: "{relative_path.display()}",
-                                            style: format!("padding: 4px 8px; padding-left: {pad_left}px; font-weight: 600; font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; margin-top: 4px;"),
-                                            IconFolder { size: 14 }
+                                            style: format!("padding: 5px 8px; padding-left: {pad_left}px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; margin-top: 8px; margin-bottom: 2px; user-select: none;"),
+                                            IconChevronDown { size: 11, class: "opacity-70" }
+                                            IconFolder { size: 13, class: "opacity-80" }
                                             span { "{name}" }
                                         }
                                     }
@@ -271,6 +428,7 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                     let click_path = summary_path.clone();
                                     let delete_target = summary_path.clone();
                                     let rename_target = summary_path.clone();
+                                    let bookmark_target = summary_path.clone();
                                     let active_bg = if is_active { "var(--bg-active)" } else { "transparent" };
                                     let active_color = if is_active { "var(--text-primary)" } else { "var(--text-secondary)" };
                                     let depth = summary_path.components().count().saturating_sub(1);
@@ -291,6 +449,16 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                             }
                                             div {
                                                 style: "display: flex; gap: 2px;",
+                                                button {
+                                                    class: "btn-icon",
+                                                    style: if app_state.is_bookmarked(&summary_path) { "width: 20px; height: 20px; color: var(--accent);" } else { "width: 20px; height: 20px; opacity: 0.4;" },
+                                                    title: if app_state.is_bookmarked(&summary_path) { "Remove bookmark" } else { "Bookmark note" },
+                                                    onclick: move |e| {
+                                                        e.stop_propagation();
+                                                        state.write().toggle_bookmark(&bookmark_target);
+                                                    },
+                                                    IconBookmark { size: 11 }
+                                                }
                                                 button {
                                                     class: "btn-icon",
                                                     style: "width: 20px; height: 20px;",

@@ -32,6 +32,7 @@ pub mod actions {
     pub const ZOOM_OUT: &str = "Zoom Out";
     pub const RESET_VIEW: &str = "Reset View";
     pub const REFRESH_GRAPH: &str = "Re-layout Graph";
+    pub const FIT_GRAPH: &str = "Fit Graph to Screen";
     pub const IMPORT_PDF: &str = "Import PDF as Markdown";
     pub const IMPORT_PDF_BTN: &str = "Import PDF";
     pub const SAVE: &str = "Save";
@@ -69,6 +70,8 @@ pub mod actions {
     pub const REBUILD_INDEX_NOW: &str = "Rebuild Index Now";
     pub const HIDE_DETAILS: &str = "Hide Details";
     pub const VIEW_DETAILS: &str = "View Technical Details";
+    pub const INSERT_TEMPLATE: &str = "Insert Template";
+    pub const TEMPLATES: &str = "Templates";
 }
 
 pub mod tooltips {
@@ -87,6 +90,7 @@ pub mod tooltips {
     pub const CLOSE_ESC: &str = "Close (Esc)";
     pub const RENAME_NOTE: &str = "Rename";
     pub const DELETE_NOTE: &str = "Delete";
+    pub const INSERT_TEMPLATE: &str = "Insert Template (Ctrl+T)";
 }
 
 pub mod placeholders {
@@ -96,6 +100,30 @@ pub mod placeholders {
     pub const FILTER_TASKS: &str = "Filter tasks...";
     pub const FILTER_GRAPH: &str = "Filter graph notes...";
     pub const TYPE_MARKDOWN: &str = "Start typing Markdown here...";
+}
+
+pub mod graph {
+    pub const FILTERS: &str = "Filters";
+    pub const GROUPS: &str = "Groups";
+    pub const DISPLAY: &str = "Display";
+    pub const FORCES: &str = "Forces";
+    pub const SEARCH_FILES: &str = "Search files...";
+    pub const TAGS: &str = "Tags";
+    pub const ATTACHMENTS: &str = "Attachments";
+    pub const EXISTING_FILES_ONLY: &str = "Existing files only";
+    pub const ORPHANS: &str = "Orphans";
+    pub const ARROWS: &str = "Arrows";
+    pub const TEXT_FADE: &str = "Text fade threshold";
+    pub const NODE_SIZE: &str = "Node size";
+    pub const LINK_THICKNESS: &str = "Link thickness";
+    pub const ANIMATE: &str = "Animate";
+    pub const CENTER_FORCE: &str = "Center force";
+    pub const REPEL_FORCE: &str = "Repel force";
+    pub const LINK_FORCE: &str = "Link force";
+    pub const LINK_DISTANCE: &str = "Link distance";
+    pub const RESTORE_DEFAULTS: &str = "Restore default settings";
+    pub const CLOSE_CONTROLS: &str = "Close controls";
+    pub const TOGGLE_CONTROLS: &str = "Graph controls";
 }
 
 pub mod empty_states {
@@ -196,6 +224,10 @@ pub mod palette {
         "Restore default sidebar and context panel widths",
     );
     pub const TOGGLE_THEME: (&str, &str) = ("Toggle Theme", "Switch between dark and light themes");
+    pub const INSERT_TEMPLATE: (&str, &str) = (
+        "Insert Template",
+        "Insert dynamic note template with variable expansion (Ctrl+T)",
+    );
     pub const REBUILD_INDEX: (&str, &str) = (
         "Rebuild Search Index",
         "Clean and recreate SQLite metadata and Tantivy FTS",

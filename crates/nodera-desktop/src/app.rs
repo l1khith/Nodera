@@ -116,6 +116,15 @@ pub fn App() -> Element {
                         }
                         button {
                             class: "btn-icon",
+                            title: "Today's Daily Note (Ctrl+Shift+D)",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                let _ = s.open_or_create_daily_note();
+                            },
+                            IconCalendar { size: 16 }
+                        }
+                        button {
+                            class: "btn-icon",
                             title: tooltips::IMPORT_PDF,
                             onclick: move |_| {
                                 let mut s = state.write();

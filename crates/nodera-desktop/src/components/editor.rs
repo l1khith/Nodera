@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 
-use crate::icons::{IconBook, IconCheck, IconEdit, IconList, IconNotes, IconPlus, IconSave};
+use crate::icons::{
+    IconBook, IconBookmark, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconEdit,
+    IconFile, IconList, IconNotes, IconPin, IconPlus, IconSave, IconTemplate,
+};
 use crate::state::AppState;
 use crate::strings::{actions, app as app_strings, empty_states, placeholders, tooltips};
 
@@ -22,6 +25,12 @@ pub fn Editor(state: Signal<AppState>) -> Element {
     let is_reading_mode = app_state.is_reading_mode;
     let content = app_state.editor_content.clone();
 
+    // Tabs & History state
+    let open_tabs = app_state.open_tabs.clone();
+    let active_tab_index = app_state.active_tab_index;
+    let can_back = app_state.can_navigate_back();
+    let can_forward = app_state.can_navigate_forward();
+
     // Markdown HTML rendering for reading mode
     let rendered_html = if is_reading_mode {
         nodera_markdown::render_to_html(&content)
@@ -35,6 +44,101 @@ pub fn Editor(state: Signal<AppState>) -> Element {
 
     rsx! {
         main { class: "pane-center",
+            // Multi-Tab Bar
+            if !open_tabs.is_empty() {
+                div { class: "tab-bar",
+                    // Back & Forward navigation buttons
+                    div { style: "display: flex; align-items: center; gap: 2px; margin-right: 6px;",
+                        button {
+                            class: "btn-icon",
+                            style: if can_back { "width: 24px; height: 24px;" } else { "width: 24px; height: 24px; opacity: 0.3; cursor: default;" },
+                            title: "Navigate Back (Alt+Left)",
+                            disabled: !can_back,
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                let _ = s.navigate_back();
+                            },
+                            IconChevronLeft { size: 13 }
+                        }
+                        button {
+                            class: "btn-icon",
+                            style: if can_forward { "width: 24px; height: 24px;" } else { "width: 24px; height: 24px; opacity: 0.3; cursor: default;" },
+                            title: "Navigate Forward (Alt+Right)",
+                            disabled: !can_forward,
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                let _ = s.navigate_forward();
+                            },
+                            IconChevronRight { size: 13 }
+                        }
+                    }
+
+                    // Open Tab items
+                    for (idx, tab) in open_tabs.iter().enumerate() {
+                        {
+                            let is_active = active_tab_index == Some(idx);
+                            let is_pinned = tab.is_pinned;
+                            let title = tab.title.clone();
+                            let path_str = tab.relative_path.display().to_string();
+
+                            rsx! {
+                                div {
+                                    key: "{path_str}",
+                                    class: if is_active { "tab-item active" } else { "tab-item" },
+                                    title: "{path_str}",
+                                    onclick: move |_| {
+                                        let mut s = state.write();
+                                        let _ = s.select_tab(idx);
+                                    },
+                                    if is_pinned {
+                                        span {
+                                            style: "color: var(--accent); cursor: pointer; display: inline-flex;",
+                                            title: "Unpin tab",
+                                            onclick: move |e| {
+                                                e.stop_propagation();
+                                                state.write().toggle_pin_tab(idx);
+                                            },
+                                            IconPin { size: 11 }
+                                        }
+                                    } else {
+                                        IconFile { size: 12, class: "opacity-70" }
+                                    }
+                                    span { class: "tab-title", "{title}" }
+                                    if is_active && is_dirty {
+                                        span { class: "tab-dirty-dot", title: "Unsaved changes" }
+                                    }
+                                    if !is_pinned {
+                                        span {
+                                            class: "tab-close",
+                                            title: "Close tab (Ctrl+W)",
+                                            onclick: move |e| {
+                                                e.stop_propagation();
+                                                let mut s = state.write();
+                                                let _ = s.close_tab(idx);
+                                            },
+                                            IconClose { size: 11 }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Tab actions
+                    div { style: "margin-left: auto; display: flex; align-items: center; gap: 4px;",
+                        button {
+                            class: "btn-icon",
+                            style: "width: 24px; height: 24px;",
+                            title: "New Note (Ctrl+N)",
+                            onclick: move |_| {
+                                state.write().show_new_note_dialog = true;
+                            },
+                            IconPlus { size: 13 }
+                        }
+                    }
+                }
+            }
+
             if !has_note {
                 div {
                     style: "flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-muted); padding: 40px;",
@@ -59,6 +163,10 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                         div { style: "font-weight: 600; margin-bottom: 4px; color: var(--text-primary);", "Keyboard Shortcuts" }
                         div { "Ctrl + N : New Note" }
                         div { "Ctrl + S : Save Note" }
+                        div { "Ctrl + W : Close Tab" }
+                        div { "Alt + Left / Right : Navigate Back / Forward" }
+                        div { "Ctrl + Shift + D : Daily Note" }
+                        div { "Ctrl + T : Insert Template" }
                         div { "Ctrl + E : Toggle Reading / Edit Mode" }
                     }
                 }
@@ -67,12 +175,26 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                 div {
                     style: "height: 44px; border-bottom: 1px solid var(--border); background-color: var(--bg-surface); display: flex; align-items: center; justify-content: space-between; padding: 0 16px;",
                     div { style: "display: flex; align-items: center; gap: 10px;",
-                        span { style: "font-size: 15px; font-weight: 600; color: var(--text-primary);",
-                            "{note_title}"
+                        // Breadcrumbs path navigation
+                        div { class: "breadcrumb-container",
+                            {
+                                let components: Vec<&str> = note_path.split(['/', '\\']).collect();
+                                let total = components.len();
+                                rsx! {
+                                    for (i, seg) in components.iter().enumerate() {
+                                        if i > 0 {
+                                            span { style: "opacity: 0.4;", "/" }
+                                        }
+                                        if i + 1 == total {
+                                            span { class: "breadcrumb-active", "{note_title}" }
+                                        } else {
+                                            span { class: "breadcrumb-segment", "{seg}" }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        span { style: "font-size: 11px; color: var(--text-muted);",
-                            "({note_path})"
-                        }
+
                         if is_dirty {
                             span {
                                 style: "background-color: var(--accent-focus); color: var(--accent-hover); font-size: 11px; padding: 2px 6px; border-radius: 3px; display: inline-flex; align-items: center; gap: 5px;",
@@ -91,6 +213,49 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                     div { style: "display: flex; align-items: center; gap: 8px;",
                         span { style: "font-size: 11px; color: var(--text-muted); margin-right: 8px;",
                             "{words_count} words · {chars_count} chars"
+                        }
+                        if let Some(active_idx) = active_tab_index {
+                            {
+                                let is_pinned = open_tabs.get(active_idx).map(|t| t.is_pinned).unwrap_or(false);
+                                rsx! {
+                                    button {
+                                        class: "btn-icon",
+                                        title: if is_pinned { "Unpin tab" } else { "Pin tab" },
+                                        onclick: move |_| {
+                                            state.write().toggle_pin_tab(active_idx);
+                                        },
+                                        IconPin { size: 14 }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(active_note) = &app_state.active_note {
+                            {
+                                let is_bm = app_state.is_bookmarked(&active_note.relative_path);
+                                let p = active_note.relative_path.clone();
+                                rsx! {
+                                    button {
+                                        class: "btn-icon",
+                                        style: if is_bm { "color: var(--accent);" } else { "" },
+                                        title: if is_bm { "Remove bookmark" } else { "Bookmark note" },
+                                        onclick: move |_| {
+                                            state.write().toggle_bookmark(&p);
+                                        },
+                                        IconBookmark { size: 14 }
+                                    }
+                                }
+                            }
+                        }
+                        button {
+                            class: "btn-action",
+                            title: tooltips::INSERT_TEMPLATE,
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_template_modal = true;
+                                s.template_search_query.clear();
+                            },
+                            IconTemplate { size: 14 }
+                            span { "{actions::TEMPLATES}" }
                         }
                         button {
                             class: "btn-action",
@@ -144,7 +309,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                             if !app_state.toc_headings.is_empty() {
                                 div {
                                     class: "reading-toc",
-                                    style: "width: 220px; border-right: 1px solid var(--border-color); background: var(--bg-secondary); overflow-y: auto; padding: 16px 12px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;",
+                                    style: "width: 220px; border-right: 1px solid var(--border); background: var(--bg-surface); overflow-y: auto; padding: 16px 12px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;",
 
                                     div {
                                         style: "font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;",
@@ -182,7 +347,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
 
                                         rsx! {
                                             div {
-                                                style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 24px; border-top: 1px solid var(--border-color); background: var(--bg-secondary); font-size: 12px; color: var(--text-muted);",
+                                                style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 24px; border-top: 1px solid var(--border); background: var(--bg-surface); font-size: 12px; color: var(--text-muted);",
 
                                                 div {
                                                     style: "display: flex; align-items: center; gap: 12px; flex: 1; max-width: 360px;",
