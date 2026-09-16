@@ -340,6 +340,37 @@ impl SqliteIndex {
         Ok(tags)
     }
 
+    /// Queries all note paths and their associated tags.
+    pub fn query_all_note_tags(
+        &self,
+    ) -> Result<std::collections::HashMap<std::path::PathBuf, Vec<String>>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT f.path, t.tag
+                 FROM tags t
+                 JOIN files f ON t.note_id = f.id
+                 ORDER BY f.path ASC, t.tag ASC",
+            )
+            .map_err(db_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(db_err)?;
+
+        let mut map: std::collections::HashMap<std::path::PathBuf, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in rows {
+            let (path, tag) = r.map_err(db_err)?;
+            map.entry(std::path::PathBuf::from(path))
+                .or_default()
+                .push(tag);
+        }
+        Ok(map)
+    }
+
     /// Queries paths of notes that contain links to target_name or target_path.
     pub fn query_backlinks(&self, target_name: &str) -> Result<Vec<String>> {
         let clean_target = target_name.trim_end_matches(".md");

@@ -29,8 +29,153 @@ fn default_autosave() -> u32 {
     2
 }
 
+fn default_text_fade() -> f32 {
+    -1.10
+}
+fn default_node_size() -> f32 {
+    1.0
+}
+fn default_link_thickness() -> f32 {
+    1.0
+}
+fn default_center_force() -> f32 {
+    0.40
+}
+fn default_repel_force() -> f32 {
+    8.0
+}
+fn default_link_force() -> f32 {
+    0.80
+}
+fn default_link_distance() -> f32 {
+    120.0
+}
+
+/// Filter settings for knowledge graph view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphFilterSettings {
+    #[serde(default)]
+    pub search_query: String,
+    #[serde(default)]
+    pub tags: bool,
+    #[serde(default)]
+    pub attachments: bool,
+    #[serde(default)]
+    pub existing_files_only: bool,
+    #[serde(default = "default_true")]
+    pub orphans: bool,
+}
+
+impl Default for GraphFilterSettings {
+    fn default() -> Self {
+        Self {
+            search_query: String::new(),
+            tags: false,
+            attachments: false,
+            existing_files_only: false,
+            orphans: true,
+        }
+    }
+}
+
+/// Visual display settings for knowledge graph rendering.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphDisplaySettings {
+    #[serde(default)]
+    pub arrows: bool,
+    #[serde(default = "default_text_fade")]
+    pub text_fade_threshold: f32,
+    #[serde(default = "default_node_size")]
+    pub node_size: f32,
+    #[serde(default = "default_link_thickness")]
+    pub link_thickness: f32,
+    #[serde(default = "default_true")]
+    pub animate: bool,
+}
+
+impl Default for GraphDisplaySettings {
+    fn default() -> Self {
+        Self {
+            arrows: false,
+            text_fade_threshold: default_text_fade(),
+            node_size: default_node_size(),
+            link_thickness: default_link_thickness(),
+            animate: true,
+        }
+    }
+}
+
+/// Physics force configuration for knowledge graph simulation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphForcesSettings {
+    #[serde(default = "default_center_force")]
+    pub center_force: f32,
+    #[serde(default = "default_repel_force")]
+    pub repel_force: f32,
+    #[serde(default = "default_link_force")]
+    pub link_force: f32,
+    #[serde(default = "default_link_distance")]
+    pub link_distance: f32,
+}
+
+impl Default for GraphForcesSettings {
+    fn default() -> Self {
+        Self {
+            center_force: default_center_force(),
+            repel_force: default_repel_force(),
+            link_force: default_link_force(),
+            link_distance: default_link_distance(),
+        }
+    }
+}
+
+/// Collapsed/expanded state for graph controls sections.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphExpandedSections {
+    #[serde(default = "default_true")]
+    pub filters: bool,
+    #[serde(default)]
+    pub groups: bool,
+    #[serde(default)]
+    pub display: bool,
+    #[serde(default)]
+    pub forces: bool,
+}
+
+impl Default for GraphExpandedSections {
+    fn default() -> Self {
+        Self {
+            filters: true,
+            groups: false,
+            display: false,
+            forces: false,
+        }
+    }
+}
+
+/// Comprehensive configuration for knowledge graph view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct GraphSettings {
+    #[serde(default)]
+    pub filters: GraphFilterSettings,
+    #[serde(default)]
+    pub display: GraphDisplaySettings,
+    #[serde(default)]
+    pub forces: GraphForcesSettings,
+    #[serde(default)]
+    pub is_panel_open: bool,
+    #[serde(default)]
+    pub expanded_sections: GraphExpandedSections,
+}
+
+impl GraphSettings {
+    pub fn reset_to_defaults(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// Persistent local state remembered across application restarts.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppPreferences {
     pub last_vault: Option<PathBuf>,
     pub recent_vaults: Vec<PathBuf>,
@@ -49,6 +194,12 @@ pub struct AppPreferences {
     pub show_line_numbers: bool,
     #[serde(default = "default_autosave")]
     pub auto_save_seconds: u32,
+    #[serde(default)]
+    pub graph_settings: GraphSettings,
+    #[serde(default)]
+    pub bookmarks: Vec<PathBuf>,
+    #[serde(default)]
+    pub recent_notes: Vec<PathBuf>,
 }
 
 impl Default for AppPreferences {
@@ -64,6 +215,9 @@ impl Default for AppPreferences {
             reading_font_size: 16,
             show_line_numbers: true,
             auto_save_seconds: 2,
+            graph_settings: GraphSettings::default(),
+            bookmarks: Vec::new(),
+            recent_notes: Vec::new(),
         }
     }
 }
@@ -142,6 +296,7 @@ pub struct CommandPaletteItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteAction {
     OpenNote(PathBuf),
+    OpenDailyNote,
     CreateNote,
     ImportPdf,
     SwitchView(ActiveView),
@@ -149,6 +304,7 @@ pub enum PaletteAction {
     ToggleReadingMode,
     OpenSettings,
     ResetLayout,
+    InsertTemplate,
     RebuildIndex,
 }
 
@@ -166,6 +322,23 @@ pub struct LibraryBook {
     pub reading_progress_pct: u32,
 }
 
+/// An open tab in the editor pane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenTab {
+    pub relative_path: PathBuf,
+    pub title: String,
+    #[serde(default)]
+    pub is_pinned: bool,
+}
+
+/// Note template item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateItem {
+    pub name: String,
+    pub description: String,
+    pub content: String,
+}
+
 /// Runtime application state driving the UI.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -178,6 +351,12 @@ pub struct AppState {
     pub editor_content: String,
     pub is_dirty: bool,
     pub is_reading_mode: bool,
+
+    // Tabs & Navigation History
+    pub open_tabs: Vec<OpenTab>,
+    pub active_tab_index: Option<usize>,
+    pub nav_history: Vec<PathBuf>,
+    pub nav_history_index: usize,
 
     pub active_view: ActiveView,
     pub vault_index: Option<Arc<Mutex<VaultIndex>>>,
@@ -202,6 +381,10 @@ pub struct AppState {
     // Reading mode Table of Contents
     pub toc_headings: Vec<(usize, String)>,
 
+    // Sidebar sections
+    pub show_bookmarks_section: bool,
+    pub show_recent_section: bool,
+
     // Library view
     pub library_search_query: String,
 
@@ -223,6 +406,10 @@ pub struct AppState {
     pub error_dialog_title: String,
     pub error_dialog_message: String,
     pub error_dialog_details: Option<String>,
+
+    // Template modal
+    pub show_template_modal: bool,
+    pub template_search_query: String,
 
     // PDF Import modal
     pub show_pdf_import_modal: bool,
@@ -252,6 +439,11 @@ impl Default for AppState {
             is_dirty: false,
             is_reading_mode: false,
 
+            open_tabs: Vec::new(),
+            active_tab_index: None,
+            nav_history: Vec::new(),
+            nav_history_index: 0,
+
             active_view: ActiveView::Editor,
             vault_index: None,
             search_query: String::new(),
@@ -268,6 +460,9 @@ impl Default for AppState {
             is_resizing_sidebar: false,
             is_resizing_context: false,
             toc_headings: Vec::new(),
+
+            show_bookmarks_section: true,
+            show_recent_section: true,
 
             library_search_query: String::new(),
 
@@ -289,6 +484,9 @@ impl Default for AppState {
             error_dialog_title: String::new(),
             error_dialog_message: String::new(),
             error_dialog_details: None,
+
+            show_template_modal: false,
+            template_search_query: String::new(),
 
             show_pdf_import_modal: false,
             pdf_selected_path: None,
@@ -394,17 +592,377 @@ impl AppState {
         Ok(())
     }
 
-    /// Opens a note into the editor.
+    /// Opens a note into the editor and manages open tabs and navigation history.
     pub fn select_note(&mut self, relative_path: impl AsRef<Path>) -> Result<()> {
         let rel = relative_path.as_ref();
         if let Some(service) = &self.vault_service {
             let note = service.read_note(rel)?;
+            let rel_buf = rel.to_path_buf();
+            let title = note.title.clone();
+
             self.editor_content = note.content.clone();
             self.active_note = Some(note);
             self.active_view = ActiveView::Editor;
             self.is_dirty = false;
             self.status_message = format!("Opened '{}'", rel.display());
+
+            // Tab management
+            if let Some(idx) = self
+                .open_tabs
+                .iter()
+                .position(|t| t.relative_path == rel_buf)
+            {
+                self.active_tab_index = Some(idx);
+            } else {
+                self.open_tabs.push(OpenTab {
+                    relative_path: rel_buf.clone(),
+                    title,
+                    is_pinned: false,
+                });
+                self.active_tab_index = Some(self.open_tabs.len() - 1);
+            }
+
+            self.record_recent_note(&rel_buf);
+
+            // Navigation history
+            if self.nav_history.get(self.nav_history_index) != Some(&rel_buf) {
+                if !self.nav_history.is_empty()
+                    && self.nav_history_index + 1 < self.nav_history.len()
+                {
+                    self.nav_history.truncate(self.nav_history_index + 1);
+                }
+                self.nav_history.push(rel_buf);
+                self.nav_history_index = self.nav_history.len() - 1;
+            }
         }
+        Ok(())
+    }
+
+    /// Selects an open tab by index.
+    pub fn select_tab(&mut self, index: usize) -> Result<()> {
+        if let Some(tab) = self.open_tabs.get(index) {
+            let path = tab.relative_path.clone();
+            self.select_note(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Closes a tab by index.
+    pub fn close_tab(&mut self, index: usize) -> Result<()> {
+        if index >= self.open_tabs.len() {
+            return Ok(());
+        }
+
+        let is_closing_active = self.active_tab_index == Some(index);
+        let _ = self.open_tabs.remove(index);
+
+        if self.open_tabs.is_empty() {
+            self.active_tab_index = None;
+            self.active_note = None;
+            self.editor_content.clear();
+            self.is_dirty = false;
+        } else if is_closing_active {
+            let next_idx = index.min(self.open_tabs.len() - 1);
+            let next_path = self.open_tabs[next_idx].relative_path.clone();
+            self.select_note(&next_path)?;
+        } else if let Some(cur_idx) = self.active_tab_index {
+            if index < cur_idx {
+                self.active_tab_index = Some(cur_idx - 1);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Closes all tabs except the one specified (preserves pinned tabs).
+    pub fn close_other_tabs(&mut self, keep_index: usize) -> Result<()> {
+        if keep_index >= self.open_tabs.len() {
+            return Ok(());
+        }
+        let keep_tab = self.open_tabs[keep_index].clone();
+        self.open_tabs
+            .retain(|t| t.is_pinned || t.relative_path == keep_tab.relative_path);
+        if let Some(pos) = self
+            .open_tabs
+            .iter()
+            .position(|t| t.relative_path == keep_tab.relative_path)
+        {
+            self.active_tab_index = Some(pos);
+            self.select_note(&keep_tab.relative_path)?;
+        }
+        Ok(())
+    }
+
+    /// Closes all non-pinned tabs.
+    pub fn close_all_tabs(&mut self) -> Result<()> {
+        self.open_tabs.retain(|t| t.is_pinned);
+        if let Some(first_pinned) = self.open_tabs.first().cloned() {
+            self.active_tab_index = Some(0);
+            self.select_note(&first_pinned.relative_path)?;
+        } else {
+            self.active_tab_index = None;
+            self.active_note = None;
+            self.editor_content.clear();
+            self.is_dirty = false;
+        }
+        Ok(())
+    }
+
+    /// Toggles the pinned state of a tab.
+    pub fn toggle_pin_tab(&mut self, index: usize) {
+        if let Some(tab) = self.open_tabs.get_mut(index) {
+            tab.is_pinned = !tab.is_pinned;
+        }
+    }
+
+    /// Toggles a note's bookmark status.
+    pub fn toggle_bookmark(&mut self, path: impl AsRef<Path>) {
+        let p = path.as_ref().to_path_buf();
+        if let Some(idx) = self.preferences.bookmarks.iter().position(|b| b == &p) {
+            self.preferences.bookmarks.remove(idx);
+            self.status_message = format!("Removed bookmark: {}", p.display());
+        } else {
+            self.preferences.bookmarks.push(p.clone());
+            self.status_message = format!("Bookmarked: {}", p.display());
+        }
+        self.preferences.save();
+    }
+
+    /// Checks if a note is bookmarked.
+    pub fn is_bookmarked(&self, path: impl AsRef<Path>) -> bool {
+        self.preferences
+            .bookmarks
+            .iter()
+            .any(|b| b == path.as_ref())
+    }
+
+    /// Records a note as recently opened, keeping up to 10 entries.
+    pub fn record_recent_note(&mut self, path: impl AsRef<Path>) {
+        let p = path.as_ref().to_path_buf();
+        self.preferences.recent_notes.retain(|x| x != &p);
+        self.preferences.recent_notes.insert(0, p);
+        if self.preferences.recent_notes.len() > 10 {
+            self.preferences.recent_notes.truncate(10);
+        }
+        self.preferences.save();
+    }
+
+    /// Removes a note from recent list.
+    pub fn remove_recent_note(&mut self, path: impl AsRef<Path>) {
+        let p = path.as_ref();
+        self.preferences.recent_notes.retain(|x| x != p);
+        self.preferences.save();
+    }
+
+    /// Clears all recent notes.
+    pub fn clear_recent_notes(&mut self) {
+        self.preferences.recent_notes.clear();
+        self.preferences.save();
+    }
+
+    /// Checks if back navigation is possible.
+    pub fn can_navigate_back(&self) -> bool {
+        self.nav_history_index > 0
+    }
+
+    /// Checks if forward navigation is possible.
+    pub fn can_navigate_forward(&self) -> bool {
+        !self.nav_history.is_empty() && self.nav_history_index + 1 < self.nav_history.len()
+    }
+
+    /// Moves back one step in note history.
+    pub fn navigate_back(&mut self) -> Result<()> {
+        if self.can_navigate_back() {
+            self.nav_history_index -= 1;
+            let path = self.nav_history[self.nav_history_index].clone();
+            if let Some(service) = &self.vault_service {
+                let note = service.read_note(&path)?;
+                let title = note.title.clone();
+                self.editor_content = note.content.clone();
+                self.active_note = Some(note);
+                self.active_view = ActiveView::Editor;
+                self.is_dirty = false;
+                if let Some(idx) = self.open_tabs.iter().position(|t| t.relative_path == path) {
+                    self.active_tab_index = Some(idx);
+                } else {
+                    self.open_tabs.push(OpenTab {
+                        relative_path: path.clone(),
+                        title,
+                        is_pinned: false,
+                    });
+                    self.active_tab_index = Some(self.open_tabs.len() - 1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Moves forward one step in note history.
+    pub fn navigate_forward(&mut self) -> Result<()> {
+        if self.can_navigate_forward() {
+            self.nav_history_index += 1;
+            let path = self.nav_history[self.nav_history_index].clone();
+            if let Some(service) = &self.vault_service {
+                let note = service.read_note(&path)?;
+                let title = note.title.clone();
+                self.editor_content = note.content.clone();
+                self.active_note = Some(note);
+                self.active_view = ActiveView::Editor;
+                self.is_dirty = false;
+                if let Some(idx) = self.open_tabs.iter().position(|t| t.relative_path == path) {
+                    self.active_tab_index = Some(idx);
+                } else {
+                    self.open_tabs.push(OpenTab {
+                        relative_path: path.clone(),
+                        title,
+                        is_pinned: false,
+                    });
+                    self.active_tab_index = Some(self.open_tabs.len() - 1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens or creates today's Daily Note (e.g. `Daily/YYYY-MM-DD.md`).
+    pub fn open_or_create_daily_note(&mut self) -> Result<()> {
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let rel_path = PathBuf::from("Daily").join(format!("{date_str}.md"));
+
+        if let Some(service) = &self.vault_service {
+            if service.read_note(&rel_path).is_err() {
+                let initial_body = format!(
+                    "---\ntitle: {}\ndate: {}\ntags:\n  - daily\n---\n\n# Daily Note — {}\n\n## Tasks\n- [ ] \n\n## Notes\n\n",
+                    date_str, date_str, date_str
+                );
+                let _ = service.create_note(Some("Daily"), &date_str, Some(&initial_body))?;
+                self.refresh_entries()?;
+            }
+            self.select_note(&rel_path)?;
+        }
+        Ok(())
+    }
+
+    /// Returns available templates from `<vault>/Templates` folder as well as built-in default templates.
+    pub fn get_available_templates(&self) -> Vec<TemplateItem> {
+        let mut templates = Vec::new();
+
+        // 1. Vault templates from `Templates/` or `templates/` folder
+        if let Some(vault_path) = &self.vault_path {
+            for sub in &["Templates", "templates"] {
+                let tmpl_dir = vault_path.join(sub);
+                if tmpl_dir.is_dir() {
+                    if let Ok(dir_entries) = std::fs::read_dir(&tmpl_dir) {
+                        for entry in dir_entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file()
+                                && path.extension().and_then(|s| s.to_str()) == Some("md")
+                            {
+                                if let Ok(content) = std::fs::read_to_string(&path) {
+                                    let name = path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("Untitled")
+                                        .to_string();
+                                    let description = content
+                                        .lines()
+                                        .find(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                                        .map(|l| l.trim().chars().take(80).collect::<String>())
+                                        .unwrap_or_else(|| "Custom vault template".to_string());
+                                    templates.push(TemplateItem {
+                                        name,
+                                        description,
+                                        content,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Built-in starter templates (if not already present with same name)
+        let builtins = vec![
+            TemplateItem {
+                name: "Daily Journal".to_string(),
+                description: "Focus of the day, notes, meetings, and reflections".to_string(),
+                content: "# Daily Log: {{date}}\n\n## Focus of the Day\n- [ ] \n\n## Notes & Discoveries\n\n## Meetings & Communications\n\n## End of Day Reflection\n".to_string(),
+            },
+            TemplateItem {
+                name: "Meeting Notes".to_string(),
+                description: "Attendees, agenda, discussion notes, and action items".to_string(),
+                content: "# Meeting: {{title}}\n**Date**: {{datetime}}\n**Attendees**: \n\n## Agenda\n1. \n\n## Discussion & Decisions\n\n## Action Items\n- [ ] \n".to_string(),
+            },
+            TemplateItem {
+                name: "Project Plan".to_string(),
+                description: "Overview, milestones, deliverables, and references".to_string(),
+                content: "# Project: {{title}}\n**Created**: {{date}}\n**Status**: #project/planning\n\n## Overview & Objectives\n\n## Key Milestones\n- [ ] Milestone 1 (Target: )\n- [ ] Milestone 2 (Target: )\n\n## Tasks & Deliverables\n- [ ] Scoping & Requirements\n- [ ] Initial Architecture\n\n## References & Links\n".to_string(),
+            },
+            TemplateItem {
+                name: "Book / Literature Note".to_string(),
+                description: "Author, summary, key insights, and quotes".to_string(),
+                content: "# Book: {{title}}\n**Author**: \n**Read Date**: {{date}}\n**Tags**: #book-review\n\n## Summary\n\n## Key Insights\n1. \n\n## Actionable Takeaways\n- [ ] \n\n## Memorable Quotes\n> \n".to_string(),
+            },
+            TemplateItem {
+                name: "Weekly Review".to_string(),
+                description: "Highlights, completed goals, challenges, and next week's focus".to_string(),
+                content: "# Weekly Review: {{date}}\n\n## Big Wins & Highlights\n- \n\n## Goal Progress\n- [ ] Goal 1: \n- [ ] Goal 2: \n\n## Challenges & Blockers\n\n## Priorities for Next Week\n1. \n2. \n".to_string(),
+            },
+        ];
+
+        for builtin in builtins {
+            if !templates
+                .iter()
+                .any(|t| t.name.eq_ignore_ascii_case(&builtin.name))
+            {
+                templates.push(builtin);
+            }
+        }
+
+        templates
+    }
+
+    /// Inserts a template into the active note (or creates a new note if none active), expanding dynamic placeholders.
+    pub fn insert_template(
+        &mut self,
+        template_name: Option<&str>,
+        template_content: &str,
+    ) -> Result<()> {
+        if self.active_note.is_none() {
+            let note_name = template_name.unwrap_or("New Note");
+            self.create_note(note_name, None)?;
+        }
+
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let time_str = now.format("%H:%M").to_string();
+        let datetime_str = now.format("%Y-%m-%d %H:%M").to_string();
+        let title_str = self
+            .active_note
+            .as_ref()
+            .map(|n| n.title.clone())
+            .unwrap_or_else(|| "Untitled".to_string());
+
+        let expanded = template_content
+            .replace("{{date}}", &date_str)
+            .replace("{{time}}", &time_str)
+            .replace("{{datetime}}", &datetime_str)
+            .replace("{{title}}", &title_str);
+
+        if self.editor_content.trim().is_empty() {
+            self.editor_content = expanded;
+        } else {
+            self.editor_content.push_str("\n\n");
+            self.editor_content.push_str(&expanded);
+        }
+
+        self.is_dirty = true;
+        self.show_template_modal = false;
+        self.template_search_query.clear();
+        self.save_active_note()?;
+        self.status_message = "Template inserted".to_string();
         Ok(())
     }
 
@@ -441,11 +999,32 @@ impl AppState {
                     let _ = idx.remove_note(rel);
                 }
             }
+            let rel_buf = rel.to_path_buf();
+            self.open_tabs.retain(|t| t.relative_path != rel_buf);
+            self.nav_history.retain(|p| p != &rel_buf);
+            self.preferences.bookmarks.retain(|b| b != rel);
+            self.preferences.recent_notes.retain(|r| r != rel);
+            self.preferences.save();
+            if let Some(active_idx) = self.active_tab_index {
+                if active_idx >= self.open_tabs.len() {
+                    self.active_tab_index = if self.open_tabs.is_empty() {
+                        None
+                    } else {
+                        Some(self.open_tabs.len() - 1)
+                    };
+                }
+            }
             if let Some(active) = &self.active_note {
                 if active.relative_path == rel {
                     self.active_note = None;
                     self.editor_content.clear();
                     self.is_dirty = false;
+                    if let Some(active_idx) = self.active_tab_index {
+                        if let Some(next_tab) = self.open_tabs.get(active_idx) {
+                            let next_path = next_tab.relative_path.clone();
+                            let _ = self.select_note(&next_path);
+                        }
+                    }
                 }
             }
             self.status_message = format!("Deleted '{}'", rel.display());
@@ -599,6 +1178,16 @@ impl AppState {
                 PaletteAction::ToggleTheme,
             ),
             (
+                palette::INSERT_TEMPLATE.0,
+                palette::INSERT_TEMPLATE.1,
+                PaletteAction::InsertTemplate,
+            ),
+            (
+                "Open Today's Daily Note",
+                "Create or jump to today's daily journal note",
+                PaletteAction::OpenDailyNote,
+            ),
+            (
                 palette::REBUILD_INDEX.0,
                 palette::REBUILD_INDEX.1,
                 PaletteAction::RebuildIndex,
@@ -628,6 +1217,13 @@ impl AppState {
             PaletteAction::OpenNote(path) => {
                 self.active_view = ActiveView::Editor;
                 self.select_note(&path)?;
+            }
+            PaletteAction::OpenDailyNote => {
+                self.open_or_create_daily_note()?;
+            }
+            PaletteAction::InsertTemplate => {
+                self.show_template_modal = true;
+                self.template_search_query.clear();
             }
             PaletteAction::CreateNote => {
                 self.show_new_note_dialog = true;
@@ -706,37 +1302,113 @@ impl AppState {
         }
     }
 
-    /// Returns knowledge graph data for the entire vault.
-    pub fn get_full_graph_data(&self) -> nodera_markdown::GraphData {
-        let note_paths: Vec<PathBuf> = self
-            .entries
-            .iter()
-            .filter_map(|e| match e {
-                VaultEntry::Note(s) => Some(s.relative_path.clone()),
-                _ => None,
-            })
-            .collect();
+    /// Returns knowledge graph data for the entire vault configured by the provided GraphSettings.
+    pub fn get_full_graph_data_with_settings(
+        &self,
+        settings: &GraphSettings,
+    ) -> nodera_markdown::GraphData {
+        let mut note_paths = Vec::new();
+        let mut titles = std::collections::HashMap::new();
+        let mut note_tags = std::collections::HashMap::new();
 
-        self.link_graph.to_graph_data(&note_paths)
-    }
+        for e in &self.entries {
+            if let VaultEntry::Note(s) = e {
+                note_paths.push(s.relative_path.clone());
+                titles.insert(s.relative_path.clone(), s.title.clone());
+            }
+        }
 
-    /// Returns local knowledge graph data centered on the currently active note.
-    pub fn get_local_graph_data(&self, depth: usize) -> nodera_markdown::GraphData {
-        if let Some(active) = &self.active_note {
-            let note_paths: Vec<PathBuf> = self
-                .entries
+        // If tag nodes are requested, extract tags from index
+        if settings.filters.tags {
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(idx) = index_arc.lock() {
+                    if let Ok(tags_map) = idx.query_all_note_tags() {
+                        note_tags = tags_map;
+                    }
+                }
+            }
+        }
+
+        let filter_options = nodera_markdown::GraphFilterOptions {
+            existing_files_only: settings.filters.existing_files_only,
+            orphans: settings.filters.orphans,
+            tags: settings.filters.tags,
+            attachments: settings.filters.attachments,
+        };
+
+        let mut data = self.link_graph.to_graph_data_with_options(
+            &note_paths,
+            &titles,
+            &note_tags,
+            &filter_options,
+        );
+
+        // If search query is non-empty, filter matching nodes
+        let query = settings.filters.search_query.trim().to_lowercase();
+        if !query.is_empty() {
+            let matching_ids: std::collections::HashSet<String> = data
+                .nodes
                 .iter()
-                .filter_map(|e| match e {
-                    VaultEntry::Note(s) => Some(s.relative_path.clone()),
-                    _ => None,
+                .filter(|n| {
+                    n.label.to_lowercase().contains(&query) || n.id.to_lowercase().contains(&query)
                 })
+                .map(|n| n.id.clone())
                 .collect();
 
-            self.link_graph
-                .to_local_graph_data(&active.relative_path, &note_paths, depth)
+            data.nodes.retain(|n| matching_ids.contains(&n.id));
+            data.edges
+                .retain(|e| matching_ids.contains(&e.source) && matching_ids.contains(&e.target));
+        }
+
+        data
+    }
+
+    /// Returns knowledge graph data for the entire vault using saved preferences.
+    pub fn get_full_graph_data(&self) -> nodera_markdown::GraphData {
+        self.get_full_graph_data_with_settings(&self.preferences.graph_settings)
+    }
+
+    /// Returns local knowledge graph data centered on the currently active note configured by GraphSettings.
+    pub fn get_local_graph_data_with_settings(
+        &self,
+        depth: usize,
+        settings: &GraphSettings,
+    ) -> nodera_markdown::GraphData {
+        if let Some(active) = &self.active_note {
+            let mut note_paths = Vec::new();
+            let mut titles = std::collections::HashMap::new();
+            let note_tags = std::collections::HashMap::new();
+
+            for e in &self.entries {
+                if let VaultEntry::Note(s) = e {
+                    note_paths.push(s.relative_path.clone());
+                    titles.insert(s.relative_path.clone(), s.title.clone());
+                }
+            }
+
+            let filter_options = nodera_markdown::GraphFilterOptions {
+                existing_files_only: settings.filters.existing_files_only,
+                orphans: settings.filters.orphans,
+                tags: settings.filters.tags,
+                attachments: settings.filters.attachments,
+            };
+
+            self.link_graph.to_local_graph_data_with_options(
+                &active.relative_path,
+                &note_paths,
+                &titles,
+                &note_tags,
+                &filter_options,
+                depth,
+            )
         } else {
             nodera_markdown::GraphData::default()
         }
+    }
+
+    /// Returns local knowledge graph data centered on the currently active note with custom depth.
+    pub fn get_local_graph_data(&self, depth: usize) -> nodera_markdown::GraphData {
+        self.get_local_graph_data_with_settings(depth, &self.preferences.graph_settings)
     }
 
     /// Opens an existing note or creates a new one for a Wikilink target.
@@ -774,11 +1446,37 @@ impl AppState {
             let note = service.create_note(folder, title, Some(""))?;
             self.editor_content.clear();
             let rel = note.relative_path.clone();
+            let title_str = note.title.clone();
             self.active_note = Some(note);
             self.active_view = ActiveView::Editor;
             self.is_reading_mode = false;
             self.is_dirty = false;
             self.status_message = format!("Created '{title}'");
+
+            // Tab management
+            if let Some(idx) = self.open_tabs.iter().position(|t| t.relative_path == rel) {
+                self.active_tab_index = Some(idx);
+            } else {
+                self.open_tabs.push(OpenTab {
+                    relative_path: rel.clone(),
+                    title: title_str,
+                    is_pinned: false,
+                });
+                self.active_tab_index = Some(self.open_tabs.len() - 1);
+            }
+
+            // Navigation history
+            if self.nav_history.get(self.nav_history_index) != Some(&rel) {
+                if !self.nav_history.is_empty()
+                    && self.nav_history_index + 1 < self.nav_history.len()
+                {
+                    self.nav_history.truncate(self.nav_history_index + 1);
+                }
+                self.nav_history.push(rel.clone());
+                self.nav_history_index = self.nav_history.len() - 1;
+            }
+
+            self.record_recent_note(&rel);
             self.refresh_entries()?;
             debug!(path = %rel.display(), "Created and opened note in state");
         }
@@ -798,6 +1496,29 @@ impl AppState {
                     }
                 }
             }
+            let old_buf = rel.to_path_buf();
+            for tab in &mut self.open_tabs {
+                if tab.relative_path == old_buf {
+                    tab.relative_path = renamed.relative_path.clone();
+                    tab.title = renamed.title.clone();
+                }
+            }
+            for p in &mut self.nav_history {
+                if *p == old_buf {
+                    *p = renamed.relative_path.clone();
+                }
+            }
+            for b in &mut self.preferences.bookmarks {
+                if *b == old_buf {
+                    *b = renamed.relative_path.clone();
+                }
+            }
+            for r in &mut self.preferences.recent_notes {
+                if *r == old_buf {
+                    *r = renamed.relative_path.clone();
+                }
+            }
+            self.preferences.save();
             if let Some(active) = &self.active_note {
                 if active.relative_path == rel {
                     self.active_note = Some(renamed);
@@ -1204,5 +1925,195 @@ mod tests {
         // Line 4 is "- [ ] Task 1"
         state.toggle_task_at_line(4).unwrap();
         assert!(state.editor_content.contains("- [x] Task 1"));
+    }
+
+    #[test]
+    fn test_multi_tab_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("TabsVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Tabs Vault".to_string()))
+            .unwrap();
+
+        // 1. Create three notes and verify tabs are opened
+        state.create_note("Alpha", None).unwrap();
+        state.create_note("Beta", None).unwrap();
+        state.create_note("Gamma", None).unwrap();
+
+        assert_eq!(state.open_tabs.len(), 3);
+        assert_eq!(state.active_tab_index, Some(2));
+        assert_eq!(state.open_tabs[0].title, "Alpha");
+        assert_eq!(state.open_tabs[1].title, "Beta");
+        assert_eq!(state.open_tabs[2].title, "Gamma");
+
+        // 2. Pin Tab 0 (Alpha)
+        state.toggle_pin_tab(0);
+        assert!(state.open_tabs[0].is_pinned);
+
+        // 3. Select Tab 0
+        state.select_tab(0).unwrap();
+        assert_eq!(state.active_tab_index, Some(0));
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Alpha");
+
+        // 4. Close Tab 1 (Beta)
+        state.close_tab(1).unwrap();
+        assert_eq!(state.open_tabs.len(), 2);
+        assert_eq!(state.open_tabs[0].title, "Alpha");
+        assert_eq!(state.open_tabs[1].title, "Gamma");
+        assert_eq!(state.active_tab_index, Some(0));
+
+        // 5. Select Gamma (now at index 1)
+        state.select_tab(1).unwrap();
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Gamma");
+
+        // 6. Close all tabs (pinned tab Alpha should remain)
+        state.close_all_tabs().unwrap();
+        assert_eq!(state.open_tabs.len(), 1);
+        assert_eq!(state.open_tabs[0].title, "Alpha");
+        assert_eq!(state.active_tab_index, Some(0));
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Alpha");
+    }
+
+    #[test]
+    fn test_navigation_history_and_daily_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("HistoryVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("History Vault".to_string()))
+            .unwrap();
+
+        state.create_note("Page A", None).unwrap();
+        state.create_note("Page B", None).unwrap();
+        state.create_note("Page C", None).unwrap();
+
+        // Check history
+        assert!(state.can_navigate_back());
+        assert!(!state.can_navigate_forward());
+
+        // Navigate back to Page B
+        state.navigate_back().unwrap();
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Page B");
+        assert!(state.can_navigate_forward());
+
+        // Navigate back to Page A
+        state.navigate_back().unwrap();
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Page A");
+
+        // Navigate forward to Page B
+        state.navigate_forward().unwrap();
+        assert_eq!(state.active_note.as_ref().unwrap().title, "Page B");
+
+        // Test Daily Note creation
+        state.open_or_create_daily_note().unwrap();
+        let active = state.active_note.as_ref().unwrap();
+        assert!(active.relative_path.to_string_lossy().starts_with("Daily"));
+        assert!(state.editor_content.contains("Daily Note"));
+        assert!(state.editor_content.contains("## Tasks"));
+    }
+
+    #[test]
+    fn test_note_templates_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("TemplateVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Template Vault".to_string()))
+            .unwrap();
+
+        // 1. Built-in templates exist
+        let templates = state.get_available_templates();
+        assert!(templates.len() >= 4);
+        assert!(templates.iter().any(|t| t.name == "Daily Journal"));
+        assert!(templates.iter().any(|t| t.name == "Meeting Notes"));
+
+        // 2. Custom vault template in Templates/ folder
+        let templates_dir = vault_path.join("Templates");
+        std::fs::create_dir_all(&templates_dir).unwrap();
+        let custom_tmpl_content =
+            "# Bug Report: {{title}}\n**Reported**: {{date}}\n\n## Reproduction Steps\n1. ";
+        std::fs::write(templates_dir.join("Bug Report.md"), custom_tmpl_content).unwrap();
+
+        let updated_templates = state.get_available_templates();
+        assert!(updated_templates.iter().any(|t| t.name == "Bug Report"));
+
+        // 3. Insert template into active note
+        state.create_note("Issue 42", None).unwrap();
+        state
+            .insert_template(Some("Bug Report"), custom_tmpl_content)
+            .unwrap();
+
+        let current_date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert!(state.editor_content.contains("# Bug Report: Issue 42"));
+        assert!(state
+            .editor_content
+            .contains(&format!("**Reported**: {current_date}")));
+        assert!(state.editor_content.contains("## Reproduction Steps"));
+
+        // Verify disk content
+        let active_rel = state.active_note.as_ref().unwrap().relative_path.clone();
+        let reloaded_note = state
+            .vault_service
+            .as_ref()
+            .unwrap()
+            .read_note(&active_rel)
+            .unwrap();
+        assert_eq!(reloaded_note.content, state.editor_content);
+    }
+
+    #[test]
+    fn test_bookmarks_and_recent_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("BookmarksVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Bookmarks Vault".to_string()))
+            .unwrap();
+
+        // 1. Create two notes
+        state.create_note("Alpha", None).unwrap();
+        state.create_note("Beta", None).unwrap();
+
+        let alpha_path = PathBuf::from("Notes").join("Alpha.md");
+        let beta_path = PathBuf::from("Notes").join("Beta.md");
+
+        // 2. Verify recent notes order (most recent first)
+        assert_eq!(state.preferences.recent_notes.first(), Some(&beta_path));
+
+        // Select Alpha and verify it moves to front of recent notes
+        state.select_note(&alpha_path).unwrap();
+        assert_eq!(state.preferences.recent_notes.first(), Some(&alpha_path));
+
+        // 3. Test Bookmarks toggle
+        assert!(!state.is_bookmarked(&alpha_path));
+        state.toggle_bookmark(&alpha_path);
+        assert!(state.is_bookmarked(&alpha_path));
+        assert_eq!(state.preferences.bookmarks, vec![alpha_path.clone()]);
+
+        // Toggle again to remove
+        state.toggle_bookmark(&alpha_path);
+        assert!(!state.is_bookmarked(&alpha_path));
+        assert!(state.preferences.bookmarks.is_empty());
+
+        // Re-add bookmark
+        state.toggle_bookmark(&alpha_path);
+        assert!(state.is_bookmarked(&alpha_path));
+
+        // 4. Test Rename Note updating bookmarks & recent
+        state.rename_note(&alpha_path, "AlphaRenamed").unwrap();
+        let renamed_path = PathBuf::from("Notes").join("AlphaRenamed.md");
+        assert!(state.is_bookmarked(&renamed_path));
+        assert!(!state.is_bookmarked(&alpha_path));
+        assert_eq!(state.preferences.recent_notes.first(), Some(&renamed_path));
+
+        // 5. Test Delete Note removing from bookmarks & recent
+        state.delete_note(&renamed_path).unwrap();
+        assert!(!state.is_bookmarked(&renamed_path));
+        assert!(!state.preferences.recent_notes.contains(&renamed_path));
     }
 }

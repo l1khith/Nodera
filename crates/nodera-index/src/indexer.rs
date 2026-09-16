@@ -160,6 +160,11 @@ impl VaultIndex {
         self.sqlite.query_tags()
     }
 
+    /// Queries all note paths and their associated tags.
+    pub fn query_all_note_tags(&self) -> Result<HashMap<std::path::PathBuf, Vec<String>>> {
+        self.sqlite.query_all_note_tags()
+    }
+
     /// Queries backlinks pointing to a note target.
     pub fn query_backlinks(&self, target: &str) -> Result<Vec<String>> {
         self.sqlite.query_backlinks(target)

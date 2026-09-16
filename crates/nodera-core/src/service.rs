@@ -29,14 +29,7 @@ impl VaultService {
     pub fn list_entries(&self) -> Result<Vec<VaultEntry>> {
         let mut entries = Vec::new();
         self.collect_entries(self.vault.root(), Path::new(""), &mut entries)?;
-        entries.sort_by(|a, b| {
-            // Folders first, then alphabetical by name
-            match (a, b) {
-                (VaultEntry::Folder { .. }, VaultEntry::Note(_)) => std::cmp::Ordering::Less,
-                (VaultEntry::Note(_), VaultEntry::Folder { .. }) => std::cmp::Ordering::Greater,
-                _ => a.name().to_lowercase().cmp(&b.name().to_lowercase()),
-            }
-        });
+        entries.sort_by(compare_vault_entries);
         Ok(entries)
     }
 
@@ -109,8 +102,45 @@ impl VaultService {
 
         Ok(())
     }
+}
 
-    /// Creates a new note in the specified folder with the given title and optional initial content.
+fn compare_vault_entries(a: &VaultEntry, b: &VaultEntry) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let comps_a: Vec<_> = a.relative_path().components().collect();
+    let comps_b: Vec<_> = b.relative_path().components().collect();
+    let len_a = comps_a.len();
+    let len_b = comps_b.len();
+    let min_len = len_a.min(len_b);
+
+    for i in 0..min_len {
+        let ca = comps_a[i].as_os_str().to_string_lossy().to_lowercase();
+        let cb = comps_b[i].as_os_str().to_string_lossy().to_lowercase();
+        if ca != cb {
+            let is_dir_a = (i < len_a - 1) || a.is_folder();
+            let is_dir_b = (i < len_b - 1) || b.is_folder();
+            if is_dir_a != is_dir_b {
+                return if is_dir_a {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
+            return ca.cmp(&cb);
+        }
+    }
+
+    match len_a.cmp(&len_b) {
+        Ordering::Less => Ordering::Less,
+        Ordering::Greater => Ordering::Greater,
+        Ordering::Equal => match (a, b) {
+            (VaultEntry::Folder { .. }, VaultEntry::Note(_)) => Ordering::Less,
+            (VaultEntry::Note(_), VaultEntry::Folder { .. }) => Ordering::Greater,
+            _ => Ordering::Equal,
+        },
+    }
+}
+
+impl VaultService {
     /// Title is validated for illegal characters. If no folder is specified, uses vault default.
     #[instrument(skip(self, content))]
     pub fn create_note(
@@ -459,5 +489,37 @@ mod tests {
         assert!(note_names.contains(&"Note A"));
         assert!(note_names.contains(&"Note B"));
         assert!(note_names.contains(&"Project Plan"));
+    }
+
+    #[test]
+    fn test_hierarchical_sorting() {
+        let tmp = tempdir().unwrap();
+        let vault = Vault::create(tmp.path().join("Vault"), None).unwrap();
+        let service = VaultService::new(vault);
+
+        service.create_note(Some(""), "RootNote", None).unwrap();
+        service
+            .create_note(Some("Books"), "The Intelligent Investor", None)
+            .unwrap();
+        service.create_note(Some("Notes"), "Note A", None).unwrap();
+
+        let entries = service.list_entries().unwrap();
+        let paths: Vec<String> = entries
+            .iter()
+            .map(|e| e.relative_path().to_string_lossy().replace('\\', "/"))
+            .collect();
+
+        assert_eq!(
+            paths,
+            vec![
+                "Attachments",
+                "Books",
+                "Books/The Intelligent Investor.md",
+                "Notes",
+                "Notes/Note A.md",
+                "Projects",
+                "RootNote.md"
+            ]
+        );
     }
 }

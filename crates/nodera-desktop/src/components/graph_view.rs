@@ -1,10 +1,11 @@
 use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use crate::icons::*;
-use crate::state::{ActiveView, AppState};
-use crate::strings::{actions, empty_states, placeholders};
+use crate::state::{ActiveView, AppState, GraphForcesSettings};
+use crate::strings::{actions, empty_states, graph as graph_strings, placeholders};
 use nodera_markdown::GraphData;
 
 /// Node in the 2D physics simulation canvas
@@ -19,28 +20,48 @@ pub struct SimNode {
     pub vx: f32,
     pub vy: f32,
     pub radius: f32,
+    pub is_unresolved: bool,
+    pub is_tag: bool,
 }
 
-/// Directed link between nodes by index
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Directed or undirected link between nodes by index
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SimEdge {
     pub source: usize,
     pub target: usize,
 }
 
-/// Initializes simulation nodes with golden-spiral positions and runs pre-warm relaxation.
+/// Initializes simulation nodes with deterministic golden-spiral positions using default forces.
 pub fn init_simulation(graph: &GraphData, width: f32, height: f32) -> (Vec<SimNode>, Vec<SimEdge>) {
+    init_simulation_with_forces(graph, width, height, &GraphForcesSettings::default())
+}
+
+/// Initializes simulation nodes with deterministic golden-spiral positions and runs multi-step pre-warm relaxation.
+pub fn init_simulation_with_forces(
+    graph: &GraphData,
+    width: f32,
+    height: f32,
+    forces: &GraphForcesSettings,
+) -> (Vec<SimNode>, Vec<SimEdge>) {
     let n = graph.nodes.len();
-    let mut nodes = Vec::with_capacity(n);
+    if n == 0 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mut sorted_nodes = graph.nodes.clone();
+    // Sort deterministically so reopening the graph layout is 100% reproducible
+    sorted_nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
     let cx = width / 2.0;
     let cy = height / 2.0;
 
-    for (i, gn) in graph.nodes.iter().enumerate() {
+    let mut nodes = Vec::with_capacity(n);
+    for (i, gn) in sorted_nodes.iter().enumerate() {
         let angle = (i as f32) * 2.3999632;
-        let r = 28.0 * (i as f32).sqrt();
+        let r = 32.0 * ((i + 1) as f32).sqrt();
         let x = cx + r * angle.cos();
         let y = cy + r * angle.sin();
-        let radius = 6.0 + (gn.degree as f32).min(10.0) * 1.5;
+        let radius = 6.0 + (gn.degree as f32).min(12.0) * 1.25;
         nodes.push(SimNode {
             id: gn.id.clone(),
             path: gn.path.clone(),
@@ -51,6 +72,8 @@ pub fn init_simulation(graph: &GraphData, width: f32, height: f32) -> (Vec<SimNo
             vx: 0.0,
             vy: 0.0,
             radius,
+            is_unresolved: gn.is_unresolved,
+            is_tag: gn.is_tag,
         });
     }
 
@@ -61,59 +84,105 @@ pub fn init_simulation(graph: &GraphData, width: f32, height: f32) -> (Vec<SimNo
         .collect();
 
     let mut edges = Vec::new();
+    let mut edge_set = HashSet::new();
+
     for ge in &graph.edges {
         if let (Some(&s), Some(&t)) = (
             id_map.get(ge.source.as_str()),
             id_map.get(ge.target.as_str()),
         ) {
             if s != t {
-                edges.push(SimEdge {
-                    source: s,
-                    target: t,
-                });
+                let min_idx = s.min(t);
+                let max_idx = s.max(t);
+                if edge_set.insert((min_idx, max_idx)) {
+                    edges.push(SimEdge {
+                        source: s,
+                        target: t,
+                    });
+                }
             }
         }
     }
 
-    // Pre-warm relaxation so graph is aesthetically spaced out immediately
-    for _ in 0..75 {
-        step_simulation(&mut nodes, &edges, (cx, cy), None);
+    // Pre-warm relaxation with simulated cooling annealing using force settings
+    let total_steps = 120;
+    for step in 0..total_steps {
+        let alpha = (1.0 - (step as f32 / total_steps as f32)).max(0.03);
+        step_simulation_with_forces(&mut nodes, &edges, (cx, cy), None, alpha, forces);
     }
 
     (nodes, edges)
 }
 
-/// Executes one physics tick with Coulomb repulsion, Hooke spring attraction, and center gravity.
+/// Executes one physics tick with default force settings.
 pub fn step_simulation(
     nodes: &mut [SimNode],
     edges: &[SimEdge],
     center: (f32, f32),
     dragged_idx: Option<usize>,
+    alpha: f32,
+) {
+    step_simulation_with_forces(
+        nodes,
+        edges,
+        center,
+        dragged_idx,
+        alpha,
+        &GraphForcesSettings::default(),
+    );
+}
+
+/// Executes one physics tick with Coulomb repulsion, Hooke spring attraction, center gravity, and collision clearance.
+pub fn step_simulation_with_forces(
+    nodes: &mut [SimNode],
+    edges: &[SimEdge],
+    center: (f32, f32),
+    dragged_idx: Option<usize>,
+    alpha: f32,
+    forces: &GraphForcesSettings,
 ) {
     let n = nodes.len();
     if n == 0 {
         return;
     }
 
-    let k_rep = 1600.0;
-    let k_spring = 0.045;
-    let target_len = 80.0;
-    let k_center = 0.012;
+    let k_rep = 475.0 * forces.repel_force.max(0.1);
+    let k_spring = 0.07 * forces.link_force.max(0.05);
+    let target_len = forces.link_distance.clamp(20.0, 500.0);
+    let k_center = 0.00875 * forces.center_force.max(0.01);
     let damping = 0.82;
 
     let mut fx = vec![0.0f32; n];
     let mut fy = vec![0.0f32; n];
 
-    // 1. Repulsion between all pairs
+    // 1. Repulsion and collision avoidance between all pairs
     for i in 0..n {
+        let r_i = nodes[i].radius;
+        let deg_i = nodes[i].degree as f32;
+        let mass_i = 1.0 + deg_i * 0.15;
+
         for j in (i + 1)..n {
             let dx = nodes[i].x - nodes[j].x;
             let dy = nodes[i].y - nodes[j].y;
             let dist_sq = dx * dx + dy * dy;
             let dist = dist_sq.sqrt().max(1.0);
-            let force = k_rep / (dist_sq.max(400.0));
-            let f_x = (dx / dist) * force;
-            let f_y = (dy / dist) * force;
+            let nx = dx / dist;
+            let ny = dy / dist;
+
+            // Coulomb repulsion scaled by degree with smooth distance denominator
+            let mass_j = 1.0 + (nodes[j].degree as f32) * 0.15;
+            let mut force = (k_rep * mass_i * mass_j) / (dist * (dist + 20.0)).max(300.0);
+
+            // Hard collision clearance so nodes and labels never overlap
+            let r_j = nodes[j].radius;
+            let min_dist = r_i + r_j + 14.0;
+            if dist < min_dist {
+                let overlap = min_dist - dist;
+                force += overlap * overlap * 0.25;
+            }
+
+            let f_x = nx * force;
+            let f_y = ny * force;
 
             fx[i] += f_x;
             fy[i] += f_y;
@@ -122,7 +191,7 @@ pub fn step_simulation(
         }
     }
 
-    // 2. Spring attraction along edges
+    // 2. Spring attraction along connected edges
     for edge in edges {
         let s = edge.source;
         let t = edge.target;
@@ -151,35 +220,40 @@ pub fn step_simulation(
         fy[i] += dy * k_center;
     }
 
-    // 4. Update velocity & position
+    // 4. Update velocity and position with cooling alpha
     for i in 0..n {
         if Some(i) == dragged_idx {
             nodes[i].vx = 0.0;
             nodes[i].vy = 0.0;
             continue;
         }
-        nodes[i].vx = (nodes[i].vx + fx[i].clamp(-25.0, 25.0)) * damping;
-        nodes[i].vy = (nodes[i].vy + fy[i].clamp(-25.0, 25.0)) * damping;
-        nodes[i].x += nodes[i].vx;
-        nodes[i].y += nodes[i].vy;
+        nodes[i].vx = (nodes[i].vx + fx[i].clamp(-35.0, 35.0) * alpha) * damping;
+        nodes[i].vy = (nodes[i].vy + fy[i].clamp(-35.0, 35.0) * alpha) * damping;
+        nodes[i].x += nodes[i].vx.clamp(-30.0, 30.0);
+        nodes[i].y += nodes[i].vy.clamp(-30.0, 30.0);
     }
 }
 
-/// Global 2D Knowledge Graph View
+/// Global 2D Knowledge Graph View with Interactive Controls Panel
 #[component]
 pub fn GraphView(state: Signal<AppState>) -> Element {
     let app_state = state.read();
-    let graph_data = app_state.get_full_graph_data();
+    let mut settings = use_signal(|| app_state.preferences.graph_settings.clone());
+
+    let current_settings = settings.read().clone();
+    let graph_data = app_state.get_full_graph_data_with_settings(&current_settings);
     let total_notes = graph_data.nodes.len();
     let total_edges = graph_data.edges.len();
 
     let mut nodes_state = use_signal(|| {
-        let (nodes, _) = init_simulation(&graph_data, 1000.0, 700.0);
+        let (nodes, _) =
+            init_simulation_with_forces(&graph_data, 1000.0, 700.0, &current_settings.forces);
         nodes
     });
 
     let mut edges_state = use_signal(|| {
-        let (_, edges) = init_simulation(&graph_data, 1000.0, 700.0);
+        let (_, edges) =
+            init_simulation_with_forces(&graph_data, 1000.0, 700.0, &current_settings.forces);
         edges
     });
 
@@ -188,14 +262,18 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     let mut zoom = use_signal(|| 1.0f32);
     let mut is_panning = use_signal(|| false);
     let mut pan_start = use_signal(|| (0.0f64, 0.0f64));
+    let mut pan_distance = use_signal(|| 0.0f64);
     let mut dragged_node = use_signal(|| None::<usize>);
     let mut hovered_node = use_signal(|| None::<usize>);
-    let mut search_query = use_signal(String::new);
+    let mut selected_node = use_signal(|| None::<usize>);
+    let mut last_click = use_signal(|| None::<(usize, Instant)>);
+    let mut search_query = use_signal(|| current_settings.filters.search_query.clone());
 
-    // If vault notes count changed, re-sync simulation
+    // When filters or vault entries change, recompute simulation
     use_effect(move || {
-        let current_graph = state.read().get_full_graph_data();
-        let (n, e) = init_simulation(&current_graph, 1000.0, 700.0);
+        let s = settings.read().clone();
+        let current_graph = state.read().get_full_graph_data_with_settings(&s);
+        let (n, e) = init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces);
         nodes_state.set(n);
         edges_state.set(e);
     });
@@ -208,6 +286,20 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                 IconGraph { size: 64, class: "opacity-40" }
                 h2 { style: "font-size: 18px; font-weight: 600; color: var(--text-primary);", "{empty_states::NO_GRAPH_NODES_TITLE}" }
                 p { style: "font-size: 13px; color: var(--text-muted); max-width: 360px; text-align: center;", "{empty_states::NO_GRAPH_NODES_DESC}" }
+                if settings.read().filters.existing_files_only || !settings.read().filters.orphans {
+                    button {
+                        class: "btn-secondary",
+                        style: "margin-top: 8px; font-size: 12px; padding: 6px 14px;",
+                        onclick: move |_| {
+                            let mut s = settings.write();
+                            s.filters.existing_files_only = false;
+                            s.filters.orphans = true;
+                            s.filters.search_query.clear();
+                            state.write().preferences.graph_settings = s.clone();
+                        },
+                        "{graph_strings::RESTORE_DEFAULTS}"
+                    }
+                }
             }
         };
     }
@@ -220,19 +312,22 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         .map(|n| n.relative_path.to_string_lossy().replace('\\', "/"));
 
     let current_hovered = *hovered_node.read();
+    let current_selected = *selected_node.read();
+    let focused_idx = current_hovered.or(current_selected);
+
     let query = search_query.read().trim().to_lowercase();
     let zoom_val = *zoom.read();
     let zoom_pct = (zoom_val * 100.0).round() as u32;
-    let dot_radius = (0.85 / zoom_val).clamp(0.4, 1.2);
+    let dot_radius = (0.85 / zoom_val).clamp(0.35, 1.3);
 
-    // Determine connected nodes for hover highlighting
+    // Connected indices for highlighting neighborhood of focused node
     let mut connected_indices = HashSet::new();
-    if let Some(h_idx) = current_hovered {
-        connected_indices.insert(h_idx);
+    if let Some(f_idx) = focused_idx {
+        connected_indices.insert(f_idx);
         for edge in edges.iter() {
-            if edge.source == h_idx {
+            if edge.source == f_idx {
                 connected_indices.insert(edge.target);
-            } else if edge.target == h_idx {
+            } else if edge.target == f_idx {
                 connected_indices.insert(edge.source);
             }
         }
@@ -241,299 +336,997 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     rsx! {
         div {
             class: "graph-container",
-            tabindex: "0",
-            onmousedown: move |evt: MouseEvent| {
-                is_panning.set(true);
-                pan_start.set((evt.client_coordinates().x, evt.client_coordinates().y));
-            },
-            onmousemove: move |evt: MouseEvent| {
-                let cur_x = evt.client_coordinates().x;
-                let cur_y = evt.client_coordinates().y;
+            style: "display: flex; flex-direction: row; width: 100%; height: 100%; position: relative; overflow: hidden;",
 
-                if *is_panning.read() {
-                    let start = *pan_start.read();
-                    let dx = (cur_x - start.0) as f32;
-                    let dy = (cur_y - start.1) as f32;
-                    let new_x = *pan_x.read() + dx;
-                    let new_y = *pan_y.read() + dy;
-                    pan_x.set(new_x);
-                    pan_y.set(new_y);
-                    pan_start.set((cur_x, cur_y));
-                } else if let Some(drag_idx) = *dragged_node.read() {
-                    let z = *zoom.read();
-                    let px = *pan_x.read();
-                    let py = *pan_y.read();
-                    let world_x = (cur_x as f32 - px) / z;
-                    let world_y = (cur_y as f32 - py) / z;
-
-                    let mut ns = nodes_state.write();
-                    if drag_idx < ns.len() {
-                        ns[drag_idx].x = world_x;
-                        ns[drag_idx].y = world_y;
-                        let es = edges_state.read();
-                        step_simulation(&mut ns, &es, (500.0, 350.0), Some(drag_idx));
-                    }
-                }
-            },
-            onmouseup: move |_| {
-                is_panning.set(false);
-                dragged_node.set(None);
-            },
-            onwheel: move |evt: WheelEvent| {
-                let delta = evt.delta().strip_units().y;
-                let factor = if delta > 0.0 { 0.90f32 } else { 1.10f32 };
-                let current_zoom = *zoom.read();
-                let next_zoom = (current_zoom * factor).clamp(0.20, 3.5);
-                zoom.set(next_zoom);
-            },
-
-            // Top-left Search / Filter Bar
+            // Main Canvas Area
             div {
-                class: "graph-search-bar",
+                class: "graph-canvas-wrapper",
+                tabindex: "0",
                 onmousedown: move |evt: MouseEvent| {
-                    evt.stop_propagation();
+                    is_panning.set(true);
+                    pan_start.set((evt.client_coordinates().x, evt.client_coordinates().y));
+                    pan_distance.set(0.0);
                 },
-                IconSearch { size: 14, class: "opacity-70" }
-                input {
-                    style: "border: none; background: transparent; font-size: 12px; outline: none; color: var(--text-primary); width: 140px;",
-                    placeholder: placeholders::FILTER_GRAPH,
-                    value: "{search_query}",
-                    oninput: move |evt: FormEvent| {
-                        search_query.set(evt.value());
+                onmousemove: move |evt: MouseEvent| {
+                    let cur_x = evt.client_coordinates().x;
+                    let cur_y = evt.client_coordinates().y;
+
+                    if *is_panning.read() {
+                        let start = *pan_start.read();
+                        let dx = (cur_x - start.0) as f32;
+                        let dy = (cur_y - start.1) as f32;
+                        let dist = (dx.abs() + dy.abs()) as f64;
+                        let prev_dist = *pan_distance.read();
+                        pan_distance.set(prev_dist + dist);
+
+                        let new_x = *pan_x.read() + dx;
+                        let new_y = *pan_y.read() + dy;
+                        pan_x.set(new_x);
+                        pan_y.set(new_y);
+                        pan_start.set((cur_x, cur_y));
+                    } else if let Some(drag_idx) = *dragged_node.read() {
+                        let z = *zoom.read();
+                        let px = *pan_x.read();
+                        let py = *pan_y.read();
+                        let world_x = (cur_x as f32 - px) / z;
+                        let world_y = (cur_y as f32 - py) / z;
+
+                        let mut ns = nodes_state.write();
+                        if drag_idx < ns.len() {
+                            ns[drag_idx].x = world_x;
+                            ns[drag_idx].y = world_y;
+                            if settings.read().display.animate {
+                                let es = edges_state.read();
+                                let forces = settings.read().forces.clone();
+                                // Reheat connected neighbors during drag
+                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.25, &forces);
+                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.20, &forces);
+                            }
+                        }
+                    }
+                },
+                onmouseup: move |_| {
+                    is_panning.set(false);
+                    dragged_node.set(None);
+                },
+                onclick: move |_| {
+                    // Deselect if user clicked empty background without dragging
+                    if *pan_distance.read() < 5.0 {
+                        selected_node.set(None);
+                    }
+                },
+                onwheel: move |evt: WheelEvent| {
+                    let delta = evt.delta().strip_units().y;
+                    let factor = if delta > 0.0 { 0.90f32 } else { 1.10f32 };
+                    let current_zoom = *zoom.read();
+                    let next_zoom = (current_zoom * factor).clamp(0.20, 3.5);
+                    zoom.set(next_zoom);
+                },
+
+                // Top-left Search / Filter Bar
+                div {
+                    class: "graph-search-bar",
+                    onmousedown: move |evt: MouseEvent| {
+                        evt.stop_propagation();
                     },
-                }
-                if !search_query.read().is_empty() {
-                    button {
-                        class: "btn-icon",
-                        style: "padding: 2px;",
-                        onclick: move |_| {
-                            search_query.set(String::new());
+                    IconSearch { size: 14, class: "opacity-70" }
+                    input {
+                        style: "border: none; background: transparent; font-size: 12px; outline: none; color: var(--text-primary); width: 140px;",
+                        placeholder: placeholders::FILTER_GRAPH,
+                        value: "{search_query}",
+                        oninput: move |evt: FormEvent| {
+                            let val = evt.value();
+                            search_query.set(val.clone());
+                            let mut s = settings.write();
+                            s.filters.search_query = val;
                         },
-                        IconClose { size: 12 }
                     }
-                }
-            }
-
-            // Top-right Compact Controls Toolbar
-            div {
-                class: "graph-toolbar",
-                onmousedown: move |evt: MouseEvent| {
-                    evt.stop_propagation();
-                },
-                button {
-                    class: "graph-btn",
-                    title: actions::ZOOM_IN,
-                    onclick: move |_| {
-                        let z = *zoom.read();
-                        zoom.set((z * 1.15).min(3.5));
-                    },
-                    IconPlus { size: 13 }
-                }
-                span {
-                    class: "graph-zoom-label",
-                    "{zoom_pct}%"
-                }
-                button {
-                    class: "graph-btn",
-                    title: actions::ZOOM_OUT,
-                    onclick: move |_| {
-                        let z = *zoom.read();
-                        zoom.set((z * 0.85).max(0.20));
-                    },
-                    IconMinus { size: 13 }
-                }
-                span { class: "graph-divider" }
-                button {
-                    class: "graph-btn",
-                    title: actions::RESET_VIEW,
-                    onclick: move |_| {
-                        pan_x.set(0.0);
-                        pan_y.set(0.0);
-                        zoom.set(1.0);
-                    },
-                    IconCrosshair { size: 13 }
-                }
-                button {
-                    class: "graph-btn",
-                    title: actions::REFRESH_GRAPH,
-                    onclick: move |_| {
-                        let current_graph = state.read().get_full_graph_data();
-                        let (n, e) = init_simulation(&current_graph, 1000.0, 700.0);
-                        nodes_state.set(n);
-                        edges_state.set(e);
-                    },
-                    IconRefresh { size: 13 }
-                }
-            }
-
-            // Bottom-left Stats Badge
-            div {
-                class: "graph-stats",
-                span {
-                    style: "display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-primary);",
-                    IconGraph { size: 13 }
-                    span { "{total_notes} notes" }
-                }
-                span { style: "color: var(--text-muted);", "•" }
-                span { style: "color: var(--text-secondary);", "{total_edges} connections" }
-            }
-
-            // Interactive SVG Canvas
-            svg {
-                class: "graph-canvas",
-                defs {
-                    pattern {
-                        id: "graph-dot-grid",
-                        width: "28",
-                        height: "28",
-                        pattern_units: "userSpaceOnUse",
-                        circle {
-                            cx: "14",
-                            cy: "14",
-                            r: "{dot_radius}",
-                            fill: "var(--graph-grid-dot, rgba(255, 255, 255, 0.08))",
+                    if !search_query.read().is_empty() {
+                        button {
+                            class: "btn-icon",
+                            style: "padding: 2px;",
+                            onclick: move |_| {
+                                search_query.set(String::new());
+                                settings.write().filters.search_query.clear();
+                            },
+                            IconClose { size: 12 }
                         }
                     }
                 }
-                g {
-                    transform: format!("translate({}, {}) scale({})", *pan_x.read(), *pan_y.read(), *zoom.read()),
 
-                    // Infinite subtle dotted background grid
-                    rect {
-                        x: "-100000",
-                        y: "-100000",
-                        width: "200000",
-                        height: "200000",
-                        fill: "url(#graph-dot-grid)",
+                // Top-right Compact Controls Toolbar
+                div {
+                    class: "graph-toolbar",
+                    onmousedown: move |evt: MouseEvent| {
+                        evt.stop_propagation();
+                    },
+                    button {
+                        class: "graph-btn",
+                        title: actions::ZOOM_IN,
+                        onclick: move |_| {
+                            let z = *zoom.read();
+                            zoom.set((z * 1.15).min(3.5));
+                        },
+                        IconPlus { size: 13 }
                     }
+                    span {
+                        class: "graph-zoom-label",
+                        "{zoom_pct}%"
+                    }
+                    button {
+                        class: "graph-btn",
+                        title: actions::ZOOM_OUT,
+                        onclick: move |_| {
+                            let z = *zoom.read();
+                            zoom.set((z * 0.85).max(0.20));
+                        },
+                        IconMinus { size: 13 }
+                    }
+                    span { class: "graph-divider" }
+                    button {
+                        class: "graph-btn",
+                        title: actions::FIT_GRAPH,
+                        onclick: move |_| {
+                            let ns = nodes_state.read();
+                            if ns.is_empty() {
+                                pan_x.set(0.0);
+                                pan_y.set(0.0);
+                                zoom.set(1.0);
+                                return;
+                            }
+                            let mut min_x = f32::MAX;
+                            let mut max_x = f32::MIN;
+                            let mut min_y = f32::MAX;
+                            let mut max_y = f32::MIN;
+                            for n in ns.iter() {
+                                if n.x < min_x { min_x = n.x; }
+                                if n.x > max_x { max_x = n.x; }
+                                if n.y < min_y { min_y = n.y; }
+                                if n.y > max_y { max_y = n.y; }
+                            }
+                            let graph_w = (max_x - min_x).max(120.0);
+                            let graph_h = (max_y - min_y).max(120.0);
+                            let graph_cx = (min_x + max_x) / 2.0;
+                            let graph_cy = (min_y + max_y) / 2.0;
 
-                    // Render Edges
-                    for edge in edges.iter() {
-                        {
-                            let s = edge.source;
-                            let t = edge.target;
-                            if s < nodes.len() && t < nodes.len() {
-                                let n1 = &nodes[s];
-                                let n2 = &nodes[t];
-                                let is_highlighted = if let Some(h) = current_hovered {
-                                    s == h || t == h
+                            let view_w = 1000.0f32;
+                            let view_h = 700.0f32;
+                            let pad = 140.0f32;
+
+                            let target_zoom = ((view_w - pad) / graph_w).min((view_h - pad) / graph_h).clamp(0.20, 2.5);
+                            let target_pan_x = (view_w / 2.0) - (graph_cx * target_zoom);
+                            let target_pan_y = (view_h / 2.0) - (graph_cy * target_zoom);
+
+                            zoom.set(target_zoom);
+                            pan_x.set(target_pan_x);
+                            pan_y.set(target_pan_y);
+                        },
+                        IconMaximize { size: 13 }
+                    }
+                    button {
+                        class: "graph-btn",
+                        title: actions::RESET_VIEW,
+                        onclick: move |_| {
+                            pan_x.set(0.0);
+                            pan_y.set(0.0);
+                            zoom.set(1.0);
+                        },
+                        IconCrosshair { size: 13 }
+                    }
+                    button {
+                        class: "graph-btn",
+                        title: actions::REFRESH_GRAPH,
+                        onclick: move |_| {
+                            let s = settings.read().clone();
+                            let current_graph = state.read().get_full_graph_data_with_settings(&s);
+                            spawn(async move {
+                                let (n, e) = tokio::task::spawn_blocking(move || {
+                                    init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces)
+                                }).await.unwrap_or_default();
+                                nodes_state.set(n);
+                                edges_state.set(e);
+                            });
+                        },
+                        IconRefresh { size: 13 }
+                    }
+                    span { class: "graph-divider" }
+                    button {
+                        class: if settings.read().is_panel_open { "graph-btn active" } else { "graph-btn" },
+                        title: graph_strings::TOGGLE_CONTROLS,
+                        onclick: move |_| {
+                            let mut s = settings.write();
+                            s.is_panel_open = !s.is_panel_open;
+                            state.write().preferences.graph_settings = s.clone();
+                        },
+                        IconSliders { size: 13 }
+                    }
+                }
+
+                // Bottom-left Stats Badge
+                div {
+                    class: "graph-stats",
+                    span {
+                        style: "display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-primary);",
+                        IconGraph { size: 13 }
+                        span { "{total_notes} nodes" }
+                    }
+                    span { style: "color: var(--text-muted);", "•" }
+                    span { style: "color: var(--text-secondary);", "{total_edges} connections" }
+                }
+
+                // Interactive SVG Canvas
+                svg {
+                    class: "graph-canvas",
+                    defs {
+                        pattern {
+                            id: "graph-dot-grid",
+                            width: "28",
+                            height: "28",
+                            pattern_units: "userSpaceOnUse",
+                            circle {
+                                cx: "14",
+                                cy: "14",
+                                r: "{dot_radius}",
+                                fill: "var(--graph-grid-dot, rgba(255, 255, 255, 0.08))",
+                            }
+                        }
+                        marker {
+                            id: "graph-arrow",
+                            view_box: "0 0 10 10",
+                            ref_x: "18",
+                            ref_y: "5",
+                            marker_width: "6",
+                            marker_height: "6",
+                            orient: "auto-start-reverse",
+                            path {
+                                d: "M 0 1.5 L 8 5 L 0 8.5 z",
+                                fill: "var(--graph-edge, #444A5B)",
+                            }
+                        }
+                        marker {
+                            id: "graph-arrow-highlight",
+                            view_box: "0 0 10 10",
+                            ref_x: "18",
+                            ref_y: "5",
+                            marker_width: "6",
+                            marker_height: "6",
+                            orient: "auto-start-reverse",
+                            path {
+                                d: "M 0 1.5 L 8 5 L 0 8.5 z",
+                                fill: "var(--graph-edge-highlight, #7182FF)",
+                            }
+                        }
+                    }
+                    g {
+                        transform: format!("translate({}, {}) scale({})", *pan_x.read(), *pan_y.read(), *zoom.read()),
+
+                        // Infinite subtle dotted background grid
+                        rect {
+                            x: "-200000",
+                            y: "-200000",
+                            width: "400000",
+                            height: "400000",
+                            fill: "url(#graph-dot-grid)",
+                        }
+
+                        // Render Edges
+                        for edge in edges.iter() {
+                            {
+                                let s = edge.source;
+                                let t = edge.target;
+                                if s < nodes.len() && t < nodes.len() {
+                                    let n1 = &nodes[s];
+                                    let n2 = &nodes[t];
+                                    let is_highlighted = if let Some(f) = focused_idx {
+                                        s == f || t == f
+                                    } else {
+                                        false
+                                    };
+
+                                    let edge_color = if is_highlighted {
+                                        "var(--graph-edge-highlight, #7182FF)"
+                                    } else {
+                                        "var(--graph-edge, #444A5B)"
+                                    };
+
+                                    let edge_opacity = if focused_idx.is_some() {
+                                        if is_highlighted { "1.0" } else { "0.08" }
+                                    } else {
+                                        "0.35"
+                                    };
+
+                                    let edge_width = (if is_highlighted { 2.2 } else { 1.0 }) * current_settings.display.link_thickness;
+                                    let marker_attr = if current_settings.display.arrows {
+                                        if is_highlighted { "url(#graph-arrow-highlight)" } else { "url(#graph-arrow)" }
+                                    } else {
+                                        ""
+                                    };
+
+                                    rsx! {
+                                        line {
+                                            key: "{s}-{t}",
+                                            x1: "{n1.x}",
+                                            y1: "{n1.y}",
+                                            x2: "{n2.x}",
+                                            y2: "{n2.y}",
+                                            stroke: "{edge_color}",
+                                            stroke_width: "{edge_width}",
+                                            opacity: "{edge_opacity}",
+                                            marker_end: "{marker_attr}",
+                                        }
+                                    }
                                 } else {
-                                    false
+                                    rsx! {}
+                                }
+                            }
+                        }
+
+                        // Render Nodes
+                        for (idx, node) in nodes.iter().enumerate() {
+                            {
+                                let is_current = active_path_str.as_deref() == Some(node.id.as_str());
+                                let is_selected = current_selected == Some(idx);
+                                let is_hovered = current_hovered == Some(idx);
+                                let is_connected = connected_indices.contains(&idx);
+                                let matches_query = if query.is_empty() {
+                                    true
+                                } else {
+                                    node.label.to_lowercase().contains(&query)
                                 };
 
-                                let edge_color = if is_highlighted {
-                                    "var(--graph-edge-highlight, #7182FF)"
+                                let (node_color, stroke_color, stroke_width, node_opacity, stroke_dash) = if node.is_unresolved {
+                                    let fill = "transparent";
+                                    let stroke = if is_selected || is_hovered {
+                                        "var(--graph-node-hover, #7182FF)"
+                                    } else {
+                                        "var(--text-muted, #7E8CFF)"
+                                    };
+                                    let opacity = if focused_idx.is_some() && !is_connected { "0.20" } else { "0.85" };
+                                    (fill, stroke, "1.5", opacity, "3 2")
+                                } else if node.is_tag {
+                                    let fill = "#E5A158";
+                                    let stroke = if is_selected || is_hovered { "#FFFFFF" } else { "var(--border, #292E3A)" };
+                                    let opacity = if focused_idx.is_some() && !is_connected { "0.20" } else { "0.95" };
+                                    (fill, stroke, "1.5", opacity, "")
+                                } else if focused_idx.is_some() {
+                                    if is_hovered || is_selected {
+                                        let fill = if is_current {
+                                            "var(--graph-node-current, #9A4BFF)"
+                                        } else if is_hovered {
+                                            "var(--graph-node-hover, #7182FF)"
+                                        } else {
+                                            "var(--graph-node, #5B6CFF)"
+                                        };
+                                        let stroke = if is_current { "#D5C7FF" } else { "#FFFFFF" };
+                                        (fill, stroke, "2.5", "1.0", "")
+                                    } else if is_connected {
+                                        ("var(--graph-node-connected, #7E8CFF)", "var(--border-strong, #383F4F)", "2.0", "1.0", "")
+                                    } else {
+                                        ("var(--graph-node, #5B6CFF)", "var(--border, #292E3A)", "1.0", "0.18", "")
+                                    }
                                 } else {
-                                    "var(--graph-edge, #444A5B)"
+                                    let fill = if is_current {
+                                        "var(--graph-node-current, #9A4BFF)"
+                                    } else {
+                                        "var(--graph-node, #5B6CFF)"
+                                    };
+                                    let stroke = if is_current { "#D5C7FF" } else { "var(--border, #292E3A)" };
+                                    let opacity = if !matches_query { "0.20" } else { "1.0" };
+                                    (fill, stroke, "1.5", opacity, "")
                                 };
 
-                                let edge_opacity = if current_hovered.is_some() {
-                                    if is_highlighted { "1.0" } else { "0.15" }
-                                } else {
-                                    "0.7"
-                                };
+                                let node_radius = node.radius * current_settings.display.node_size;
+                                let path_click = node.path.clone();
+                                let path_dbl = node.path.clone();
+                                let label_click = node.label.clone();
+                                let label_dbl = node.label.clone();
+                                let is_unresolved = node.is_unresolved;
 
-                                let edge_width = if is_highlighted { "2.5" } else { "1.2" };
+                                let text_fade_threshold = 0.70 / current_settings.display.text_fade_threshold.max(0.1);
+                                let show_label = is_selected
+                                    || is_hovered
+                                    || (focused_idx.is_some() && is_connected)
+                                    || *zoom.read() >= text_fade_threshold
+                                    || total_notes <= 35
+                                    || (node.degree >= 3 && *zoom.read() >= (text_fade_threshold * 0.65));
+
+                                let font_weight = if is_selected || is_hovered || is_current { "600" } else { "400" };
 
                                 rsx! {
-                                    line {
-                                        key: "{s}-{t}",
-                                        x1: "{n1.x}",
-                                        y1: "{n1.y}",
-                                        x2: "{n2.x}",
-                                        y2: "{n2.y}",
-                                        stroke: "{edge_color}",
-                                        stroke_width: "{edge_width}",
-                                        opacity: "{edge_opacity}",
+                                    g {
+                                        key: "{node.id}",
+                                        style: "cursor: pointer;",
+                                        opacity: "{node_opacity}",
+                                        onmousedown: move |evt: MouseEvent| {
+                                            evt.stop_propagation();
+                                            dragged_node.set(Some(idx));
+                                        },
+                                        onmouseenter: move |_| {
+                                            hovered_node.set(Some(idx));
+                                        },
+                                        onmouseleave: move |_| {
+                                            if *hovered_node.read() == Some(idx) {
+                                                hovered_node.set(None);
+                                            }
+                                        },
+                                        onclick: move |evt: MouseEvent| {
+                                            evt.stop_propagation();
+                                            let now = Instant::now();
+                                            let is_double_click = if let Some((last_idx, last_time)) = *last_click.read() {
+                                                last_idx == idx && now.duration_since(last_time).as_millis() < 400
+                                            } else {
+                                                false
+                                            };
+
+                                            if is_double_click {
+                                                let mut s = state.write();
+                                                if is_unresolved {
+                                                    let _ = s.open_or_create_target(&label_click);
+                                                } else {
+                                                    let _ = s.select_note(&path_click);
+                                                }
+                                                s.active_view = ActiveView::Editor;
+                                                last_click.set(None);
+                                            } else {
+                                                selected_node.set(Some(idx));
+                                                last_click.set(Some((idx, now)));
+                                            }
+                                        },
+                                        ondoubleclick: move |evt: MouseEvent| {
+                                            evt.stop_propagation();
+                                            let mut s = state.write();
+                                            if is_unresolved {
+                                                let _ = s.open_or_create_target(&label_dbl);
+                                            } else {
+                                                let _ = s.select_note(&path_dbl);
+                                            }
+                                            s.active_view = ActiveView::Editor;
+                                        },
+                                        // Selection halo ring
+                                        if is_selected {
+                                            circle {
+                                                cx: "{node.x}",
+                                                cy: "{node.y}",
+                                                r: "{node_radius + 6.0}",
+                                                fill: "none",
+                                                stroke: "var(--graph-node-current, #9A4BFF)",
+                                                stroke_width: "2",
+                                                stroke_dasharray: "4 3",
+                                                opacity: "0.85",
+                                            }
+                                        }
+                                        circle {
+                                            cx: "{node.x}",
+                                            cy: "{node.y}",
+                                            r: "{node_radius}",
+                                            fill: "{node_color}",
+                                            stroke: "{stroke_color}",
+                                            stroke_width: "{stroke_width}",
+                                            stroke_dasharray: "{stroke_dash}",
+                                        }
+                                        if show_label {
+                                            text {
+                                                x: "{node.x}",
+                                                y: format!("{}", node.y + node_radius + 12.0),
+                                                text_anchor: "middle",
+                                                fill: "var(--graph-label, #D7DBE6)",
+                                                font_size: "11",
+                                                font_weight: "{font_weight}",
+                                                pointer_events: "none",
+                                                "{node.label}"
+                                            }
+                                        }
                                     }
                                 }
-                            } else {
-                                rsx! {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Right-side Graph Controls Panel (Drawer)
+            if settings.read().is_panel_open {
+                div {
+                    class: "graph-settings-panel",
+                    onmousedown: move |evt: MouseEvent| {
+                        evt.stop_propagation();
+                    },
+                    // Panel Header
+                    div {
+                        class: "graph-panel-header",
+                        span {
+                            class: "graph-panel-title",
+                            "{graph_strings::FILTERS}"
+                        }
+                        div {
+                            style: "display: flex; align-items: center; gap: 4px;",
+                            button {
+                                class: "btn-icon",
+                                title: graph_strings::RESTORE_DEFAULTS,
+                                onclick: move |_| {
+                                    let mut s = settings.write();
+                                    s.reset_to_defaults();
+                                    s.is_panel_open = true;
+                                    state.write().preferences.graph_settings = s.clone();
+                                },
+                                IconRefresh { size: 13 }
+                            }
+                            button {
+                                class: "btn-icon",
+                                title: graph_strings::CLOSE_CONTROLS,
+                                onclick: move |_| {
+                                    settings.write().is_panel_open = false;
+                                    state.write().preferences.graph_settings.is_panel_open = false;
+                                },
+                                IconClose { size: 13 }
                             }
                         }
                     }
 
-                    // Render Nodes
-                    for (idx, node) in nodes.iter().enumerate() {
-                        {
-                            let is_current = active_path_str.as_deref() == Some(node.id.as_str());
-                            let is_hovered = current_hovered == Some(idx);
-                            let is_connected = connected_indices.contains(&idx);
-                            let matches_query = if query.is_empty() {
-                                true
-                            } else {
-                                node.label.to_lowercase().contains(&query)
-                            };
+                    // Panel Content (Scrollable)
+                    div {
+                        class: "graph-panel-content",
 
-                            let node_color = if is_current {
-                                "var(--graph-node-current, #9A4BFF)"
-                            } else if is_hovered {
-                                "var(--graph-node-hover, #7182FF)"
-                            } else if is_connected {
-                                "var(--graph-node-connected, #7E8CFF)"
-                            } else {
-                                "var(--graph-node, #5B6CFF)"
-                            };
-
-                            let node_opacity = if current_hovered.is_some() {
-                                if is_hovered || is_connected { "1.0" } else { "0.25" }
-                            } else if !matches_query {
-                                "0.2"
-                            } else {
-                                "1.0"
-                            };
-
-                            let stroke_color = if is_current {
-                                "#D5C7FF"
-                            } else if is_hovered {
-                                "#FFFFFF"
-                            } else {
-                                "var(--border, #292E3A)"
-                            };
-
-                            let stroke_width = if is_hovered || is_current { "2.5" } else { "1.5" };
-                            let path_click = node.path.clone();
-
-                            rsx! {
-                                g {
-                                    key: "{node.id}",
-                                    style: "cursor: pointer;",
-                                    opacity: "{node_opacity}",
-                                    onmousedown: move |evt: MouseEvent| {
-                                        evt.stop_propagation();
-                                        dragged_node.set(Some(idx));
-                                    },
-                                    onmouseenter: move |_| {
-                                        hovered_node.set(Some(idx));
-                                    },
-                                    onmouseleave: move |_| {
-                                        if *hovered_node.read() == Some(idx) {
-                                            hovered_node.set(None);
+                        // Section 1: Filters
+                        div {
+                            class: "graph-section",
+                            div {
+                                class: "graph-section-header",
+                                onclick: move |_| {
+                                    let mut s = settings.write();
+                                    s.expanded_sections.filters = !s.expanded_sections.filters;
+                                },
+                                if settings.read().expanded_sections.filters {
+                                    IconChevronDown { size: 12 }
+                                } else {
+                                    IconChevronRight { size: 12 }
+                                }
+                                span { "{graph_strings::FILTERS}" }
+                            }
+                            if settings.read().expanded_sections.filters {
+                                div {
+                                    class: "graph-section-body",
+                                    // Search input
+                                    div {
+                                        style: "display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px;",
+                                        IconSearch { size: 12, class: "opacity-60" }
+                                        input {
+                                            style: "border: none; background: transparent; font-size: 11px; outline: none; color: var(--text-primary); width: 100%;",
+                                            placeholder: graph_strings::SEARCH_FILES,
+                                            value: "{settings.read().filters.search_query}",
+                                            oninput: move |evt: FormEvent| {
+                                                let val = evt.value();
+                                                settings.write().filters.search_query = val.clone();
+                                                search_query.set(val);
+                                            },
                                         }
-                                    },
-                                    onclick: move |evt: MouseEvent| {
-                                        evt.stop_propagation();
-                                        let mut s = state.write();
-                                        let _ = s.select_note(&path_click);
-                                        s.active_view = ActiveView::Editor;
-                                    },
-                                    circle {
-                                        cx: "{node.x}",
-                                        cy: "{node.y}",
-                                        r: "{node.radius}",
-                                        fill: "{node_color}",
-                                        stroke: "{stroke_color}",
-                                        stroke_width: "{stroke_width}",
+                                        if !settings.read().filters.search_query.is_empty() {
+                                            button {
+                                                class: "btn-icon",
+                                                style: "padding: 1px;",
+                                                onclick: move |_| {
+                                                    settings.write().filters.search_query.clear();
+                                                    search_query.set(String::new());
+                                                },
+                                                IconClose { size: 10 }
+                                            }
+                                        }
                                     }
-                                    if *zoom.read() >= 0.75 || is_hovered || is_connected || total_notes <= 50 {
-                                        text {
-                                            x: "{node.x}",
-                                            y: format!("{}", node.y + node.radius + 12.0),
-                                            text_anchor: "middle",
-                                            fill: "var(--graph-label, #D7DBE6)",
-                                            font_size: "11",
-                                            font_weight: if is_hovered || is_current { "600" } else { "400" },
-                                            "{node.label}"
+
+                                    // Tags toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "{graph_strings::TAGS}" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().filters.tags,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.filters.tags = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+
+                                    // Attachments toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "{graph_strings::ATTACHMENTS}" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().filters.attachments,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.filters.attachments = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+
+                                    // Existing files only toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "{graph_strings::EXISTING_FILES_ONLY}" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().filters.existing_files_only,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.filters.existing_files_only = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+
+                                    // Orphans toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "{graph_strings::ORPHANS}" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().filters.orphans,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.filters.orphans = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section 2: Groups
+                        div {
+                            class: "graph-section",
+                            div {
+                                class: "graph-section-header",
+                                onclick: move |_| {
+                                    let mut s = settings.write();
+                                    s.expanded_sections.groups = !s.expanded_sections.groups;
+                                },
+                                if settings.read().expanded_sections.groups {
+                                    IconChevronDown { size: 12 }
+                                } else {
+                                    IconChevronRight { size: 12 }
+                                }
+                                span { "{graph_strings::GROUPS}" }
+                            }
+                            if settings.read().expanded_sections.groups {
+                                div {
+                                    class: "graph-section-body",
+                                    p {
+                                        style: "font-size: 11px; color: var(--text-muted); margin: 0 0 6px 0; line-height: 1.4;",
+                                        "Color nodes automatically by note clusters, paths, or tags."
+                                    }
+                                    div {
+                                        style: "display: flex; flex-wrap: wrap; gap: 6px;",
+                                        div {
+                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-secondary);",
+                                            span { style: "width: 7px; height: 7px; border-radius: 50%; background: #9A4BFF;" }
+                                            "Active"
+                                        }
+                                        div {
+                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-secondary);",
+                                            span { style: "width: 7px; height: 7px; border-radius: 50%; background: #5B6CFF;" }
+                                            "Notes"
+                                        }
+                                        div {
+                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-secondary);",
+                                            span { style: "width: 7px; height: 7px; border-radius: 50%; background: #E5A158;" }
+                                            "Tags"
+                                        }
+                                        div {
+                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-muted);",
+                                            span { style: "width: 7px; height: 7px; border-radius: 50%; border: 1px dashed var(--text-muted);" }
+                                            "Unresolved"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section 3: Display
+                        div {
+                            class: "graph-section",
+                            div {
+                                class: "graph-section-header",
+                                onclick: move |_| {
+                                    let mut s = settings.write();
+                                    s.expanded_sections.display = !s.expanded_sections.display;
+                                },
+                                if settings.read().expanded_sections.display {
+                                    IconChevronDown { size: 12 }
+                                } else {
+                                    IconChevronRight { size: 12 }
+                                }
+                                span { "{graph_strings::DISPLAY}" }
+                            }
+                            if settings.read().expanded_sections.display {
+                                div {
+                                    class: "graph-section-body",
+                                    // Arrows toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "{graph_strings::ARROWS}" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().display.arrows,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.display.arrows = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+
+                                    // Text fade slider
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::TEXT_FADE}" }
+                                            span { class: "graph-slider-val", "{settings.read().display.text_fade_threshold:.1}" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "0.2",
+                                            max: "2.0",
+                                            step: "0.1",
+                                            value: "{settings.read().display.text_fade_threshold}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.display.text_fade_threshold = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Node size slider
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::NODE_SIZE}" }
+                                            span { class: "graph-slider-val", "{settings.read().display.node_size:.1}x" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "0.4",
+                                            max: "2.5",
+                                            step: "0.1",
+                                            value: "{settings.read().display.node_size}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.display.node_size = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Link thickness slider
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::LINK_THICKNESS}" }
+                                            span { class: "graph-slider-val", "{settings.read().display.link_thickness:.1}x" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "0.4",
+                                            max: "3.0",
+                                            step: "0.1",
+                                            value: "{settings.read().display.link_thickness}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.display.link_thickness = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Animate toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "{graph_strings::ANIMATE}" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().display.animate,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.display.animate = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section 4: Forces
+                        div {
+                            class: "graph-section",
+                            div {
+                                class: "graph-section-header",
+                                onclick: move |_| {
+                                    let mut s = settings.write();
+                                    s.expanded_sections.forces = !s.expanded_sections.forces;
+                                },
+                                if settings.read().expanded_sections.forces {
+                                    IconChevronDown { size: 12 }
+                                } else {
+                                    IconChevronRight { size: 12 }
+                                }
+                                span { "{graph_strings::FORCES}" }
+                            }
+                            if settings.read().expanded_sections.forces {
+                                div {
+                                    class: "graph-section-body",
+                                    // Center force
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::CENTER_FORCE}" }
+                                            span { class: "graph-slider-val", "{settings.read().forces.center_force:.2}" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "0.05",
+                                            max: "2.0",
+                                            step: "0.05",
+                                            value: "{settings.read().forces.center_force}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.forces.center_force = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                    if s.display.animate {
+                                                        let mut ns = nodes_state.write();
+                                                        let es = edges_state.read();
+                                                        for _ in 0..12 {
+                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Repel force
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::REPEL_FORCE}" }
+                                            span { class: "graph-slider-val", "{settings.read().forces.repel_force:.1}" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "1.0",
+                                            max: "20.0",
+                                            step: "0.5",
+                                            value: "{settings.read().forces.repel_force}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.forces.repel_force = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                    if s.display.animate {
+                                                        let mut ns = nodes_state.write();
+                                                        let es = edges_state.read();
+                                                        for _ in 0..12 {
+                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Link force
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::LINK_FORCE}" }
+                                            span { class: "graph-slider-val", "{settings.read().forces.link_force:.2}" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "0.1",
+                                            max: "2.0",
+                                            step: "0.05",
+                                            value: "{settings.read().forces.link_force}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.forces.link_force = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                    if s.display.animate {
+                                                        let mut ns = nodes_state.write();
+                                                        let es = edges_state.read();
+                                                        for _ in 0..12 {
+                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    // Link distance
+                                    div {
+                                        class: "graph-slider-row",
+                                        div {
+                                            class: "graph-slider-header",
+                                            span { "{graph_strings::LINK_DISTANCE}" }
+                                            span { class: "graph-slider-val", "{settings.read().forces.link_distance:.0}" }
+                                        }
+                                        input {
+                                            class: "graph-slider",
+                                            r#type: "range",
+                                            min: "30.0",
+                                            max: "300.0",
+                                            step: "5.0",
+                                            value: "{settings.read().forces.link_distance}",
+                                            oninput: move |evt: FormEvent| {
+                                                if let Ok(v) = evt.value().parse::<f32>() {
+                                                    let mut s = settings.write();
+                                                    s.forces.link_distance = v;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                    if s.display.animate {
+                                                        let mut ns = nodes_state.write();
+                                                        let es = edges_state.read();
+                                                        for _ in 0..12 {
+                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
+                                                        }
+                                                    }
+                                                }
+                                            },
                                         }
                                     }
                                 }
@@ -546,11 +1339,14 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     }
 }
 
-/// Compact Local 2D Graph for Context Panel
+/// Compact Local 2D Graph for Context Panel with configurable depth
 #[component]
 pub fn LocalGraphView(state: Signal<AppState>) -> Element {
+    let mut depth = use_signal(|| 1usize);
+
     let app_state = state.read();
-    let local_graph = app_state.get_local_graph_data(1);
+    let current_depth = *depth.read();
+    let local_graph = app_state.get_local_graph_data(current_depth);
     let node_count = local_graph.nodes.len();
 
     let mut nodes_state = use_signal(|| {
@@ -564,9 +1360,10 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
 
     let mut hovered = use_signal(|| None::<usize>);
 
-    // Re-sync when active note changes
+    // Re-sync when active note or depth changes
     use_effect(move || {
-        let current_local = state.read().get_local_graph_data(1);
+        let current_d = *depth.read();
+        let current_local = state.read().get_local_graph_data(current_d);
         let (n, e) = init_simulation(&current_local, 260.0, 200.0);
         nodes_state.set(n);
         edges_state.set(e);
@@ -593,9 +1390,27 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
     rsx! {
         div {
             class: "local-graph-box",
-            // Header with expand button
+            // Header with depth controls and expand button
             div {
-                style: "position: absolute; top: 6px; right: 6px; z-index: 5;",
+                style: "position: absolute; top: 6px; left: 8px; z-index: 5; display: flex; align-items: center; gap: 4px;",
+                span { style: "font-size: 10px; color: var(--text-muted); font-weight: 500;", "Depth:" }
+                div {
+                    class: "graph-pill-group",
+                    for d in [1usize, 2, 3] {
+                        button {
+                            key: "{d}",
+                            class: if *depth.read() == d { "graph-pill active" } else { "graph-pill" },
+                            onclick: move |_| {
+                                depth.set(d);
+                            },
+                            "{d}"
+                        }
+                    }
+                }
+            }
+
+            div {
+                style: "position: absolute; top: 6px; right: 8px; z-index: 5;",
                 button {
                     class: "btn-icon",
                     style: "padding: 3px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 4px;",
@@ -663,14 +1478,19 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                     {
                         let is_current = active_path_str.as_deref() == Some(node.id.as_str());
                         let is_hovered = *hovered.read() == Some(idx);
-                        let fill_color = if is_current {
+                        let fill_color = if node.is_unresolved {
+                            "transparent"
+                        } else if is_current {
                             "var(--graph-node-current, #9A4BFF)"
                         } else if is_hovered {
                             "var(--graph-node-hover, #7182FF)"
                         } else {
                             "var(--graph-node, #5B6CFF)"
                         };
+                        let stroke_dash = if node.is_unresolved { "3 2" } else { "" };
                         let path_click = node.path.clone();
+                        let label_click = node.label.clone();
+                        let is_unresolved = node.is_unresolved;
 
                         rsx! {
                             g {
@@ -684,7 +1504,12 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                                 },
                                 onclick: move |_| {
                                     let mut s = state.write();
-                                    let _ = s.select_note(&path_click);
+                                    if is_unresolved {
+                                        let _ = s.open_or_create_target(&label_click);
+                                    } else {
+                                        let _ = s.select_note(&path_click);
+                                    }
+                                    s.active_view = ActiveView::Editor;
                                 },
                                 circle {
                                     cx: "{node.x}",
@@ -693,6 +1518,7 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                                     fill: "{fill_color}",
                                     stroke: if is_current { "#D5C7FF" } else { "var(--border, #292E3A)" },
                                     stroke_width: "1.5",
+                                    stroke_dasharray: "{stroke_dash}",
                                 }
                                 text {
                                     x: "{node.x}",
@@ -701,6 +1527,7 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                                     fill: "var(--graph-label, #D7DBE6)",
                                     font_size: "10",
                                     font_weight: if is_current { "600" } else { "400" },
+                                    pointer_events: "none",
                                     "{node.label}"
                                 }
                             }

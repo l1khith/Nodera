@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::icons::{IconEdit, IconPlus, IconTrash};
+use crate::icons::{IconClose, IconEdit, IconPlus, IconTemplate, IconTrash};
 use crate::state::AppState;
 use crate::strings::{actions, dialogs};
 
@@ -171,6 +171,100 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                         s.note_to_delete = None;
                                     },
                                     "{actions::DELETE_PERMANENTLY}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Template Picker Modal
+        if app_state.show_template_modal {
+            {
+                let templates = app_state.get_available_templates();
+                let query = app_state.template_search_query.to_lowercase();
+                let filtered: Vec<_> = templates
+                    .into_iter()
+                    .filter(|t| {
+                        query.is_empty()
+                            || t.name.to_lowercase().contains(&query)
+                            || t.description.to_lowercase().contains(&query)
+                    })
+                    .collect();
+
+                rsx! {
+                    div {
+                        class: "modal-overlay",
+                        onclick: move |_| {
+                            let mut s = state.write();
+                            s.show_template_modal = false;
+                        },
+                        div {
+                            class: "modal-dialog",
+                            style: "width: 580px; max-width: 90vw; padding: 0; overflow: hidden; border-radius: 8px;",
+                            onclick: move |evt| evt.stop_propagation(),
+
+                            // Header with search input
+                            div {
+                                style: "display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 10px; background-color: var(--bg-surface-elevated);",
+                                IconTemplate { size: 16 }
+                                input {
+                                    style: "flex: 1; border: none; background: transparent; font-size: 14px; outline: none; color: var(--text-primary);",
+                                    placeholder: "Search templates or type custom...",
+                                    autofocus: true,
+                                    value: "{app_state.template_search_query}",
+                                    oninput: move |evt| {
+                                        state.write().template_search_query = evt.value();
+                                    },
+                                    onkeydown: move |evt: KeyboardEvent| {
+                                        if evt.key() == Key::Escape {
+                                            state.write().show_template_modal = false;
+                                        }
+                                    },
+                                }
+                                button {
+                                    class: "btn-icon",
+                                    title: "Close (Esc)",
+                                    style: "width: 24px; height: 24px;",
+                                    onclick: move |_| {
+                                        state.write().show_template_modal = false;
+                                    },
+                                    IconClose { size: 12 }
+                                }
+                            }
+
+                            // Template items list
+                            div {
+                                style: "max-height: 400px; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px;",
+                                if filtered.is_empty() {
+                                    div {
+                                        style: "padding: 32px; text-align: center; color: var(--text-muted); font-size: 13px;",
+                                        "No templates matching search. You can add .md templates in 'Templates/' directory."
+                                    }
+                                } else {
+                                    for tmpl in filtered {
+                                        {
+                                            let name = tmpl.name.clone();
+                                            let content = tmpl.content.clone();
+                                            rsx! {
+                                                div {
+                                                    key: "{tmpl.name}",
+                                                    class: "command-palette-row",
+                                                    style: "display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; transition: all 0.15s ease;",
+                                                    onclick: move |_| {
+                                                        let mut s = state.write();
+                                                        let _ = s.insert_template(Some(&name), &content);
+                                                    },
+                                                    div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                                        span { style: "font-size: 13px; font-weight: 600; color: var(--text-primary);", "{tmpl.name}" }
+                                                        span { style: "font-size: 11px; color: var(--accent); font-weight: 500;", "Click to insert" }
+                                                    }
+                                                    span { style: "font-size: 12px; color: var(--text-muted); line-height: 1.4;", "{tmpl.description}" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
