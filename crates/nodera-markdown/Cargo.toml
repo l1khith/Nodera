@@ -11,3 +11,6 @@ serde.workspace = true
 tracing.workspace = true
 pulldown-cmark.workspace = true
 serde_yaml.workspace = true
+syntect.workspace = true
+regex.workspace = true
+

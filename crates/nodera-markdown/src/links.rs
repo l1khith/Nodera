@@ -21,6 +21,35 @@ pub struct GraphNode {
     /// Whether this node represents a tag entity.
     #[serde(default)]
     pub is_tag: bool,
+    /// Number of incoming connections.
+    #[serde(default)]
+    pub in_degree: usize,
+    /// Number of outgoing connections.
+    #[serde(default)]
+    pub out_degree: usize,
+    /// Normalized degree centrality (basis points: 0..10_000).
+    #[serde(default)]
+    pub centrality: u32,
+    /// Assigned community cluster index (from Label Propagation Algorithm).
+    #[serde(default)]
+    pub community_id: usize,
+}
+
+impl Default for GraphNode {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            path: PathBuf::new(),
+            label: String::new(),
+            degree: 0,
+            is_unresolved: false,
+            is_tag: false,
+            in_degree: 0,
+            out_degree: 0,
+            centrality: 0,
+            community_id: 0,
+        }
+    }
 }
 
 /// Filter settings applied when constructing graph nodes and edges.
@@ -182,6 +211,8 @@ impl LinkGraph {
         options: &GraphFilterOptions,
     ) -> GraphData {
         let mut degree_map: HashMap<String, usize> = HashMap::new();
+        let mut in_degree_map: HashMap<String, usize> = HashMap::new();
+        let mut out_degree_map: HashMap<String, usize> = HashMap::new();
         let mut edges_set: HashSet<GraphEdge> = HashSet::new();
         let mut unresolved_targets: HashSet<String> = HashSet::new();
 
@@ -203,7 +234,9 @@ impl LinkGraph {
                         };
                         if edges_set.insert(edge) {
                             *degree_map.entry(source_str.clone()).or_insert(0) += 1;
-                            *degree_map.entry(target_str).or_insert(0) += 1;
+                            *out_degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                            *degree_map.entry(target_str.clone()).or_insert(0) += 1;
+                            *in_degree_map.entry(target_str).or_insert(0) += 1;
                         }
                     }
                 } else if !options.existing_files_only {
@@ -215,7 +248,9 @@ impl LinkGraph {
                     };
                     if edges_set.insert(edge) {
                         *degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                        *out_degree_map.entry(source_str.clone()).or_insert(0) += 1;
                         *degree_map.entry(unresolved_id.clone()).or_insert(0) += 1;
+                        *in_degree_map.entry(unresolved_id.clone()).or_insert(0) += 1;
                         unresolved_targets.insert(trimmed_target.to_string());
                     }
                 }
@@ -241,18 +276,26 @@ impl LinkGraph {
                     };
                     if edges_set.insert(edge) {
                         *degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                        *out_degree_map.entry(source_str.clone()).or_insert(0) += 1;
                         *tag_degree_map.entry(clean_tag.clone()).or_insert(0) += 1;
+                        *in_degree_map.entry(tag_id).or_insert(0) += 1;
                     }
                 }
             }
             for (tag_name, deg) in tag_degree_map {
+                let tag_id = format!("tag:{}", tag_name);
+                let in_deg = in_degree_map.get(&tag_id).copied().unwrap_or(deg);
                 tag_nodes.push(GraphNode {
-                    id: format!("tag:{}", tag_name),
+                    id: tag_id,
                     path: PathBuf::from(&tag_name),
                     label: tag_name,
                     degree: deg,
                     is_unresolved: false,
                     is_tag: true,
+                    in_degree: in_deg,
+                    out_degree: 0,
+                    centrality: 0,
+                    community_id: 0,
                 });
             }
         }
@@ -277,6 +320,9 @@ impl LinkGraph {
                 continue;
             }
 
+            let in_deg = in_degree_map.get(&path_str).copied().unwrap_or(0);
+            let out_deg = out_degree_map.get(&path_str).copied().unwrap_or(0);
+
             nodes.push(GraphNode {
                 id: path_str,
                 path: path.clone(),
@@ -284,6 +330,10 @@ impl LinkGraph {
                 degree,
                 is_unresolved: false,
                 is_tag: false,
+                in_degree: in_deg,
+                out_degree: out_deg,
+                centrality: 0,
+                community_id: 0,
             });
         }
 
@@ -292,6 +342,8 @@ impl LinkGraph {
             for target_name in unresolved_targets {
                 let unresolved_id = format!("unresolved:{}", target_name);
                 let degree = degree_map.get(&unresolved_id).copied().unwrap_or(1);
+                let in_deg = in_degree_map.get(&unresolved_id).copied().unwrap_or(degree);
+                let out_deg = out_degree_map.get(&unresolved_id).copied().unwrap_or(0);
                 nodes.push(GraphNode {
                     id: unresolved_id,
                     path: PathBuf::from(&target_name),
@@ -299,6 +351,10 @@ impl LinkGraph {
                     degree,
                     is_unresolved: true,
                     is_tag: false,
+                    in_degree: in_deg,
+                    out_degree: out_deg,
+                    centrality: 0,
+                    community_id: 0,
                 });
             }
         }
@@ -317,6 +373,10 @@ impl LinkGraph {
             })
             .collect();
         edges.sort_by(|a, b| (&a.source, &a.target).cmp(&(&b.source, &b.target)));
+
+        // Run community detection (LPA) and degree centrality
+        detect_communities(&mut nodes, &edges);
+        calculate_centrality(&mut nodes);
 
         GraphData { nodes, edges }
     }
@@ -437,6 +497,228 @@ impl LinkGraph {
     ) -> GraphData {
         self.to_local_graph_data_with_titles(active_note, all_paths, &HashMap::new(), depth)
     }
+
+    /// Audits vault links to discover broken wikilinks and orphan notes.
+    pub fn audit_vault_links(
+        &self,
+        all_paths: &[PathBuf],
+        note_contents: &HashMap<PathBuf, String>,
+    ) -> LinkAuditReport {
+        let mut broken_map: HashMap<String, Vec<BrokenLinkItem>> = HashMap::new();
+        let mut total_links = 0;
+
+        let mut in_degree: HashMap<PathBuf, usize> = HashMap::new();
+        let mut out_degree: HashMap<PathBuf, usize> = HashMap::new();
+
+        for path in all_paths {
+            in_degree.insert(path.clone(), 0);
+            out_degree.insert(path.clone(), 0);
+        }
+
+        for (source_path, links) in &self.outgoing {
+            *out_degree.entry(source_path.clone()).or_insert(0) += links.len();
+            total_links += links.len();
+
+            let content = note_contents
+                .get(source_path)
+                .map(String::as_str)
+                .unwrap_or("");
+
+            for link in links {
+                if let Some(resolved) = Self::resolve_target(&link.target, all_paths) {
+                    *in_degree.entry(resolved).or_insert(0) += 1;
+                } else {
+                    let clean_target = link.target.trim().to_string();
+
+                    // Find line number and snippet in content
+                    let mut line_num = 1;
+                    let mut snippet = String::new();
+                    let target_pattern = format!("[[{}", link.target);
+
+                    for (i, line) in content.lines().enumerate() {
+                        if line.contains(&target_pattern) || line.contains(&link.target) {
+                            line_num = i + 1;
+                            snippet = line.trim().to_string();
+                            break;
+                        }
+                    }
+
+                    if snippet.is_empty() {
+                        snippet = format!("[[{}]]", clean_target);
+                    }
+
+                    broken_map
+                        .entry(clean_target.clone())
+                        .or_default()
+                        .push(BrokenLinkItem {
+                            target: clean_target,
+                            source_path: source_path.clone(),
+                            line_number: line_num,
+                            snippet,
+                        });
+                }
+            }
+        }
+
+        // Collect orphan notes: 0 in-degree and 0 out-degree
+        let mut orphan_notes = Vec::new();
+        for path in all_paths {
+            let in_deg = in_degree.get(path).copied().unwrap_or(0);
+            let out_deg = out_degree.get(path).copied().unwrap_or(0);
+            if in_deg == 0 && out_deg == 0 {
+                orphan_notes.push(path.clone());
+            }
+        }
+        orphan_notes.sort();
+
+        let mut broken_links: Vec<BrokenLinkGroup> = broken_map
+            .into_iter()
+            .map(|(target, occurrences)| BrokenLinkGroup {
+                target,
+                occurrences,
+            })
+            .collect();
+        broken_links.sort_by(|a, b| {
+            b.occurrences
+                .len()
+                .cmp(&a.occurrences.len())
+                .then_with(|| a.target.cmp(&b.target))
+        });
+
+        LinkAuditReport {
+            broken_links,
+            orphan_notes,
+            total_notes: all_paths.len(),
+            total_links,
+        }
+    }
+}
+
+/// Groups graph nodes into community clusters using the Label Propagation Algorithm (LPA).
+pub fn detect_communities(nodes: &mut [GraphNode], edges: &[GraphEdge]) {
+    if nodes.is_empty() {
+        return;
+    }
+
+    // Build bidirectional adjacency list
+    let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    for edge in edges {
+        adj.entry(edge.source.as_str())
+            .or_default()
+            .push(edge.target.as_str());
+        adj.entry(edge.target.as_str())
+            .or_default()
+            .push(edge.source.as_str());
+    }
+
+    // Initialize each node with its index as label
+    let mut labels: HashMap<String, usize> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        labels.insert(node.id.clone(), i);
+    }
+
+    // Deterministic sorted node ids to ensure reproducible clustering
+    let sorted_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+
+    // Iterate up to 15 times or until convergence
+    for _ in 0..15 {
+        let mut changed = false;
+
+        for id in &sorted_ids {
+            let neighbors = match adj.get(id.as_str()) {
+                Some(n) if !n.is_empty() => n,
+                _ => continue,
+            };
+
+            // Count label frequencies among neighbors
+            let mut counts: HashMap<usize, usize> = HashMap::new();
+            for neighbor in neighbors {
+                if let Some(&lbl) = labels.get(*neighbor) {
+                    *counts.entry(lbl).or_insert(0) += 1;
+                }
+            }
+
+            // Find most frequent label, tie-breaking on lowest label id
+            if let Some((&best_lbl, _)) =
+                counts.iter().max_by(|(lbl_a, count_a), (lbl_b, count_b)| {
+                    count_a.cmp(count_b).then_with(|| lbl_b.cmp(lbl_a))
+                })
+            {
+                if let Some(current) = labels.get_mut(id) {
+                    if *current != best_lbl {
+                        *current = best_lbl;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    // Map labels to consecutive community IDs (0..K) ordered by cluster size descending
+    let mut cluster_sizes: HashMap<usize, usize> = HashMap::new();
+    for &lbl in labels.values() {
+        *cluster_sizes.entry(lbl).or_insert(0) += 1;
+    }
+
+    let mut ranked_clusters: Vec<(usize, usize)> = cluster_sizes.into_iter().collect();
+    ranked_clusters.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let mut label_to_community_id: HashMap<usize, usize> = HashMap::new();
+    for (community_id, (old_label, _)) in ranked_clusters.into_iter().enumerate() {
+        label_to_community_id.insert(old_label, community_id);
+    }
+
+    for node in nodes.iter_mut() {
+        if let Some(&raw_lbl) = labels.get(&node.id) {
+            node.community_id = label_to_community_id.get(&raw_lbl).copied().unwrap_or(0);
+        }
+    }
+}
+
+/// Computes normalized degree centrality (in basis points 0..10_000) for each node.
+pub fn calculate_centrality(nodes: &mut [GraphNode]) {
+    let n = nodes.len();
+    if n <= 1 {
+        for node in nodes.iter_mut() {
+            node.centrality = 0;
+        }
+        return;
+    }
+
+    let max_possible = (n - 1) as f32;
+    for node in nodes.iter_mut() {
+        let norm = (node.degree as f32 / max_possible).clamp(0.0, 1.0);
+        node.centrality = (norm * 10_000.0).round() as u32;
+    }
+}
+
+/// Represents an occurrence of a broken link in a note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokenLinkItem {
+    pub target: String,
+    pub source_path: PathBuf,
+    pub line_number: usize,
+    pub snippet: String,
+}
+
+/// A group of broken link occurrences sharing the same missing target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokenLinkGroup {
+    pub target: String,
+    pub occurrences: Vec<BrokenLinkItem>,
+}
+
+/// Comprehensive audit report for broken links and orphan notes across a vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LinkAuditReport {
+    pub broken_links: Vec<BrokenLinkGroup>,
+    pub orphan_notes: Vec<PathBuf>,
+    pub total_notes: usize,
+    pub total_links: usize,
 }
 
 #[cfg(test)]
@@ -882,5 +1164,139 @@ mod tests {
             .any(|n| n.is_tag && n.label == "#systems"));
         // Edge between Connected and #systems
         assert_eq!(with_tags.edges.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_communities_and_centrality() {
+        let mut nodes = vec![
+            // Cluster 0: A0, A1, A2
+            GraphNode {
+                id: "A0".to_string(),
+                path: PathBuf::from("A0.md"),
+                label: "A0".to_string(),
+                degree: 2,
+                ..Default::default()
+            },
+            GraphNode {
+                id: "A1".to_string(),
+                path: PathBuf::from("A1.md"),
+                label: "A1".to_string(),
+                degree: 2,
+                ..Default::default()
+            },
+            GraphNode {
+                id: "A2".to_string(),
+                path: PathBuf::from("A2.md"),
+                label: "A2".to_string(),
+                degree: 2,
+                ..Default::default()
+            },
+            // Cluster 1: B0, B1
+            GraphNode {
+                id: "B0".to_string(),
+                path: PathBuf::from("B0.md"),
+                label: "B0".to_string(),
+                degree: 1,
+                ..Default::default()
+            },
+            GraphNode {
+                id: "B1".to_string(),
+                path: PathBuf::from("B1.md"),
+                label: "B1".to_string(),
+                degree: 1,
+                ..Default::default()
+            },
+        ];
+
+        let edges = vec![
+            GraphEdge {
+                source: "A0".to_string(),
+                target: "A1".to_string(),
+            },
+            GraphEdge {
+                source: "A1".to_string(),
+                target: "A2".to_string(),
+            },
+            GraphEdge {
+                source: "A2".to_string(),
+                target: "A0".to_string(),
+            },
+            GraphEdge {
+                source: "B0".to_string(),
+                target: "B1".to_string(),
+            },
+        ];
+
+        detect_communities(&mut nodes, &edges);
+        calculate_centrality(&mut nodes);
+
+        // A nodes should share the same community ID
+        let a0_comm = nodes.iter().find(|n| n.id == "A0").unwrap().community_id;
+        let a1_comm = nodes.iter().find(|n| n.id == "A1").unwrap().community_id;
+        let a2_comm = nodes.iter().find(|n| n.id == "A2").unwrap().community_id;
+        assert_eq!(a0_comm, a1_comm);
+        assert_eq!(a1_comm, a2_comm);
+
+        // B nodes should share a distinct community ID
+        let b0_comm = nodes.iter().find(|n| n.id == "B0").unwrap().community_id;
+        let b1_comm = nodes.iter().find(|n| n.id == "B1").unwrap().community_id;
+        assert_eq!(b0_comm, b1_comm);
+        assert_ne!(a0_comm, b0_comm);
+
+        // Centrality should be non-zero for connected nodes
+        let a0_cent = nodes.iter().find(|n| n.id == "A0").unwrap().centrality;
+        assert!(a0_cent > 0);
+    }
+
+    #[test]
+    fn test_audit_vault_links_and_orphans() {
+        let mut graph = LinkGraph::new();
+        let note_a = PathBuf::from("Notes/Alpha.md");
+        let note_b = PathBuf::from("Notes/Beta.md");
+        let note_orphan = PathBuf::from("Notes/Lonely.md");
+        let all_paths = vec![note_a.clone(), note_b.clone(), note_orphan.clone()];
+
+        // Alpha links to Beta and to a missing note [[NonExistent]]
+        graph.update_note_links(
+            note_a.clone(),
+            vec![
+                Wikilink {
+                    raw: "[[Beta]]".to_string(),
+                    target: "Beta".to_string(),
+                    display_text: None,
+                    start: 0,
+                    end: 8,
+                },
+                Wikilink {
+                    raw: "[[NonExistent]]".to_string(),
+                    target: "NonExistent".to_string(),
+                    display_text: None,
+                    start: 9,
+                    end: 24,
+                },
+            ],
+        );
+
+        let mut contents = HashMap::new();
+        contents.insert(
+            note_a.clone(),
+            "See [[Beta]] or explore [[NonExistent]] for missing info.".to_string(),
+        );
+        contents.insert(note_b.clone(), "# Beta Note\nNothing here.".to_string());
+        contents.insert(note_orphan.clone(), "# Lonely Note\nAll alone.".to_string());
+
+        let report = graph.audit_vault_links(&all_paths, &contents);
+
+        // Verify broken link detected
+        assert_eq!(report.broken_links.len(), 1);
+        assert_eq!(report.broken_links[0].target, "NonExistent");
+        assert_eq!(report.broken_links[0].occurrences.len(), 1);
+        assert_eq!(report.broken_links[0].occurrences[0].source_path, note_a);
+        assert_eq!(report.broken_links[0].occurrences[0].line_number, 1);
+
+        // Verify orphan detected (Lonely note has degree 0)
+        assert_eq!(report.orphan_notes, vec![note_orphan]);
+        assert_eq!(report.total_notes, 3);
+        assert_eq!(report.total_links, 2);
     }
 }

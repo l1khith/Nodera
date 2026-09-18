@@ -120,6 +120,59 @@ impl CancellationToken {
 /// Callback type for listening to progress updates safely across thread boundaries.
 pub type ProgressSink = Arc<dyn Fn(ConversionProgress) + Send + Sync>;
 
+/// Supported types of annotations in PDF documents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnnotationKind {
+    Highlight,
+    Underline,
+    StickyNote,
+    StrikeOut,
+    FreeText,
+    Squiggly,
+    Other(String),
+}
+
+impl std::fmt::Display for AnnotationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Highlight => write!(f, "Highlight"),
+            Self::Underline => write!(f, "Underline"),
+            Self::StickyNote => write!(f, "Sticky Note"),
+            Self::StrikeOut => write!(f, "Strikeout"),
+            Self::FreeText => write!(f, "Free Text"),
+            Self::Squiggly => write!(f, "Squiggly"),
+            Self::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+/// Extracted PDF annotation containing content, page location, author, and style metadata.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PdfAnnotation {
+    /// 1-based page index
+    pub page: usize,
+    /// Annotation type (highlight, note, underline, etc.)
+    pub kind: AnnotationKind,
+    /// Text contents or note comment associated with this annotation
+    pub contents: Option<String>,
+    /// Author / Creator of the annotation, if present
+    pub author: Option<String>,
+    /// Hex color string (e.g. "#ffff00"), if present
+    pub color_hex: Option<String>,
+    /// Bounding rectangle [x1, y1, x2, y2]
+    pub rect: Option<[f64; 4]>,
+    /// ISO / PDF creation or modification date string
+    pub creation_date: Option<String>,
+}
+
+/// Aggregate report of all annotations extracted from a PDF document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PdfAnnotationReport {
+    pub pdf_filename: String,
+    pub total_pages: usize,
+    pub annotations: Vec<PdfAnnotation>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
