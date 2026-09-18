@@ -13,6 +13,8 @@ tracing.workspace = true
 rusqlite.workspace = true
 tantivy.workspace = true
 serde_json.workspace = true
+rayon.workspace = true
+
 
 [dev-dependencies]
 tempfile.workspace = true
