@@ -13,7 +13,8 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
     let show_rename = app_state.show_rename_dialog;
     let rename_path = app_state.note_to_rename.clone();
 
-    let mut new_note_title = use_signal(|| dialogs::DEFAULT_NOTE_TITLE.to_string());
+    let next_title = app_state.next_available_note_title();
+    let mut new_note_title = use_signal(String::new);
     let mut rename_note_title = use_signal(String::new);
 
     rsx! {
@@ -33,8 +34,21 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                             class: "modal-input",
                             r#type: "text",
                             value: "{new_note_title}",
+                            placeholder: "{next_title}",
                             autofocus: true,
                             oninput: move |e| new_note_title.set(e.value()),
+                            onkeydown: move |e: KeyboardEvent| {
+                                if e.key() == Key::Enter {
+                                    let input_val = new_note_title.read().trim().to_string();
+                                    let mut s = state.write();
+                                    let _ = s.create_note(&input_val, None);
+                                    s.show_new_note_dialog = false;
+                                    new_note_title.set(String::new());
+                                } else if e.key() == Key::Escape {
+                                    state.write().show_new_note_dialog = false;
+                                    new_note_title.set(String::new());
+                                }
+                            }
                         }
                     }
                     div { class: "modal-actions",
@@ -43,16 +57,18 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                             onclick: move |_| {
                                 let mut s = state.write();
                                 s.show_new_note_dialog = false;
+                                new_note_title.set(String::new());
                             },
                             "{actions::CANCEL}"
                         }
                         button {
                             class: "btn-action btn-primary",
                             onclick: move |_| {
-                                let title = new_note_title.read().clone();
+                                let input_val = new_note_title.read().trim().to_string();
                                 let mut s = state.write();
-                                let _ = s.create_note(&title, None);
+                                let _ = s.create_note(&input_val, None);
                                 s.show_new_note_dialog = false;
+                                new_note_title.set(String::new());
                             },
                             "{actions::CREATE_NOTE}"
                         }
@@ -145,7 +161,7 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                 p {
                                     "{dialogs::DELETE_NOTE_CONFIRM}"
                                     strong { "'{display_target}'" }
-                                    "{dialogs::DELETE_NOTE_WARNING}"
+                                    "? You can safely move it to Trash and restore it later, or delete permanently."
                                 }
                             }
                             div { class: "modal-actions",
@@ -158,19 +174,39 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                     },
                                     "{actions::CANCEL}"
                                 }
-                                button {
-                                    class: "btn-action btn-danger",
-                                    style: "background-color: var(--danger); color: #fff;",
-                                    onclick: move |_| {
-                                        if let Some(target) = delete_path.as_ref() {
-                                            let mut s = state.write();
-                                            let _ = s.delete_note(target);
+                                {
+                                    let delete_path_perm = delete_path.clone();
+                                    let delete_path_trash = delete_path.clone();
+                                    rsx! {
+                                        button {
+                                            class: "btn-action",
+                                            style: "color: var(--danger);",
+                                            title: "Delete permanently without moving to trash",
+                                            onclick: move |_| {
+                                                if let Some(target) = delete_path_perm.as_ref() {
+                                                    let mut s = state.write();
+                                                    let _ = s.delete_note_permanently(target);
+                                                }
+                                                let mut s = state.write();
+                                                s.show_delete_confirm_dialog = false;
+                                                s.note_to_delete = None;
+                                            },
+                                            "{actions::DELETE_PERMANENTLY}"
                                         }
-                                        let mut s = state.write();
-                                        s.show_delete_confirm_dialog = false;
-                                        s.note_to_delete = None;
-                                    },
-                                    "{actions::DELETE_PERMANENTLY}"
+                                        button {
+                                            class: "btn-action btn-primary",
+                                            onclick: move |_| {
+                                                if let Some(target) = delete_path_trash.as_ref() {
+                                                    let mut s = state.write();
+                                                    let _ = s.trash_note(target);
+                                                }
+                                                let mut s = state.write();
+                                                s.show_delete_confirm_dialog = false;
+                                                s.note_to_delete = None;
+                                            },
+                                            "Move to Trash"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -261,6 +297,95 @@ pub fn Dialogs(state: Signal<AppState>) -> Element {
                                                         span { style: "font-size: 11px; color: var(--accent); font-weight: 500;", "Click to insert" }
                                                     }
                                                     span { style: "font-size: 12px; color: var(--text-muted); line-height: 1.4;", "{tmpl.description}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Trash Bin Modal
+        if app_state.show_trash_modal {
+            {
+                let trash_items = app_state.list_trash();
+                let count = trash_items.len();
+
+                rsx! {
+                    div { class: "modal-overlay",
+                        div { class: "modal-dialog", style: "max-width: 580px;",
+                            div { style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;",
+                                h3 {
+                                    class: "modal-title",
+                                    style: "display: flex; align-items: center; gap: 8px; margin: 0;",
+                                    IconTrash { size: 16 }
+                                    span { "Trash Bin ({count})" }
+                                }
+                                div { style: "display: flex; align-items: center; gap: 8px;",
+                                    if count > 0 {
+                                        button {
+                                            class: "btn-action",
+                                            style: "color: var(--danger); font-size: 11px;",
+                                            onclick: move |_| {
+                                                let mut s = state.write();
+                                                let _ = s.empty_trash();
+                                            },
+                                            "Empty Trash"
+                                        }
+                                    }
+                                    button {
+                                        class: "btn-icon",
+                                        onclick: move |_| {
+                                            state.write().show_trash_modal = false;
+                                        },
+                                        IconClose { size: 14 }
+                                    }
+                                }
+                            }
+
+                            div { style: "max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px;",
+                                if trash_items.is_empty() {
+                                    div { style: "padding: 32px; text-align: center; color: var(--text-muted); font-size: 13px;",
+                                        "Trash is empty. Deleted notes are safely stored here and can be restored."
+                                    }
+                                } else {
+                                    for item in trash_items {
+                                        {
+                                            let trash_file = item.trash_filename.clone();
+                                            let trash_file_del = item.trash_filename.clone();
+                                            let orig = item.original_path.display().to_string();
+                                            rsx! {
+                                                div {
+                                                    key: "{item.trash_filename}",
+                                                    style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;",
+                                                    div { style: "display: flex; flex-direction: column; gap: 2px;",
+                                                        span { style: "font-weight: 600; font-size: 13px; color: var(--text-primary);", "{item.title}" }
+                                                        span { style: "font-size: 11px; color: var(--text-muted);", "Original: {orig}" }
+                                                    }
+                                                    div { style: "display: flex; align-items: center; gap: 8px;",
+                                                        button {
+                                                            class: "btn-action btn-primary",
+                                                            style: "font-size: 11px; padding: 4px 10px;",
+                                                            onclick: move |_| {
+                                                                let mut s = state.write();
+                                                                let _ = s.restore_trashed_note(&trash_file);
+                                                            },
+                                                            "Restore"
+                                                        }
+                                                        button {
+                                                            class: "btn-action",
+                                                            style: "color: var(--danger); font-size: 11px; padding: 4px 8px;",
+                                                            onclick: move |_| {
+                                                                let mut s = state.write();
+                                                                let _ = s.delete_trashed_permanently(&trash_file_del);
+                                                            },
+                                                            "Delete Forever"
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }

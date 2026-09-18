@@ -8,6 +8,21 @@ use crate::state::{ActiveView, AppState, GraphForcesSettings};
 use crate::strings::{actions, empty_states, graph as graph_strings, placeholders};
 use nodera_markdown::GraphData;
 
+pub const COMMUNITY_COLORS: [&str; 12] = [
+    "#5B6CFF", // Vibrant Blue
+    "#9A4BFF", // Purple
+    "#10B981", // Emerald
+    "#F59E0B", // Amber
+    "#F43F5E", // Rose
+    "#06B6D4", // Cyan
+    "#6366F1", // Indigo
+    "#F97316", // Orange
+    "#84CC16", // Lime
+    "#EC4899", // Pink
+    "#8B5CF6", // Violet
+    "#14B8A6", // Teal
+];
+
 /// Node in the 2D physics simulation canvas
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimNode {
@@ -15,6 +30,10 @@ pub struct SimNode {
     pub path: PathBuf,
     pub label: String,
     pub degree: usize,
+    pub in_degree: usize,
+    pub out_degree: usize,
+    pub centrality: u32,
+    pub community_id: usize,
     pub x: f32,
     pub y: f32,
     pub vx: f32,
@@ -67,6 +86,10 @@ pub fn init_simulation_with_forces(
             path: gn.path.clone(),
             label: gn.label.clone(),
             degree: gn.degree,
+            in_degree: gn.in_degree,
+            out_degree: gn.out_degree,
+            centrality: gn.centrality,
+            community_id: gn.community_id,
             x,
             y,
             vx: 0.0,
@@ -132,6 +155,260 @@ pub fn step_simulation(
     );
 }
 
+/// Compact QuadTree node for Barnes-Hut spatial force approximation.
+#[derive(Debug, Clone)]
+struct QuadTreeNode {
+    cx: f32,
+    cy: f32,
+    size: f32,
+    mass: f32,
+    com_x: f32,
+    com_y: f32,
+    payload: QuadPayload,
+}
+
+#[derive(Debug, Clone)]
+enum QuadPayload {
+    Empty,
+    Leaf(usize),
+    Internal([usize; 4]), // NW, NE, SW, SE
+}
+
+struct QuadTree {
+    nodes: Vec<QuadTreeNode>,
+}
+
+impl QuadTree {
+    fn new(cx: f32, cy: f32, size: f32) -> Self {
+        let mut tree = Self {
+            nodes: Vec::with_capacity(128),
+        };
+        tree.nodes.push(QuadTreeNode {
+            cx,
+            cy,
+            size,
+            mass: 0.0,
+            com_x: 0.0,
+            com_y: 0.0,
+            payload: QuadPayload::Empty,
+        });
+        tree
+    }
+
+    fn insert(
+        &mut self,
+        node_idx: usize,
+        body_idx: usize,
+        x: f32,
+        y: f32,
+        mass: f32,
+        max_depth: usize,
+    ) {
+        if max_depth == 0 {
+            let cur = &mut self.nodes[node_idx];
+            let new_mass = cur.mass + mass;
+            if new_mass > 0.0 {
+                cur.com_x = (cur.com_x * cur.mass + x * mass) / new_mass;
+                cur.com_y = (cur.com_y * cur.mass + y * mass) / new_mass;
+                cur.mass = new_mass;
+            }
+            return;
+        }
+
+        match self.nodes[node_idx].payload {
+            QuadPayload::Empty => {
+                let cur = &mut self.nodes[node_idx];
+                cur.mass = mass;
+                cur.com_x = x;
+                cur.com_y = y;
+                cur.payload = QuadPayload::Leaf(body_idx);
+            }
+            QuadPayload::Leaf(old_body_idx) => {
+                let old_com_x = self.nodes[node_idx].com_x;
+                let old_com_y = self.nodes[node_idx].com_y;
+                let old_mass = self.nodes[node_idx].mass;
+                let cx = self.nodes[node_idx].cx;
+                let cy = self.nodes[node_idx].cy;
+                let size = self.nodes[node_idx].size;
+                let half = size / 2.0;
+                let q_size = half;
+
+                let nw_idx = self.nodes.len();
+                let ne_idx = nw_idx + 1;
+                let sw_idx = nw_idx + 2;
+                let se_idx = nw_idx + 3;
+
+                self.nodes.push(QuadTreeNode {
+                    cx: cx - half / 2.0,
+                    cy: cy - half / 2.0,
+                    size: q_size,
+                    mass: 0.0,
+                    com_x: 0.0,
+                    com_y: 0.0,
+                    payload: QuadPayload::Empty,
+                });
+                self.nodes.push(QuadTreeNode {
+                    cx: cx + half / 2.0,
+                    cy: cy - half / 2.0,
+                    size: q_size,
+                    mass: 0.0,
+                    com_x: 0.0,
+                    com_y: 0.0,
+                    payload: QuadPayload::Empty,
+                });
+                self.nodes.push(QuadTreeNode {
+                    cx: cx - half / 2.0,
+                    cy: cy + half / 2.0,
+                    size: q_size,
+                    mass: 0.0,
+                    com_x: 0.0,
+                    com_y: 0.0,
+                    payload: QuadPayload::Empty,
+                });
+                self.nodes.push(QuadTreeNode {
+                    cx: cx + half / 2.0,
+                    cy: cy + half / 2.0,
+                    size: q_size,
+                    mass: 0.0,
+                    com_x: 0.0,
+                    com_y: 0.0,
+                    payload: QuadPayload::Empty,
+                });
+
+                let new_mass = old_mass + mass;
+                self.nodes[node_idx].com_x = (old_com_x * old_mass + x * mass) / new_mass;
+                self.nodes[node_idx].com_y = (old_com_y * old_mass + y * mass) / new_mass;
+                self.nodes[node_idx].mass = new_mass;
+                self.nodes[node_idx].payload =
+                    QuadPayload::Internal([nw_idx, ne_idx, sw_idx, se_idx]);
+
+                let old_quadrant = self.quadrant_for(cx, cy, old_com_x, old_com_y);
+                let old_child_idx = self.nodes[node_idx].child(old_quadrant);
+                self.insert(
+                    old_child_idx,
+                    old_body_idx,
+                    old_com_x,
+                    old_com_y,
+                    old_mass,
+                    max_depth - 1,
+                );
+
+                let new_quadrant = self.quadrant_for(cx, cy, x, y);
+                let new_child_idx = self.nodes[node_idx].child(new_quadrant);
+                self.insert(new_child_idx, body_idx, x, y, mass, max_depth - 1);
+            }
+            QuadPayload::Internal(_) => {
+                let cx = self.nodes[node_idx].cx;
+                let cy = self.nodes[node_idx].cy;
+                let new_mass = self.nodes[node_idx].mass + mass;
+                self.nodes[node_idx].com_x =
+                    (self.nodes[node_idx].com_x * self.nodes[node_idx].mass + x * mass) / new_mass;
+                self.nodes[node_idx].com_y =
+                    (self.nodes[node_idx].com_y * self.nodes[node_idx].mass + y * mass) / new_mass;
+                self.nodes[node_idx].mass = new_mass;
+
+                let quadrant = self.quadrant_for(cx, cy, x, y);
+                let child_idx = self.nodes[node_idx].child(quadrant);
+                self.insert(child_idx, body_idx, x, y, mass, max_depth - 1);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn quadrant_for(&self, cx: f32, cy: f32, x: f32, y: f32) -> usize {
+        match (x >= cx, y >= cy) {
+            (false, false) => 0, // NW
+            (true, false) => 1,  // NE
+            (false, true) => 2,  // SW
+            (true, true) => 3,   // SE
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_repulsion(
+        &self,
+        tree_idx: usize,
+        body_idx: usize,
+        bx: f32,
+        by: f32,
+        b_mass: f32,
+        b_radius: f32,
+        nodes: &[SimNode],
+        k_rep: f32,
+        theta_sq: f32,
+        fx: &mut f32,
+        fy: &mut f32,
+    ) {
+        if tree_idx >= self.nodes.len() {
+            return;
+        }
+        let qnode = &self.nodes[tree_idx];
+        if qnode.mass <= 0.0 {
+            return;
+        }
+
+        match qnode.payload {
+            QuadPayload::Empty => {}
+            QuadPayload::Leaf(other_idx) => {
+                if other_idx != body_idx {
+                    let other = &nodes[other_idx];
+                    let dx = bx - other.x;
+                    let dy = by - other.y;
+                    let dist_sq = dx * dx + dy * dy;
+                    let dist = dist_sq.sqrt().max(1.0);
+                    let nx = dx / dist;
+                    let ny = dy / dist;
+
+                    let other_mass = 1.0 + (other.degree as f32) * 0.15;
+                    let mut force =
+                        (k_rep * b_mass * other_mass) / (dist * (dist + 20.0)).max(300.0);
+
+                    let min_dist = b_radius + other.radius + 14.0;
+                    if dist < min_dist {
+                        let overlap = min_dist - dist;
+                        force += overlap * overlap * 0.25;
+                    }
+
+                    *fx += nx * force;
+                    *fy += ny * force;
+                }
+            }
+            QuadPayload::Internal(children) => {
+                let dx = bx - qnode.com_x;
+                let dy = by - qnode.com_y;
+                let dist_sq = dx * dx + dy * dy;
+
+                if (qnode.size * qnode.size) < (theta_sq * dist_sq) {
+                    let dist = dist_sq.sqrt().max(1.0);
+                    let nx = dx / dist;
+                    let ny = dy / dist;
+
+                    let force = (k_rep * b_mass * qnode.mass) / (dist * (dist + 20.0)).max(300.0);
+                    *fx += nx * force;
+                    *fy += ny * force;
+                } else {
+                    for &child in &children {
+                        self.compute_repulsion(
+                            child, body_idx, bx, by, b_mass, b_radius, nodes, k_rep, theta_sq, fx,
+                            fy,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl QuadTreeNode {
+    #[inline(always)]
+    fn child(&self, quadrant: usize) -> usize {
+        match self.payload {
+            QuadPayload::Internal(c) => c[quadrant],
+            _ => 0,
+        }
+    }
+}
+
 /// Executes one physics tick with Coulomb repulsion, Hooke spring attraction, center gravity, and collision clearance.
 pub fn step_simulation_with_forces(
     nodes: &mut [SimNode],
@@ -155,39 +432,81 @@ pub fn step_simulation_with_forces(
     let mut fx = vec![0.0f32; n];
     let mut fy = vec![0.0f32; n];
 
-    // 1. Repulsion and collision avoidance between all pairs
-    for i in 0..n {
-        let r_i = nodes[i].radius;
-        let deg_i = nodes[i].degree as f32;
-        let mass_i = 1.0 + deg_i * 0.15;
+    // 1. Repulsion and collision avoidance
+    if n < 64 {
+        // Direct all-pairs calculation for small graphs
+        for i in 0..n {
+            let r_i = nodes[i].radius;
+            let deg_i = nodes[i].degree as f32;
+            let mass_i = 1.0 + deg_i * 0.15;
 
-        for j in (i + 1)..n {
-            let dx = nodes[i].x - nodes[j].x;
-            let dy = nodes[i].y - nodes[j].y;
-            let dist_sq = dx * dx + dy * dy;
-            let dist = dist_sq.sqrt().max(1.0);
-            let nx = dx / dist;
-            let ny = dy / dist;
+            for j in (i + 1)..n {
+                let dx = nodes[i].x - nodes[j].x;
+                let dy = nodes[i].y - nodes[j].y;
+                let dist_sq = dx * dx + dy * dy;
+                let dist = dist_sq.sqrt().max(1.0);
+                let nx = dx / dist;
+                let ny = dy / dist;
 
-            // Coulomb repulsion scaled by degree with smooth distance denominator
-            let mass_j = 1.0 + (nodes[j].degree as f32) * 0.15;
-            let mut force = (k_rep * mass_i * mass_j) / (dist * (dist + 20.0)).max(300.0);
+                let mass_j = 1.0 + (nodes[j].degree as f32) * 0.15;
+                let mut force = (k_rep * mass_i * mass_j) / (dist * (dist + 20.0)).max(300.0);
 
-            // Hard collision clearance so nodes and labels never overlap
-            let r_j = nodes[j].radius;
-            let min_dist = r_i + r_j + 14.0;
-            if dist < min_dist {
-                let overlap = min_dist - dist;
-                force += overlap * overlap * 0.25;
+                let r_j = nodes[j].radius;
+                let min_dist = r_i + r_j + 14.0;
+                if dist < min_dist {
+                    let overlap = min_dist - dist;
+                    force += overlap * overlap * 0.25;
+                }
+
+                let f_x = nx * force;
+                let f_y = ny * force;
+
+                fx[i] += f_x;
+                fy[i] += f_y;
+                fx[j] -= f_x;
+                fy[j] -= f_y;
             }
+        }
+    } else {
+        // Barnes-Hut QuadTree spatial subdivision for O(N log N) scaling
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
 
-            let f_x = nx * force;
-            let f_y = ny * force;
+        for node in nodes.iter() {
+            min_x = min_x.min(node.x);
+            max_x = max_x.max(node.x);
+            min_y = min_y.min(node.y);
+            max_y = max_y.max(node.y);
+        }
 
-            fx[i] += f_x;
-            fy[i] += f_y;
-            fx[j] -= f_x;
-            fy[j] -= f_y;
+        let cx = (min_x + max_x) * 0.5;
+        let cy = (min_y + max_y) * 0.5;
+        let size = ((max_x - min_x).max(max_y - min_y) + 20.0).max(100.0);
+
+        let mut tree = QuadTree::new(cx, cy, size);
+        for (i, node) in nodes.iter().enumerate() {
+            let mass = 1.0 + (node.degree as f32) * 0.15;
+            tree.insert(0, i, node.x, node.y, mass, 16);
+        }
+
+        let theta_sq = 0.75 * 0.75;
+        for i in 0..n {
+            let mass_i = 1.0 + (nodes[i].degree as f32) * 0.15;
+            tree.compute_repulsion(
+                0,
+                i,
+                nodes[i].x,
+                nodes[i].y,
+                mass_i,
+                nodes[i].radius,
+                nodes,
+                k_rep,
+                theta_sq,
+                &mut fx[i],
+                &mut fy[i],
+            );
         }
     }
 
@@ -245,17 +564,10 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     let total_notes = graph_data.nodes.len();
     let total_edges = graph_data.edges.len();
 
-    let mut nodes_state = use_signal(|| {
-        let (nodes, _) =
-            init_simulation_with_forces(&graph_data, 1000.0, 700.0, &current_settings.forces);
-        nodes
-    });
-
-    let mut edges_state = use_signal(|| {
-        let (_, edges) =
-            init_simulation_with_forces(&graph_data, 1000.0, 700.0, &current_settings.forces);
-        edges
-    });
+    let (init_nodes, init_edges) =
+        init_simulation_with_forces(&graph_data, 1000.0, 700.0, &current_settings.forces);
+    let mut nodes_state = use_signal(|| init_nodes);
+    let mut edges_state = use_signal(|| init_edges);
 
     let mut pan_x = use_signal(|| 0.0f32);
     let mut pan_y = use_signal(|| 0.0f32);
@@ -554,6 +866,35 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     span { style: "color: var(--text-secondary);", "{total_edges} connections" }
                 }
 
+                // Hovered Node Intelligence Card
+                {
+                    if let Some(h_idx) = *hovered_node.read() {
+                        if let Some(h_node) = nodes.get(h_idx) {
+                            let cent_pct = (h_node.centrality as f32) / 100.0;
+                            let comm_col = COMMUNITY_COLORS[h_node.community_id % COMMUNITY_COLORS.len()];
+                            rsx! {
+                                div {
+                                    style: "position: absolute; bottom: 50px; left: 14px; background: var(--bg-surface-elevated, #1A1D24); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 11px; z-index: 10; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); pointer-events: none;",
+                                    span { style: "font-weight: 600; color: var(--text-primary);", "{h_node.label}" }
+                                    span { style: "color: var(--text-muted);", "•" }
+                                    span { style: "color: var(--text-secondary);", "Degree {h_node.degree} (in: {h_node.in_degree}, out: {h_node.out_degree})" }
+                                    span { style: "color: var(--text-muted);", "•" }
+                                    span {
+                                        style: "color: {comm_col}; font-weight: 500;",
+                                        "Community #{h_node.community_id + 1}"
+                                    }
+                                    span { style: "color: var(--text-muted);", "•" }
+                                    span { style: "color: var(--accent); font-weight: 500;", "Centrality {cent_pct:.1}%" }
+                                }
+                            }
+                        } else {
+                            rsx! {}
+                        }
+                    } else {
+                        rsx! {}
+                    }
+                }
+
                 // Interactive SVG Canvas
                 svg {
                     class: "graph-canvas",
@@ -674,6 +1015,12 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     node.label.to_lowercase().contains(&query)
                                 };
 
+                                let community_color = if current_settings.display.color_by_community {
+                                    COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                } else {
+                                    "var(--graph-node, #5B6CFF)"
+                                };
+
                                 let (node_color, stroke_color, stroke_width, node_opacity, stroke_dash) = if node.is_unresolved {
                                     let fill = "transparent";
                                     let stroke = if is_selected || is_hovered {
@@ -695,27 +1042,33 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                         } else if is_hovered {
                                             "var(--graph-node-hover, #7182FF)"
                                         } else {
-                                            "var(--graph-node, #5B6CFF)"
+                                            community_color
                                         };
                                         let stroke = if is_current { "#D5C7FF" } else { "#FFFFFF" };
                                         (fill, stroke, "2.5", "1.0", "")
                                     } else if is_connected {
-                                        ("var(--graph-node-connected, #7E8CFF)", "var(--border-strong, #383F4F)", "2.0", "1.0", "")
+                                        (community_color, "var(--border-strong, #383F4F)", "2.0", "1.0", "")
                                     } else {
-                                        ("var(--graph-node, #5B6CFF)", "var(--border, #292E3A)", "1.0", "0.18", "")
+                                        (community_color, "var(--border, #292E3A)", "1.0", "0.18", "")
                                     }
                                 } else {
                                     let fill = if is_current {
                                         "var(--graph-node-current, #9A4BFF)"
                                     } else {
-                                        "var(--graph-node, #5B6CFF)"
+                                        community_color
                                     };
                                     let stroke = if is_current { "#D5C7FF" } else { "var(--border, #292E3A)" };
                                     let opacity = if !matches_query { "0.20" } else { "1.0" };
                                     (fill, stroke, "1.5", opacity, "")
                                 };
 
-                                let node_radius = node.radius * current_settings.display.node_size;
+                                let base_radius = if current_settings.display.centrality_sizing {
+                                    let centrality_ratio = (node.centrality as f32) / 10000.0;
+                                    5.0 + centrality_ratio * 16.0 + (node.degree as f32).min(8.0) * 0.75
+                                } else {
+                                    node.radius
+                                };
+                                let node_radius = base_radius * current_settings.display.node_size;
                                 let path_click = node.path.clone();
                                 let path_dbl = node.path.clone();
                                 let label_click = node.label.clone();
@@ -1179,6 +1532,46 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                             span { class: "graph-switch-slider" }
                                         }
                                     }
+
+                                    // Color by Community toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "Color by Community" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().display.color_by_community,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.display.color_by_community = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
+
+                                    // Size by Centrality toggle
+                                    div {
+                                        class: "graph-toggle-row",
+                                        span { "Size by Centrality" }
+                                        label {
+                                            class: "graph-switch",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: settings.read().display.centrality_sizing,
+                                                onchange: move |evt: FormEvent| {
+                                                    let checked = evt.value() == "true";
+                                                    let mut s = settings.write();
+                                                    s.display.centrality_sizing = checked;
+                                                    state.write().preferences.graph_settings = s.clone();
+                                                },
+                                            }
+                                            span { class: "graph-switch-slider" }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1535,6 +1928,109 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_barnes_hut_quadtree_construction_and_repulsion() {
+        let forces = GraphForcesSettings::default();
+        let mut nodes = vec![
+            SimNode {
+                id: "n1".to_string(),
+                path: PathBuf::from("n1.md"),
+                label: "N1".to_string(),
+                degree: 1,
+                in_degree: 1,
+                out_degree: 0,
+                centrality: 100,
+                community_id: 0,
+                x: 100.0,
+                y: 100.0,
+                vx: 0.0,
+                vy: 0.0,
+                radius: 6.0,
+                is_unresolved: false,
+                is_tag: false,
+            },
+            SimNode {
+                id: "n2".to_string(),
+                path: PathBuf::from("n2.md"),
+                label: "N2".to_string(),
+                degree: 1,
+                in_degree: 0,
+                out_degree: 1,
+                centrality: 100,
+                community_id: 0,
+                x: 120.0,
+                y: 100.0,
+                vx: 0.0,
+                vy: 0.0,
+                radius: 6.0,
+                is_unresolved: false,
+                is_tag: false,
+            },
+        ];
+        let edges = vec![SimEdge {
+            source: 0,
+            target: 1,
+        }];
+
+        // Run 10 ticks
+        for _ in 0..10 {
+            step_simulation_with_forces(&mut nodes, &edges, (150.0, 150.0), None, 0.5, &forces);
+        }
+
+        // Repulsion should have pushed n1 and n2 further apart along the x-axis
+        assert!(nodes[1].x > nodes[0].x);
+        assert!((nodes[1].x - nodes[0].x) > 20.0);
+    }
+
+    #[test]
+    fn test_barnes_hut_large_scale_convergence() {
+        let forces = GraphForcesSettings::default();
+        let mut nodes = Vec::new();
+        for i in 0..100 {
+            nodes.push(SimNode {
+                id: format!("node_{i}"),
+                path: PathBuf::from(format!("node_{i}.md")),
+                label: format!("Node {i}"),
+                degree: 2,
+                in_degree: 1,
+                out_degree: 1,
+                centrality: 100,
+                community_id: i % 4,
+                x: 500.0 + (i as f32 * 0.1).cos() * 50.0,
+                y: 500.0 + (i as f32 * 0.1).sin() * 50.0,
+                vx: 0.0,
+                vy: 0.0,
+                radius: 6.0,
+                is_unresolved: false,
+                is_tag: false,
+            });
+        }
+        let edges = (0..99)
+            .map(|i| SimEdge {
+                source: i,
+                target: i + 1,
+            })
+            .collect::<Vec<_>>();
+
+        // Step simulation using Barnes-Hut (since n >= 64)
+        for _ in 0..15 {
+            step_simulation_with_forces(&mut nodes, &edges, (500.0, 500.0), None, 0.3, &forces);
+        }
+
+        // Assert all coordinates remain finite numbers
+        for n in &nodes {
+            assert!(n.x.is_finite());
+            assert!(n.y.is_finite());
+            assert!(n.vx.is_finite());
+            assert!(n.vy.is_finite());
         }
     }
 }

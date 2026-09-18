@@ -1,10 +1,10 @@
 use dioxus::prelude::*;
 
 use crate::icons::{
-    IconBook, IconBookmark, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconEdit,
-    IconFile, IconList, IconNotes, IconPin, IconPlus, IconSave, IconTemplate,
+    IconBook, IconBookmark, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconColumns,
+    IconEdit, IconFile, IconList, IconNotes, IconPin, IconPlus, IconSave, IconTag, IconTemplate,
 };
-use crate::state::AppState;
+use crate::state::{AppState, SplitDirection};
 use crate::strings::{actions, app as app_strings, empty_states, placeholders, tooltips};
 
 #[component]
@@ -31,9 +31,55 @@ pub fn Editor(state: Signal<AppState>) -> Element {
     let can_back = app_state.can_navigate_back();
     let can_forward = app_state.can_navigate_forward();
 
-    // Markdown HTML rendering for reading mode
-    let rendered_html = if is_reading_mode {
-        nodera_markdown::render_to_html(&content)
+    // Frontmatter properties
+    let frontmatter = app_state.get_active_frontmatter();
+    let frontmatter_title = frontmatter
+        .as_ref()
+        .and_then(|f| f.title.clone())
+        .unwrap_or_default();
+    let frontmatter_tags = frontmatter
+        .as_ref()
+        .map(|f| f.tags.clone())
+        .unwrap_or_default();
+    let frontmatter_extra = frontmatter
+        .as_ref()
+        .map(|f| f.extra.clone())
+        .unwrap_or_default();
+
+    let properties_count = (if !frontmatter_title.is_empty() { 1 } else { 0 })
+        + (if !frontmatter_tags.is_empty() { 1 } else { 0 })
+        + frontmatter_extra.len();
+
+    let mut new_tag_input = use_signal(String::new);
+    let mut new_prop_key = use_signal(String::new);
+    let mut new_prop_type = use_signal(|| "text".to_string());
+    let mut new_prop_val = use_signal(String::new);
+
+    // Markdown HTML rendering for reading mode & split live preview with transclusion resolver
+    let vault_service = app_state.vault_service.clone();
+    let rendered_html = if is_reading_mode || app_state.split_pane.is_some() {
+        let resolver = move |target: &str| -> Option<String> {
+            if let Some(service) = &vault_service {
+                let clean_target = target.split('#').next().unwrap_or(target).trim();
+                let rel_path = std::path::PathBuf::from(format!("{clean_target}.md"));
+                if let Ok(note) = service.read_note(&rel_path) {
+                    return Some(note.content);
+                }
+                if let Ok(entries) = service.list_entries() {
+                    for entry in entries {
+                        if let nodera_core::VaultEntry::Note(summary) = entry {
+                            if summary.title.eq_ignore_ascii_case(clean_target) {
+                                if let Ok(note) = service.read_note(&summary.relative_path) {
+                                    return Some(note.content);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        };
+        nodera_markdown::render_to_html_with_resolver(&content, &resolver)
     } else {
         String::new()
     };
@@ -247,6 +293,31 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                             }
                         }
                         button {
+                            class: if app_state.show_properties_drawer { "btn-action active-toggle" } else { "btn-action" },
+                            style: if app_state.show_properties_drawer { "color: var(--accent); border-color: var(--accent);" } else { "" },
+                            title: "Toggle Properties Drawer",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_properties_drawer = !s.show_properties_drawer;
+                            },
+                            IconTag { size: 14 }
+                            if properties_count > 0 {
+                                span { "Properties ({properties_count})" }
+                            } else {
+                                span { "Properties" }
+                            }
+                        }
+                        button {
+                            class: if app_state.split_pane.is_some() { "btn-action active-toggle" } else { "btn-action" },
+                            style: if app_state.split_pane.is_some() { "color: var(--accent); border-color: var(--accent);" } else { "" },
+                            title: "Toggle Split View (Ctrl+\\)",
+                            onclick: move |_| {
+                                state.write().toggle_split();
+                            },
+                            IconColumns { size: 14 }
+                            span { "Split" }
+                        }
+                        button {
                             class: "btn-action",
                             title: tooltips::INSERT_TEMPLATE,
                             onclick: move |_| {
@@ -285,97 +356,423 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                     }
                 }
 
-                // Editor / Reader Content Surface
-                div {
-                    style: "flex: 1; display: flex; overflow: hidden; background-color: var(--bg-app); position: relative;",
-
-                    if !is_reading_mode {
-                        textarea {
-                            class: "editor-textarea",
-                            style: format!("flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: {}px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
-                            value: "{content}",
-                            placeholder: placeholders::TYPE_MARKDOWN,
-                            oninput: move |evt| {
-                                let mut s = state.write();
-                                s.update_editor_content(evt.value());
+                // Properties Drawer (Visual YAML frontmatter editor)
+                if app_state.show_properties_drawer {
+                    div { class: "properties-drawer",
+                        div { class: "properties-drawer-header",
+                            div { style: "display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);",
+                                IconTag { size: 13 }
+                                span { "Properties" }
+                                if properties_count > 0 {
+                                    span { class: "property-count-badge", "{properties_count}" }
+                                }
+                            }
+                            button {
+                                class: "btn-icon",
+                                style: "width: 20px; height: 20px;",
+                                title: "Close Properties Drawer",
+                                onclick: move |_| {
+                                    state.write().show_properties_drawer = false;
+                                },
+                                IconClose { size: 12 }
                             }
                         }
-                    } else {
-                        // Reading Mode Layout: Optional Table of Contents + Reading Document
-                        div {
-                            style: "flex: 1; display: flex; height: 100%; overflow: hidden;",
 
-                            // Floating or side Table of Contents if headings exist
-                            if !app_state.toc_headings.is_empty() {
-                                div {
-                                    class: "reading-toc",
-                                    style: "width: 220px; border-right: 1px solid var(--border); background: var(--bg-surface); overflow-y: auto; padding: 16px 12px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;",
-
-                                    div {
-                                        style: "font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;",
-                                        IconList { size: 14 }
-                                        span { "{app_strings::CONTENTS}" }
-                                    }
-
-                                    for (depth, heading_text) in &app_state.toc_headings {
-                                        div {
-                                            key: "{heading_text}",
-                                            style: format!("padding: 4px 8px; border-radius: 4px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: {}px; cursor: pointer;", (depth - 1) * 12 + 8),
-                                            title: "{heading_text}",
-                                            "{heading_text}"
+                        div { class: "properties-table",
+                            // Title Property
+                            div { class: "property-row",
+                                div { class: "property-label",
+                                    span { "title" }
+                                }
+                                div { class: "property-value-cell",
+                                    input {
+                                        class: "property-input",
+                                        r#type: "text",
+                                        value: "{frontmatter_title}",
+                                        placeholder: "Note title...",
+                                        onchange: move |evt| {
+                                            let val = evt.value();
+                                            let _ = state.write().set_frontmatter_property("title", serde_yaml::Value::String(val));
                                         }
                                     }
                                 }
                             }
 
-                            // Reading Document Body
-                            div {
-                                style: "flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden;",
-
-                                div {
-                                    class: "reading-view markdown-body",
-                                    style: format!("flex: 1; padding: 40px 60px; overflow-y: auto; line-height: 1.8; font-size: {}px; color: var(--text-primary); max-width: 780px; margin: 0 auto; width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;", app_state.preferences.reading_font_size),
-                                    dangerous_inner_html: "{rendered_html}"
+                            // Tags Property
+                            div { class: "property-row",
+                                div { class: "property-label",
+                                    span { "tags" }
                                 }
-
-                                // Reading Progress Footer Bar
-                                if let Some(active) = &app_state.active_note {
-                                    {
-                                        let path_for_input = active.relative_path.clone();
-                                        let path_for_finish = active.relative_path.clone();
-                                        let cur_progress = app_state.preferences.reading_progress.get(&path_for_input.to_string_lossy().to_string()).copied().unwrap_or(0);
-
-                                        rsx! {
-                                            div {
-                                                style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 24px; border-top: 1px solid var(--border); background: var(--bg-surface); font-size: 12px; color: var(--text-muted);",
-
-                                                div {
-                                                    style: "display: flex; align-items: center; gap: 12px; flex: 1; max-width: 360px;",
-                                                    span { "Reading progress:" }
-                                                    input {
-                                                        r#type: "range",
-                                                        min: "0",
-                                                        max: "100",
-                                                        value: "{cur_progress}",
-                                                        style: "flex: 1; cursor: pointer;",
-                                                        oninput: move |evt| {
-                                                            if let Ok(val) = evt.value().parse::<u32>() {
-                                                                state.write().set_reading_progress(&path_for_input, val);
+                                div { class: "property-value-cell tags-cell",
+                                    for (t_idx, tag) in frontmatter_tags.iter().enumerate() {
+                                        {
+                                            let tag_str = tag.clone();
+                                            rsx! {
+                                                span { key: "{tag_str}_{t_idx}", class: "tag-chip",
+                                                    span { "#{tag_str}" }
+                                                    button {
+                                                        class: "tag-chip-remove",
+                                                        title: "Remove tag",
+                                                        onclick: move |_| {
+                                                            let mut s = state.write();
+                                                            if let Some(mut fm) = s.get_active_frontmatter() {
+                                                                if t_idx < fm.tags.len() {
+                                                                    fm.tags.remove(t_idx);
+                                                                    let _ = s.update_active_frontmatter(&fm);
+                                                                }
                                                             }
+                                                        },
+                                                        "×"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    div { style: "display: inline-flex; align-items: center; gap: 4px;",
+                                        input {
+                                            class: "property-mini-input",
+                                            r#type: "text",
+                                            placeholder: "New tag...",
+                                            value: "{new_tag_input.read()}",
+                                            oninput: move |evt| new_tag_input.set(evt.value()),
+                                            onkeydown: move |evt| {
+                                                if evt.key() == Key::Enter {
+                                                    let tag_val = new_tag_input.read().trim().to_string();
+                                                    if !tag_val.is_empty() {
+                                                        let mut s = state.write();
+                                                        let mut fm = s.get_active_frontmatter().unwrap_or_default();
+                                                        if !fm.tags.contains(&tag_val) {
+                                                            fm.tags.push(tag_val);
+                                                            let _ = s.update_active_frontmatter(&fm);
+                                                        }
+                                                        new_tag_input.set(String::new());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        button {
+                                            class: "btn-action",
+                                            style: "padding: 2px 6px; font-size: 11px;",
+                                            onclick: move |_| {
+                                                let tag_val = new_tag_input.read().trim().to_string();
+                                                if !tag_val.is_empty() {
+                                                    let mut s = state.write();
+                                                    let mut fm = s.get_active_frontmatter().unwrap_or_default();
+                                                    if !fm.tags.contains(&tag_val) {
+                                                        fm.tags.push(tag_val);
+                                                        let _ = s.update_active_frontmatter(&fm);
+                                                    }
+                                                    new_tag_input.set(String::new());
+                                                }
+                                            },
+                                            "+ Add"
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Custom extra properties
+                            for (prop_key, prop_val) in frontmatter_extra.iter() {
+                                {
+                                    let k = prop_key.clone();
+                                    let k_remove = prop_key.clone();
+                                    let k_change = prop_key.clone();
+                                    let val_display = match prop_val {
+                                        serde_yaml::Value::String(s) => s.clone(),
+                                        serde_yaml::Value::Number(n) => n.to_string(),
+                                        serde_yaml::Value::Bool(b) => b.to_string(),
+                                        serde_yaml::Value::Sequence(seq) => seq.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "),
+                                        other => format!("{other:?}"),
+                                    };
+                                    let is_bool = matches!(prop_val, serde_yaml::Value::Bool(_));
+                                    let bool_val = match prop_val {
+                                        serde_yaml::Value::Bool(b) => *b,
+                                        _ => false,
+                                    };
+
+                                    rsx! {
+                                        div { key: "{k}", class: "property-row",
+                                            div { class: "property-label",
+                                                span { "{k}" }
+                                            }
+                                            div { class: "property-value-cell",
+                                                if is_bool {
+                                                    input {
+                                                        r#type: "checkbox",
+                                                        checked: bool_val,
+                                                        onchange: move |evt| {
+                                                            let checked = evt.value().parse::<bool>().unwrap_or(false);
+                                                            let _ = state.write().set_frontmatter_property(&k_change, serde_yaml::Value::Bool(checked));
                                                         }
                                                     }
-                                                    span { style: "font-weight: 500; min-width: 32px;", "{cur_progress}%" }
+                                                } else {
+                                                    input {
+                                                        class: "property-input",
+                                                        r#type: "text",
+                                                        value: "{val_display}",
+                                                        onchange: move |evt| {
+                                                            let text = evt.value();
+                                                            let yml_val = if let Ok(num) = text.parse::<i64>() {
+                                                                serde_yaml::Value::Number(num.into())
+                                                            } else if text.eq_ignore_ascii_case("true") {
+                                                                serde_yaml::Value::Bool(true)
+                                                            } else if text.eq_ignore_ascii_case("false") {
+                                                                serde_yaml::Value::Bool(false)
+                                                            } else {
+                                                                serde_yaml::Value::String(text)
+                                                            };
+                                                            let _ = state.write().set_frontmatter_property(&k_change, yml_val);
+                                                        }
+                                                    }
                                                 }
+                                                button {
+                                                    class: "btn-icon property-remove-btn",
+                                                    title: "Remove property",
+                                                    onclick: move |_| {
+                                                        let _ = state.write().remove_frontmatter_property(&k_remove);
+                                                    },
+                                                    IconClose { size: 12 }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
+                            // Add Property Footer Row
+                            div { class: "property-add-row",
+                                input {
+                                    class: "property-mini-input",
+                                    style: "width: 120px;",
+                                    placeholder: "Property name...",
+                                    value: "{new_prop_key.read()}",
+                                    oninput: move |evt| new_prop_key.set(evt.value())
+                                }
+                                select {
+                                    class: "property-type-select",
+                                    value: "{new_prop_type.read()}",
+                                    onchange: move |evt| new_prop_type.set(evt.value()),
+                                    option { value: "text", "Text" }
+                                    option { value: "number", "Number" }
+                                    option { value: "checkbox", "Checkbox" }
+                                    option { value: "date", "Date" }
+                                    option { value: "list", "List" }
+                                }
+                                input {
+                                    class: "property-mini-input",
+                                    style: "flex: 1;",
+                                    placeholder: "Value...",
+                                    value: "{new_prop_val.read()}",
+                                    oninput: move |evt| new_prop_val.set(evt.value()),
+                                    onkeydown: move |evt| {
+                                        if evt.key() == Key::Enter {
+                                            let k = new_prop_key.read().trim().to_string();
+                                            let v_raw = new_prop_val.read().trim().to_string();
+                                            let t = new_prop_type.read().clone();
+                                            if !k.is_empty() {
+                                                let val = match t.as_str() {
+                                                    "number" => v_raw.parse::<i64>().map(Into::into).map(serde_yaml::Value::Number).unwrap_or_else(|_| serde_yaml::Value::String(v_raw)),
+                                                    "checkbox" => serde_yaml::Value::Bool(v_raw.eq_ignore_ascii_case("true") || v_raw == "1"),
+                                                    "list" => serde_yaml::Value::Sequence(v_raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(|s| serde_yaml::Value::String(s.to_string())).collect()),
+                                                    _ => serde_yaml::Value::String(v_raw),
+                                                };
+                                                let _ = state.write().set_frontmatter_property(&k, val);
+                                                new_prop_key.set(String::new());
+                                                new_prop_val.set(String::new());
+                                            }
+                                        }
+                                    }
+                                }
+                                button {
+                                    class: "btn-action",
+                                    style: "padding: 3px 8px; font-size: 11px;",
+                                    onclick: move |_| {
+                                        let k = new_prop_key.read().trim().to_string();
+                                        let v_raw = new_prop_val.read().trim().to_string();
+                                        let t = new_prop_type.read().clone();
+                                        if !k.is_empty() {
+                                            let val = match t.as_str() {
+                                                "number" => v_raw.parse::<i64>().map(Into::into).map(serde_yaml::Value::Number).unwrap_or_else(|_| serde_yaml::Value::String(v_raw)),
+                                                "checkbox" => serde_yaml::Value::Bool(v_raw.eq_ignore_ascii_case("true") || v_raw == "1"),
+                                                "list" => serde_yaml::Value::Sequence(v_raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(|s| serde_yaml::Value::String(s.to_string())).collect()),
+                                                _ => serde_yaml::Value::String(v_raw),
+                                            };
+                                            let _ = state.write().set_frontmatter_property(&k, val);
+                                            new_prop_key.set(String::new());
+                                            new_prop_val.set(String::new());
+                                        }
+                                    },
+                                    IconPlus { size: 12 }
+                                    span { "Add property" }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Editor / Reader Content Surface (Split view or Single pane)
+                if let Some(_split) = &app_state.split_pane {
+                    div {
+                        style: format!(
+                            "flex: 1; display: flex; flex-direction: {}; overflow: hidden; background-color: var(--bg-app);",
+                            if app_state.split_direction == SplitDirection::Horizontal { "row" } else { "column" }
+                        ),
+
+                        // Pane 1: Editor Pane
+                        div {
+                            style: "flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 250px; min-height: 150px; border-right: 1px solid var(--border);",
+                            div {
+                                class: "split-pane-header",
+                                div { style: "display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;",
+                                    IconEdit { size: 12 }
+                                    span { "Markdown Editor" }
+                                }
+                            }
+                            textarea {
+                                class: "editor-textarea",
+                                style: format!("flex: 1; width: 100%; border: none; padding: 20px 24px; font-family: var(--font-editor); font-size: {}px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
+                                value: "{content}",
+                                placeholder: placeholders::TYPE_MARKDOWN,
+                                oninput: move |evt| {
+                                    let mut s = state.write();
+                                    s.update_editor_content(evt.value());
+                                }
+                            }
+                        }
+
+                        // Split Divider with controls
+                        div {
+                            class: "split-divider",
+                            button {
+                                class: "btn-icon",
+                                style: "width: 24px; height: 24px;",
+                                title: "Toggle split direction (Horizontal / Vertical)",
+                                onclick: move |_| {
+                                    state.write().toggle_split_direction();
+                                },
+                                IconColumns { size: 13 }
+                            }
+                            button {
+                                class: "btn-icon",
+                                style: "width: 24px; height: 24px;",
+                                title: "Close split view",
+                                onclick: move |_| {
+                                    state.write().close_split();
+                                },
+                                IconClose { size: 13 }
+                            }
+                        }
+
+                        // Pane 2: Live Reading Preview
+                        div {
+                            style: "flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 250px; min-height: 150px; background-color: var(--bg-surface);",
+                            div {
+                                class: "split-pane-header",
+                                div { style: "display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;",
+                                    IconBook { size: 12 }
+                                    span { "Live Reading Preview" }
+                                }
+                            }
+                            div {
+                                class: "reading-view markdown-body",
+                                style: format!("flex: 1; padding: 24px 32px; overflow-y: auto; line-height: 1.8; font-size: {}px; color: var(--text-primary);", app_state.preferences.reading_font_size),
+                                dangerous_inner_html: "{rendered_html}"
+                            }
+                        }
+                    }
+                } else {
+                    // Single-pane Content Surface
+                    div {
+                        style: "flex: 1; display: flex; overflow: hidden; background-color: var(--bg-app); position: relative;",
+
+                        if !is_reading_mode {
+                            textarea {
+                                class: "editor-textarea",
+                                style: format!("flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: {}px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
+                                value: "{content}",
+                                placeholder: placeholders::TYPE_MARKDOWN,
+                                oninput: move |evt| {
+                                    let mut s = state.write();
+                                    s.update_editor_content(evt.value());
+                                }
+                            }
+                        } else {
+                            // Reading Mode Layout: Optional Table of Contents + Reading Document
+                            div {
+                                style: "flex: 1; display: flex; height: 100%; overflow: hidden;",
+
+                                // Floating or side Table of Contents if headings exist
+                                if !app_state.toc_headings.is_empty() {
+                                    div {
+                                        class: "reading-toc",
+                                        style: "width: 220px; border-right: 1px solid var(--border); background: var(--bg-surface); overflow-y: auto; padding: 16px 12px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;",
+
+                                        div {
+                                            style: "font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;",
+                                            IconList { size: 14 }
+                                            span { "{app_strings::CONTENTS}" }
+                                        }
+
+                                        for (depth, heading_text) in &app_state.toc_headings {
+                                            div {
+                                                key: "{heading_text}",
+                                                style: format!("padding: 4px 8px; border-radius: 4px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: {}px; cursor: pointer;", (depth - 1) * 12 + 8),
+                                                title: "{heading_text}",
+                                                "{heading_text}"
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Reading Document Body
+                                div {
+                                    style: "flex: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden;",
+
+                                    div {
+                                        class: "reading-view markdown-body",
+                                        style: format!("flex: 1; padding: 40px 60px; overflow-y: auto; line-height: 1.8; font-size: {}px; color: var(--text-primary); max-width: 780px; margin: 0 auto; width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;", app_state.preferences.reading_font_size),
+                                        dangerous_inner_html: "{rendered_html}"
+                                    }
+
+                                    // Reading Progress Footer Bar
+                                    if let Some(active) = &app_state.active_note {
+                                        {
+                                            let path_for_input = active.relative_path.clone();
+                                            let path_for_finish = active.relative_path.clone();
+                                            let cur_progress = app_state.preferences.reading_progress.get(&path_for_input.to_string_lossy().to_string()).copied().unwrap_or(0);
+
+                                            rsx! {
                                                 div {
-                                                    style: "display: flex; gap: 8px;",
-                                                    button {
-                                                        class: "btn-action",
-                                                        style: "padding: 3px 8px; font-size: 11px;",
-                                                        onclick: move |_| {
-                                                            state.write().set_reading_progress(&path_for_finish, 100);
-                                                        },
-                                                        "Mark Finished"
+                                                    style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 24px; border-top: 1px solid var(--border); background: var(--bg-surface); font-size: 12px; color: var(--text-muted);",
+
+                                                    div {
+                                                        style: "display: flex; align-items: center; gap: 12px; flex: 1; max-width: 360px;",
+                                                        span { "Reading progress:" }
+                                                        input {
+                                                            r#type: "range",
+                                                            min: "0",
+                                                            max: "100",
+                                                            value: "{cur_progress}",
+                                                            style: "flex: 1; cursor: pointer;",
+                                                            oninput: move |evt| {
+                                                                if let Ok(val) = evt.value().parse::<u32>() {
+                                                                    state.write().set_reading_progress(&path_for_input, val);
+                                                                }
+                                                            }
+                                                        }
+                                                        span { style: "font-weight: 500; min-width: 32px;", "{cur_progress}%" }
+                                                    }
+
+                                                    div {
+                                                        style: "display: flex; gap: 8px;",
+                                                        button {
+                                                            class: "btn-action",
+                                                            style: "padding: 3px 8px; font-size: 11px;",
+                                                            onclick: move |_| {
+                                                                state.write().set_reading_progress(&path_for_finish, 100);
+                                                            },
+                                                            "Mark Finished"
+                                                        }
                                                     }
                                                 }
                                             }

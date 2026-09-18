@@ -2,8 +2,9 @@ use dioxus::prelude::*;
 use tracing::info;
 
 use crate::components::{
-    CommandPalette, Dialogs, Editor, ErrorDialog, GraphView, LibraryView, LocalGraphView,
-    PdfImportModal, SettingsModal, Sidebar, StatusBar, TaskView,
+    CitationPickerModal, CommandPalette, Dialogs, Editor, ErrorDialog, GraphView, LibraryView,
+    LocalGraphView, PdfAnnotationModal, PdfImportModal, SettingsModal, Sidebar, StatusBar,
+    TaskView, VaultHealthModal,
 };
 use crate::icons::*;
 use crate::state::{ActiveView, AppState};
@@ -37,6 +38,8 @@ pub fn App() -> Element {
     let backlinks = app_state.get_current_backlinks();
     let outgoing_links = app_state.get_current_outgoing_links();
     let current_tags = app_state.get_current_note_tags();
+    let unlinked_mentions = app_state.get_unlinked_mentions();
+    let related_notes = app_state.get_related_notes_for_active();
 
     rsx! {
         style { "{BASE_CSS}" }
@@ -140,6 +143,33 @@ pub fn App() -> Element {
                                 let _ = s.rebuild_vault_index();
                             },
                             IconRefresh { size: 16 }
+                        }
+                        button {
+                            class: "btn-icon",
+                            title: "Vault Health Doctor (Broken Links & Orphans)",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_vault_health_modal = true;
+                            },
+                            IconActivity { size: 16 }
+                        }
+                        button {
+                            class: "btn-icon",
+                            title: "Citation & Bibliography Picker (Ctrl+Shift+C)",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_citation_picker_modal = true;
+                            },
+                            IconQuote { size: 16 }
+                        }
+                        button {
+                            class: "btn-icon",
+                            title: "Extract PDF Annotations (Ctrl+Shift+E)",
+                            onclick: move |_| {
+                                let mut s = state.write();
+                                s.show_pdf_annotation_modal = true;
+                            },
+                            IconFile { size: 16 }
                         }
                     }
                     button {
@@ -302,6 +332,136 @@ pub fn App() -> Element {
                                 }
                             }
 
+                            // Unlinked Mentions section
+                            div {
+                                p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;", "Unlinked Mentions ({unlinked_mentions.len()})" }
+                                if unlinked_mentions.is_empty() {
+                                    p { style: "font-style: italic; color: var(--text-muted);", "No unlinked mentions found." }
+                                } else {
+                                    div { style: "display: flex; flex-direction: column; gap: 8px;",
+                                        for mention in unlinked_mentions.iter() {
+                                            {
+                                                let src_path = mention.source_path.clone();
+                                                let src_click = src_path.clone();
+                                                let matched = mention.matched_text.clone();
+                                                let title = mention.source_title.clone();
+                                                let before = mention.snippet_before.clone();
+                                                let after = mention.snippet_after.clone();
+                                                let active_t = app_state.active_note.as_ref().map(|n| n.title.clone()).unwrap_or_default();
+
+                                                rsx! {
+                                                    div {
+                                                        key: "{mention.source_path.display()}_{mention.matched_text}_{before}",
+                                                        class: "unlinked-mention-card",
+                                                        div { style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;",
+                                                            button {
+                                                                class: "link-item",
+                                                                style: "padding: 2px 6px; font-weight: 600;",
+                                                                onclick: move |_| {
+                                                                    let mut s = state.write();
+                                                                    let _ = s.select_note(&src_click);
+                                                                },
+                                                                "{title}"
+                                                            }
+                                                            button {
+                                                                class: "btn-action btn-primary",
+                                                                style: "font-size: 11px; padding: 2px 8px;",
+                                                                title: "Convert mention into [[wikilink]]",
+                                                                onclick: move |_| {
+                                                                    let mut s = state.write();
+                                                                    let _ = s.link_unlinked_mention(&src_path, &active_t);
+                                                                },
+                                                                "Link"
+                                                            }
+                                                        }
+                                                        div { class: "unlinked-snippet",
+                                                            span { style: "color: var(--text-muted);", "...{before}" }
+                                                            span { style: "background: var(--accent-focus); color: var(--accent-hover); font-weight: 600; padding: 0 2px; border-radius: 2px;", "{matched}" }
+                                                            span { style: "color: var(--text-muted);", "{after}..." }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Related Notes section (Lexical & Semantic recommendations)
+                            if !related_notes.is_empty() {
+                                div {
+                                    p { style: "font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;",
+                                        span { "Related Notes ({related_notes.len()})" }
+                                    }
+                                    div { style: "display: flex; flex-direction: column; gap: 6px;",
+                                        for rel in related_notes.iter() {
+                                            {
+                                                let rel_path = std::path::PathBuf::from(&rel.path);
+                                                let rel_path_click = rel_path.clone();
+                                                let rel_title = rel.title.clone();
+                                                let rel_title_link = rel.title.clone();
+                                                let match_pct = rel.match_percentage;
+                                                let shared_tags = rel.shared_tags.clone();
+                                                let snippet = rel.snippet.clone();
+
+                                                rsx! {
+                                                    div {
+                                                        key: "{rel.path}",
+                                                        class: "unlinked-mention-card",
+                                                        style: "display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--bg-surface-elevated, rgba(255, 255, 255, 0.02)); border: 1px solid var(--border); border-radius: 6px;",
+                                                        div {
+                                                            style: "display: flex; align-items: center; justify-content: space-between;",
+                                                            button {
+                                                                class: "link-item",
+                                                                style: "padding: 0; font-weight: 600; text-align: left; font-size: 12px;",
+                                                                onclick: move |_| {
+                                                                    let mut s = state.write();
+                                                                    let _ = s.select_note(&rel_path_click);
+                                                                },
+                                                                "{rel_title}"
+                                                            }
+                                                            div { style: "display: flex; align-items: center; gap: 6px;",
+                                                                span {
+                                                                    style: "font-size: 10px; font-weight: 600; background: rgba(16, 185, 129, 0.15); color: #10B981; padding: 1px 6px; border-radius: 8px;",
+                                                                    "{match_pct}%"
+                                                                }
+                                                                button {
+                                                                    class: "btn-action btn-primary",
+                                                                    style: "font-size: 10px; padding: 2px 6px;",
+                                                                    title: "Add wikilink to this note",
+                                                                    onclick: move |_| {
+                                                                        let mut s = state.write();
+                                                                        let _ = s.append_link_to_active_note(&rel_title_link);
+                                                                    },
+                                                                    "+ Link"
+                                                                }
+                                                            }
+                                                        }
+                                                        if !shared_tags.is_empty() {
+                                                            div { style: "display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px;",
+                                                                for t in shared_tags.iter() {
+                                                                    span {
+                                                                        key: "{t}",
+                                                                        style: "font-size: 10px; color: var(--accent); background: rgba(91, 108, 255, 0.1); padding: 0 4px; border-radius: 3px;",
+                                                                        "#{t}"
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        if !snippet.is_empty() {
+                                                            div {
+                                                                style: "font-size: 11px; color: var(--text-muted); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;",
+                                                                "{snippet}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // Tags section
                             if !current_tags.is_empty() {
                                 div {
@@ -339,6 +499,9 @@ pub fn App() -> Element {
             PdfImportModal { state }
             SettingsModal { state }
             ErrorDialog { state }
+            VaultHealthModal { state }
+            CitationPickerModal { state }
+            PdfAnnotationModal { state }
         }
     }
 }

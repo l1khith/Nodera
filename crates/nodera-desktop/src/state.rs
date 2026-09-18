@@ -1,11 +1,12 @@
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
 
-use nodera_core::{Note, Result, Vault, VaultEntry, VaultService};
-use nodera_markdown::{parse_document, LinkGraph};
+use nodera_core::{BibLibrary, IndexingProgress, Note, Result, Vault, VaultEntry, VaultService};
+use nodera_markdown::{parse_document, LinkAuditReport, LinkGraph};
 
 use crate::strings::palette;
 use crate::theme::Theme;
@@ -91,6 +92,10 @@ pub struct GraphDisplaySettings {
     pub link_thickness: f32,
     #[serde(default = "default_true")]
     pub animate: bool,
+    #[serde(default = "default_true")]
+    pub color_by_community: bool,
+    #[serde(default = "default_true")]
+    pub centrality_sizing: bool,
 }
 
 impl Default for GraphDisplaySettings {
@@ -101,6 +106,8 @@ impl Default for GraphDisplaySettings {
             node_size: default_node_size(),
             link_thickness: default_link_thickness(),
             animate: true,
+            color_by_community: true,
+            centrality_sizing: true,
         }
     }
 }
@@ -270,7 +277,7 @@ impl AppPreferences {
     }
 }
 
-use nodera_index::{IndexedTask, SearchResult, TaskFilter, VaultIndex};
+use nodera_index::{IndexedTask, RelatedNote, SearchResult, TaskFilter, VaultIndex};
 use nodera_pdf::{CancellationToken, ConversionOptions, ConversionProgress, ImportResult};
 use std::sync::{Arc, Mutex};
 
@@ -306,6 +313,8 @@ pub enum PaletteAction {
     ResetLayout,
     InsertTemplate,
     RebuildIndex,
+    OpenCitationPicker,
+    ExtractPdfAnnotations,
 }
 
 /// Book or long-form document displayed in the Library view.
@@ -419,6 +428,53 @@ pub struct AppState {
     pub pdf_cancellation: Option<CancellationToken>,
     pub pdf_last_result: Option<ImportResult>,
     pub pdf_error: Option<String>,
+
+    // Trash modal
+    pub show_trash_modal: bool,
+
+    // Properties drawer
+    pub show_properties_drawer: bool,
+
+    // Split view
+    pub split_pane: Option<SplitPane>,
+    pub split_direction: SplitDirection,
+
+    // Vault Health Doctor & Graph Intelligence
+    pub show_vault_health_modal: bool,
+    pub graph_color_by_community: bool,
+    pub graph_centrality_sizing: bool,
+
+    // Research Workspace (V0.4)
+    pub bib_library: BibLibrary,
+    pub show_citation_picker_modal: bool,
+    pub show_pdf_annotation_modal: bool,
+    pub web_clipper_port: u16,
+    pub web_clipper_running: bool,
+    pub indexing_progress: Option<IndexingProgress>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SplitDirection {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplitPane {
+    pub relative_path: Option<PathBuf>,
+    pub is_reading_mode: bool,
+    pub editor_content: String,
+}
+
+/// Discovered mention of a note title in another note without an existing wikilink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnlinkedMention {
+    pub source_path: PathBuf,
+    pub source_title: String,
+    pub snippet_before: String,
+    pub matched_text: String,
+    pub snippet_after: String,
 }
 
 impl Default for AppState {
@@ -495,6 +551,22 @@ impl Default for AppState {
             pdf_cancellation: None,
             pdf_last_result: None,
             pdf_error: None,
+
+            show_trash_modal: false,
+            show_properties_drawer: false,
+            split_pane: None,
+            split_direction: SplitDirection::default(),
+
+            show_vault_health_modal: false,
+            graph_color_by_community: true,
+            graph_centrality_sizing: true,
+
+            bib_library: BibLibrary::default(),
+            show_citation_picker_modal: false,
+            show_pdf_annotation_modal: false,
+            web_clipper_port: crate::web_clipper::DEFAULT_WEB_CLIPPER_PORT,
+            web_clipper_running: false,
+            indexing_progress: None,
         }
     }
 }
@@ -511,20 +583,27 @@ impl AppState {
 
         let entries = service.list_entries()?;
 
-        // Index note links into LinkGraph
-        let mut link_graph = LinkGraph::new();
-        for entry in &entries {
-            if let VaultEntry::Note(summary) = entry {
-                if let Ok(note) = service.read_note(&summary.relative_path) {
-                    if let Ok(parsed) = parse_document(&note.content) {
-                        link_graph
-                            .update_note_links(summary.relative_path.clone(), parsed.wikilinks);
+        // Parallel note link extraction across all CPU cores via Rayon
+        let note_links: Vec<(PathBuf, Vec<nodera_markdown::Wikilink>)> = entries
+            .par_iter()
+            .filter_map(|entry| {
+                if let VaultEntry::Note(summary) = entry {
+                    if let Ok(note) = service.read_note(&summary.relative_path) {
+                        if let Ok(parsed) = parse_document(&note.content) {
+                            return Some((summary.relative_path.clone(), parsed.wikilinks));
+                        }
                     }
                 }
-            }
+                None
+            })
+            .collect();
+
+        let mut link_graph = LinkGraph::new();
+        for (rel_path, links) in note_links {
+            link_graph.update_note_links(rel_path, links);
         }
 
-        // Initialize derived VaultIndex (SQLite + Tantivy)
+        // Initialize derived VaultIndex (SQLite + Tantivy) with parallel pipeline
         let vault_index = match VaultIndex::open(p) {
             Ok(mut idx) => {
                 let _ = idx.rebuild(&service);
@@ -546,6 +625,10 @@ impl AppState {
         self.editor_content.clear();
         self.is_dirty = false;
         self.status_message = format!("Vault '{}' opened", self.vault_name);
+        self.indexing_progress = None;
+
+        self.refresh_bib_library();
+        self.web_clipper_running = true;
 
         self.preferences.record_vault(p.to_path_buf());
         Ok(())
@@ -579,6 +662,9 @@ impl AppState {
         self.editor_content.clear();
         self.is_dirty = false;
         self.status_message = format!("Vault '{}' created", self.vault_name);
+
+        self.refresh_bib_library();
+        self.web_clipper_running = true;
 
         self.preferences.record_vault(p.to_path_buf());
         Ok(())
@@ -988,49 +1074,620 @@ impl AppState {
         Ok(())
     }
 
-    /// Deletes a note from disk and closes it if active.
-    pub fn delete_note(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
-        let rel = rel_path.as_ref();
-        if let Some(service) = &self.vault_service {
-            service.delete_note(rel)?;
-            self.link_graph.remove_note(rel);
-            if let Some(index_arc) = &self.vault_index {
-                if let Ok(mut idx) = index_arc.lock() {
-                    let _ = idx.remove_note(rel);
-                }
+    fn cleanup_closed_or_deleted_note(&mut self, rel: &Path) {
+        self.link_graph.remove_note(rel);
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(mut idx) = index_arc.lock() {
+                let _ = idx.remove_note(rel);
             }
-            let rel_buf = rel.to_path_buf();
-            self.open_tabs.retain(|t| t.relative_path != rel_buf);
-            self.nav_history.retain(|p| p != &rel_buf);
-            self.preferences.bookmarks.retain(|b| b != rel);
-            self.preferences.recent_notes.retain(|r| r != rel);
-            self.preferences.save();
-            if let Some(active_idx) = self.active_tab_index {
-                if active_idx >= self.open_tabs.len() {
-                    self.active_tab_index = if self.open_tabs.is_empty() {
-                        None
-                    } else {
-                        Some(self.open_tabs.len() - 1)
-                    };
-                }
+        }
+        let rel_buf = rel.to_path_buf();
+        self.open_tabs.retain(|t| t.relative_path != rel_buf);
+        self.nav_history.retain(|p| p != &rel_buf);
+        self.preferences.bookmarks.retain(|b| b != rel);
+        self.preferences.recent_notes.retain(|r| r != rel);
+        self.preferences.save();
+        if let Some(active_idx) = self.active_tab_index {
+            if active_idx >= self.open_tabs.len() {
+                self.active_tab_index = if self.open_tabs.is_empty() {
+                    None
+                } else {
+                    Some(self.open_tabs.len() - 1)
+                };
             }
-            if let Some(active) = &self.active_note {
-                if active.relative_path == rel {
-                    self.active_note = None;
-                    self.editor_content.clear();
-                    self.is_dirty = false;
-                    if let Some(active_idx) = self.active_tab_index {
-                        if let Some(next_tab) = self.open_tabs.get(active_idx) {
-                            let next_path = next_tab.relative_path.clone();
-                            let _ = self.select_note(&next_path);
-                        }
+        }
+        if let Some(active) = &self.active_note {
+            if active.relative_path == rel {
+                self.active_note = None;
+                self.editor_content.clear();
+                self.is_dirty = false;
+                if let Some(active_idx) = self.active_tab_index {
+                    if let Some(next_tab) = self.open_tabs.get(active_idx) {
+                        let next_path = next_tab.relative_path.clone();
+                        let _ = self.select_note(&next_path);
                     }
                 }
             }
-            self.status_message = format!("Deleted '{}'", rel.display());
+        }
+    }
+
+    /// Moves a note into the vault's trash directory (safe soft delete).
+    pub fn trash_note(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
+        let rel = rel_path.as_ref();
+        if let Some(service) = &self.vault_service {
+            service.trash_note(rel)?;
+            self.cleanup_closed_or_deleted_note(rel);
+            self.status_message = format!("Moved '{}' to Trash", rel.display());
             self.refresh_entries()?;
         }
         Ok(())
+    }
+
+    /// Deletes a note (defaults to moving to trash).
+    pub fn delete_note(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
+        self.trash_note(rel_path)
+    }
+
+    /// Permanently deletes a note without moving it to trash.
+    pub fn delete_note_permanently(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
+        let rel = rel_path.as_ref();
+        if let Some(service) = &self.vault_service {
+            service.delete_note(rel)?;
+            self.cleanup_closed_or_deleted_note(rel);
+            self.status_message = format!("Permanently deleted '{}'", rel.display());
+            self.refresh_entries()?;
+        }
+        Ok(())
+    }
+
+    /// Restores a note from the vault's trash directory.
+    pub fn restore_trashed_note(&mut self, trash_filename: &str) -> Result<()> {
+        if let Some(service) = &self.vault_service {
+            let restored = service.restore_note(trash_filename)?;
+            self.refresh_entries()?;
+            let restored_path = restored.relative_path.clone();
+            self.select_note(&restored_path)?;
+            self.status_message = format!("Restored '{}'", restored.title);
+        }
+        Ok(())
+    }
+
+    /// Lists all notes in the vault's trash.
+    pub fn list_trash(&self) -> Vec<nodera_core::TrashedNoteSummary> {
+        self.vault_service
+            .as_ref()
+            .and_then(|s| s.list_trash().ok())
+            .unwrap_or_default()
+    }
+
+    /// Empties the vault's trash directory permanently.
+    pub fn empty_trash(&mut self) -> Result<usize> {
+        if let Some(service) = &self.vault_service {
+            let count = service.empty_trash()?;
+            self.status_message = format!("Emptied trash ({count} items deleted)");
+            return Ok(count);
+        }
+        Ok(0)
+    }
+
+    /// Permanently deletes a specific item from the trash directory.
+    pub fn delete_trashed_permanently(&mut self, trash_filename: &str) -> Result<()> {
+        if let Some(service) = &self.vault_service {
+            service.delete_permanently(trash_filename)?;
+            self.status_message = "Item permanently deleted from trash".to_string();
+        }
+        Ok(())
+    }
+
+    /// Discovers occurrences of the active note's title in other vault notes where no wikilink exists.
+    pub fn get_unlinked_mentions(&self) -> Vec<UnlinkedMention> {
+        let active = match &self.active_note {
+            Some(n) => n,
+            None => return Vec::new(),
+        };
+
+        let target_title = active.title.trim();
+        if target_title.is_empty() || target_title.eq_ignore_ascii_case("untitled") {
+            return Vec::new();
+        }
+
+        let target_lower = target_title.to_lowercase();
+        let mut results = Vec::new();
+
+        let service = match &self.vault_service {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        for entry in &self.entries {
+            if let VaultEntry::Note(summary) = entry {
+                if summary.relative_path == active.relative_path {
+                    continue;
+                }
+
+                let content = match service.read_note(&summary.relative_path) {
+                    Ok(n) => n.content,
+                    Err(_) => continue,
+                };
+
+                let content_lower = content.to_lowercase();
+                let mut search_from = 0;
+
+                while let Some(found_idx) = content_lower[search_from..].find(&target_lower) {
+                    let match_start = search_from + found_idx;
+                    let match_end = match_start + target_title.len();
+                    search_from = match_end;
+
+                    // Word boundary check
+                    let char_before = content[..match_start].chars().last();
+                    let char_after = content[match_end..].chars().next();
+                    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+                    if char_before.is_some_and(is_word_char) || char_after.is_some_and(is_word_char)
+                    {
+                        continue;
+                    }
+
+                    // Check if inside [[...]] on the same line
+                    let line_start = content[..match_start]
+                        .rfind('\n')
+                        .map(|p| p + 1)
+                        .unwrap_or(0);
+                    let line_end = content[match_end..]
+                        .find('\n')
+                        .map(|p| match_end + p)
+                        .unwrap_or(content.len());
+                    let line = &content[line_start..line_end];
+                    let offset_in_line = match_start - line_start;
+
+                    let before_in_line = &line[..offset_in_line];
+                    let after_in_line = &line[offset_in_line + target_title.len()..];
+
+                    let open_brackets = before_in_line.rfind("[[");
+                    let close_brackets = before_in_line.rfind("]]");
+                    let is_inside_wikilink = match (open_brackets, close_brackets) {
+                        (Some(_), None) => after_in_line.contains("]]"),
+                        (Some(o), Some(c)) if o > c => after_in_line.contains("]]"),
+                        _ => false,
+                    };
+
+                    if is_inside_wikilink {
+                        continue;
+                    }
+
+                    // Extract snippet with context
+                    let snip_start = match_start.saturating_sub(30);
+                    let snip_end = (match_end + 30).min(content.len());
+
+                    results.push(UnlinkedMention {
+                        source_path: summary.relative_path.clone(),
+                        source_title: summary.title.clone(),
+                        snippet_before: content[snip_start..match_start].to_string(),
+                        matched_text: content[match_start..match_end].to_string(),
+                        snippet_after: content[match_end..snip_end].to_string(),
+                    });
+
+                    if results.len() >= 25 {
+                        return results;
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Links an unlinked mention of target_title in source_path by converting it to `[[target_title]]`.
+    pub fn link_unlinked_mention(&mut self, source_path: &Path, target_title: &str) -> Result<()> {
+        let service = match &self.vault_service {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let note = service.read_note(source_path)?;
+        let content = note.content;
+        let target_lower = target_title.to_lowercase();
+        let content_lower = content.to_lowercase();
+
+        let mut search_from = 0;
+        let mut replacement_done = false;
+        let mut updated_content = String::with_capacity(content.len() + 16);
+
+        while let Some(found_idx) = content_lower[search_from..].find(&target_lower) {
+            let match_start = search_from + found_idx;
+            let match_end = match_start + target_title.len();
+
+            let char_before = content[..match_start].chars().last();
+            let char_after = content[match_end..].chars().next();
+            let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+            if char_before.is_some_and(is_word_char) || char_after.is_some_and(is_word_char) {
+                search_from = match_end;
+                continue;
+            }
+
+            let line_start = content[..match_start]
+                .rfind('\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let line_end = content[match_end..]
+                .find('\n')
+                .map(|p| match_end + p)
+                .unwrap_or(content.len());
+            let line = &content[line_start..line_end];
+            let offset_in_line = match_start - line_start;
+            let before_in_line = &line[..offset_in_line];
+            let after_in_line = &line[offset_in_line + target_title.len()..];
+
+            let open_brackets = before_in_line.rfind("[[");
+            let close_brackets = before_in_line.rfind("]]");
+            let is_inside_wikilink = match (open_brackets, close_brackets) {
+                (Some(_), None) => after_in_line.contains("]]"),
+                (Some(o), Some(c)) if o > c => after_in_line.contains("]]"),
+                _ => false,
+            };
+
+            if is_inside_wikilink {
+                search_from = match_end;
+                continue;
+            }
+
+            updated_content.push_str(&content[..match_start]);
+            updated_content.push_str(&format!("[[{target_title}]]"));
+            updated_content.push_str(&content[match_end..]);
+            replacement_done = true;
+            break;
+        }
+
+        if replacement_done {
+            let updated_note = service.write_note(source_path, &updated_content)?;
+            if let Ok(parsed) = parse_document(&updated_content) {
+                self.link_graph
+                    .update_note_links(source_path.to_path_buf(), parsed.wikilinks.clone());
+                if let Some(index_arc) = &self.vault_index {
+                    if let Ok(mut idx) = index_arc.lock() {
+                        let _ = idx.index_note(&updated_note, &parsed);
+                    }
+                }
+            }
+
+            if let Some(active) = &mut self.active_note {
+                if active.relative_path == source_path {
+                    active.content = updated_content.clone();
+                    self.editor_content = updated_content;
+                }
+            }
+
+            self.status_message = format!("Linked mention in '{}'", source_path.display());
+            self.refresh_entries()?;
+        }
+
+        Ok(())
+    }
+
+    /// Performs a comprehensive link audit across the vault, detecting broken links and orphan notes.
+    pub fn audit_vault(&self) -> Option<LinkAuditReport> {
+        let service = self.vault_service.as_ref()?;
+        let all_paths: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                if let VaultEntry::Note(s) = e {
+                    Some(s.relative_path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut note_contents = HashMap::new();
+        for path in &all_paths {
+            if let Ok(note) = service.read_note(path) {
+                note_contents.insert(path.clone(), note.content);
+            }
+        }
+
+        Some(
+            self.link_graph
+                .audit_vault_links(&all_paths, &note_contents),
+        )
+    }
+
+    /// Resolves a broken link by creating a new note with the target title.
+    pub fn fix_broken_link_create_note(&mut self, target_title: &str) -> Result<()> {
+        let service = match &self.vault_service {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let initial_content = format!("# {target_title}\n\n");
+        let note = service.create_note(None, target_title, Some(&initial_content))?;
+        if let Ok(parsed) = parse_document(&note.content) {
+            self.link_graph
+                .update_note_links(note.relative_path.clone(), parsed.wikilinks.clone());
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    let _ = idx.index_note(&note, &parsed);
+                }
+            }
+        }
+
+        self.refresh_entries()?;
+        self.status_message = format!("Created note for broken link: '{target_title}'");
+        Ok(())
+    }
+
+    /// Safely unlinks references to a broken link target by replacing `[[target]]` or `[[target|display]]` with plain text.
+    pub fn fix_broken_link_unlink(&mut self, target_title: &str) -> Result<()> {
+        let service = match &self.vault_service {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let target_lower = target_title.to_lowercase();
+        let mut modified_paths = Vec::new();
+
+        for entry in &self.entries {
+            if let VaultEntry::Note(summary) = entry {
+                let note = match service.read_note(&summary.relative_path) {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+
+                let content = &note.content;
+                let mut updated = String::with_capacity(content.len());
+                let mut last_idx = 0;
+                let mut changed = false;
+
+                while let Some(open_idx) = content[last_idx..].find("[[") {
+                    let abs_open = last_idx + open_idx;
+                    if let Some(close_idx) = content[abs_open + 2..].find("]]") {
+                        let abs_close = abs_open + 2 + close_idx;
+                        let inner = &content[abs_open + 2..abs_close];
+                        let parts: Vec<&str> = inner.splitn(2, '|').collect();
+                        let link_target = parts[0].trim();
+                        let display_text = if parts.len() > 1 {
+                            parts[1].trim()
+                        } else {
+                            link_target
+                        };
+
+                        if link_target.to_lowercase() == target_lower {
+                            updated.push_str(&content[last_idx..abs_open]);
+                            updated.push_str(display_text);
+                            last_idx = abs_close + 2;
+                            changed = true;
+                            continue;
+                        }
+
+                        updated.push_str(&content[last_idx..abs_close + 2]);
+                        last_idx = abs_close + 2;
+                    } else {
+                        break;
+                    }
+                }
+
+                if changed {
+                    updated.push_str(&content[last_idx..]);
+                    modified_paths.push((summary.relative_path.clone(), updated));
+                }
+            }
+        }
+
+        for (path, new_content) in modified_paths {
+            let updated_note = service.write_note(&path, &new_content)?;
+            if let Ok(parsed) = parse_document(&new_content) {
+                self.link_graph
+                    .update_note_links(path.clone(), parsed.wikilinks.clone());
+                if let Some(index_arc) = &self.vault_index {
+                    if let Ok(mut idx) = index_arc.lock() {
+                        let _ = idx.index_note(&updated_note, &parsed);
+                    }
+                }
+            }
+
+            if let Some(active) = &mut self.active_note {
+                if active.relative_path == path {
+                    active.content = new_content.clone();
+                    self.editor_content = new_content;
+                }
+            }
+        }
+
+        self.refresh_entries()?;
+        self.status_message = format!("Unlinked references to '{target_title}'");
+        Ok(())
+    }
+
+    /// Soft-deletes multiple orphan notes to the vault trash.
+    pub fn batch_trash_orphans(&mut self, paths: &[PathBuf]) -> Result<()> {
+        let count = paths.len();
+        for path in paths {
+            self.trash_note(path)?;
+        }
+        self.status_message = format!("Moved {count} orphan notes to Trash");
+        Ok(())
+    }
+
+    /// Queries related notes for the active note combining lexical BM25 and tag Jaccard similarity.
+    pub fn get_related_notes_for_active(&self) -> Vec<RelatedNote> {
+        let (active_note, index_arc) = match (&self.active_note, &self.vault_index) {
+            (Some(n), Some(idx)) => (n, idx),
+            _ => return Vec::new(),
+        };
+
+        let active_path = active_note
+            .relative_path
+            .to_string_lossy()
+            .replace('\\', "/");
+        let parsed = match parse_document(&self.editor_content) {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
+        };
+
+        let index = match index_arc.lock() {
+            Ok(idx) => idx,
+            Err(_) => return Vec::new(),
+        };
+
+        index
+            .get_related_notes(
+                &active_path,
+                &active_note.title,
+                &parsed.body,
+                &parsed.tags,
+                6,
+            )
+            .unwrap_or_default()
+    }
+
+    /// Appends a wikilink to the active note pointing to related_title.
+    pub fn append_link_to_active_note(&mut self, related_title: &str) -> Result<()> {
+        let link_text = format!("\n\nSee also: [[{related_title}]]\n");
+        self.editor_content.push_str(&link_text);
+        self.is_dirty = true;
+        self.save_active_note()?;
+        self.status_message = format!("Linked to [[{related_title}]]");
+        Ok(())
+    }
+
+    /// Refreshes the BibTeX bibliography from all `.bib` files in the vault.
+    pub fn refresh_bib_library(&mut self) {
+        if let Some(ref service) = self.vault_service {
+            let vault_root = service.vault().root();
+            self.bib_library = nodera_core::BibLibrary::from_vault(vault_root);
+        }
+    }
+
+    /// Inserts a citation key or formatted reference into the active note.
+    pub fn insert_citation(&mut self, citekey: &str, full_reference: bool) {
+        let clean_key = citekey.trim_start_matches('@');
+        let text_to_insert = if full_reference {
+            if let Some(entry) = self.bib_library.find_by_key(clean_key) {
+                format!("\n\n> {}\n", entry.formatted_reference())
+            } else {
+                format!(" [@{}]", clean_key)
+            }
+        } else {
+            format!(" [@{}]", clean_key)
+        };
+
+        self.editor_content.push_str(&text_to_insert);
+        self.is_dirty = true;
+        let _ = self.save_active_note();
+    }
+
+    /// Extracts annotations from a PDF file into a new Markdown note in the vault.
+    pub fn extract_pdf_annotations_to_note(&mut self, pdf_path: &Path) -> Result<PathBuf> {
+        let report = nodera_pdf::extract_annotations(pdf_path)?;
+        let md = nodera_pdf::annotations_to_markdown(&report);
+
+        let pdf_stem = pdf_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "document".to_string());
+
+        let note_title = format!("{} Annotations", pdf_stem);
+
+        self.create_note(&note_title, None)?;
+        self.update_editor_content(md);
+        self.save_active_note()?;
+        self.refresh_entries()?;
+
+        let rel_path = self
+            .active_note
+            .as_ref()
+            .map(|n| n.relative_path.clone())
+            .unwrap_or_default();
+        Ok(rel_path)
+    }
+
+    /// Parses the active note's YAML frontmatter.
+    pub fn get_active_frontmatter(&self) -> Option<nodera_markdown::Frontmatter> {
+        nodera_markdown::parse_frontmatter(&self.editor_content)
+            .ok()
+            .and_then(|(fm, _)| fm)
+    }
+
+    /// Updates the active note's frontmatter and saves it to disk.
+    pub fn update_active_frontmatter(&mut self, fm: &nodera_markdown::Frontmatter) -> Result<()> {
+        let updated = nodera_markdown::inject_or_update_frontmatter(&self.editor_content, fm);
+        self.editor_content = updated;
+        self.is_dirty = true;
+        if let Some(active) = &mut self.active_note {
+            active.content = self.editor_content.clone();
+        }
+        self.save_active_note()?;
+        Ok(())
+    }
+
+    /// Sets or updates a property in the active note's frontmatter.
+    pub fn set_frontmatter_property(&mut self, key: &str, value: serde_yaml::Value) -> Result<()> {
+        let mut fm = self.get_active_frontmatter().unwrap_or_default();
+        if key == "title" {
+            fm.title = value.as_str().map(|s| s.to_string());
+        } else if key == "tags" {
+            if let Some(seq) = value.as_sequence() {
+                fm.tags = seq
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+            } else if let Some(s) = value.as_str() {
+                fm.tags = s
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|x| !x.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+        } else {
+            fm.extra.insert(key.to_string(), value);
+        }
+        self.update_active_frontmatter(&fm)
+    }
+
+    /// Removes a property from the active note's frontmatter.
+    pub fn remove_frontmatter_property(&mut self, key: &str) -> Result<()> {
+        let mut fm = match self.get_active_frontmatter() {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+        if key == "title" {
+            fm.title = None;
+        } else if key == "tags" {
+            fm.tags.clear();
+        } else {
+            fm.extra.remove(key);
+        }
+        self.update_active_frontmatter(&fm)
+    }
+
+    /// Toggles split view mode (Edit & Reading Preview side-by-side).
+    pub fn toggle_split(&mut self) {
+        if self.split_pane.is_none() {
+            self.split_pane = Some(SplitPane {
+                relative_path: self.active_note.as_ref().map(|n| n.relative_path.clone()),
+                is_reading_mode: true,
+                editor_content: self.editor_content.clone(),
+            });
+            self.status_message = "Split view enabled (Edit & Preview)".to_string();
+        } else {
+            self.split_pane = None;
+            self.status_message = "Split view closed".to_string();
+        }
+    }
+
+    /// Toggles split direction between Horizontal and Vertical.
+    pub fn toggle_split_direction(&mut self) {
+        self.split_direction = match self.split_direction {
+            SplitDirection::Horizontal => SplitDirection::Vertical,
+            SplitDirection::Vertical => SplitDirection::Horizontal,
+        };
+    }
+
+    /// Closes active split view.
+    pub fn close_split(&mut self) {
+        self.split_pane = None;
     }
 
     /// Executes full-text search across vault using Tantivy index.
@@ -1188,6 +1845,16 @@ impl AppState {
                 PaletteAction::OpenDailyNote,
             ),
             (
+                "Insert Citation",
+                "Search and insert BibTeX / Zotero citations (Ctrl+Shift+C)",
+                PaletteAction::OpenCitationPicker,
+            ),
+            (
+                "Extract PDF Annotations",
+                "Extract highlights and comments from PDF to Markdown note (Ctrl+Shift+E)",
+                PaletteAction::ExtractPdfAnnotations,
+            ),
+            (
                 palette::REBUILD_INDEX.0,
                 palette::REBUILD_INDEX.1,
                 PaletteAction::RebuildIndex,
@@ -1248,6 +1915,12 @@ impl AppState {
             }
             PaletteAction::RebuildIndex => {
                 self.rebuild_vault_index()?;
+            }
+            PaletteAction::OpenCitationPicker => {
+                self.show_citation_picker_modal = true;
+            }
+            PaletteAction::ExtractPdfAnnotations => {
+                self.show_pdf_annotation_modal = true;
             }
         }
         Ok(())
@@ -1440,10 +2113,50 @@ impl AppState {
         Ok(())
     }
 
+    /// Checks whether a note with the given title exists in the active vault.
+    pub fn note_title_exists(&self, title: &str) -> bool {
+        let trimmed = title.trim().to_lowercase();
+        for entry in &self.entries {
+            if let VaultEntry::Note(summary) = entry {
+                if summary.title.to_lowercase() == trimmed {
+                    return true;
+                }
+                if let Some(stem) = summary.relative_path.file_stem().and_then(|s| s.to_str()) {
+                    if stem.to_lowercase() == trimmed {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Computes the next non-conflicting title for a new note ("Untitled", "Untitled 1", "Untitled 2", etc.).
+    pub fn next_available_note_title(&self) -> String {
+        let base = "Untitled";
+        if !self.note_title_exists(base) {
+            return base.to_string();
+        }
+        let mut i = 1;
+        loop {
+            let candidate = format!("{base} {i}");
+            if !self.note_title_exists(&candidate) {
+                return candidate;
+            }
+            i += 1;
+        }
+    }
+
     /// Creates a new note, saves it to disk, and opens it in the editor.
     pub fn create_note(&mut self, title: &str, folder: Option<&str>) -> Result<()> {
+        let resolved_title = if title.trim().is_empty() {
+            self.next_available_note_title()
+        } else {
+            title.trim().to_string()
+        };
+
         if let Some(service) = &self.vault_service {
-            let note = service.create_note(folder, title, Some(""))?;
+            let note = service.create_note(folder, &resolved_title, Some(""))?;
             self.editor_content.clear();
             let rel = note.relative_path.clone();
             let title_str = note.title.clone();
@@ -1451,7 +2164,7 @@ impl AppState {
             self.active_view = ActiveView::Editor;
             self.is_reading_mode = false;
             self.is_dirty = false;
-            self.status_message = format!("Created '{title}'");
+            self.status_message = format!("Created '{resolved_title}'");
 
             // Tab management
             if let Some(idx) = self.open_tabs.iter().position(|t| t.relative_path == rel) {
@@ -2115,5 +2828,378 @@ mod tests {
         state.delete_note(&renamed_path).unwrap();
         assert!(!state.is_bookmarked(&renamed_path));
         assert!(!state.preferences.recent_notes.contains(&renamed_path));
+    }
+
+    #[test]
+    fn test_soft_delete_and_restore_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("TrashVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Trash Vault".to_string()))
+            .unwrap();
+
+        state.create_note("DiscardMe", None).unwrap();
+        let note_path = PathBuf::from("Notes").join("DiscardMe.md");
+
+        // Verify active
+        assert!(state.note_title_exists("DiscardMe"));
+
+        // Soft delete to trash
+        state.trash_note(&note_path).unwrap();
+        assert!(!state.note_title_exists("DiscardMe"));
+
+        // List trash
+        let trashed = state.list_trash();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(trashed[0].title, "DiscardMe");
+
+        // Restore from trash
+        state
+            .restore_trashed_note(&trashed[0].trash_filename)
+            .unwrap();
+        assert!(state.note_title_exists("DiscardMe"));
+
+        // Trash is now empty
+        assert!(state.list_trash().is_empty());
+    }
+
+    #[test]
+    fn test_unlinked_mentions_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("MentionsVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Mentions Vault".to_string()))
+            .unwrap();
+
+        state.create_note("Rust Guide", None).unwrap();
+        state.create_note("Intro", None).unwrap();
+
+        let intro_path = PathBuf::from("Notes").join("Intro.md");
+        let guide_path = PathBuf::from("Notes").join("Rust Guide.md");
+
+        // Write plain text mention in Intro note
+        state.select_note(&intro_path).unwrap();
+        state.update_editor_content("Welcome! Check out the Rust Guide for more info.".to_string());
+        state.save_active_note().unwrap();
+
+        // Switch to Rust Guide note
+        state.select_note(&guide_path).unwrap();
+
+        // Detect unlinked mentions
+        let mentions = state.get_unlinked_mentions();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].source_title, "Intro");
+        assert_eq!(mentions[0].matched_text, "Rust Guide");
+
+        // Link the mention
+        state
+            .link_unlinked_mention(&intro_path, "Rust Guide")
+            .unwrap();
+
+        // Verify Intro note now contains wikilink
+        let service = state.vault_service.as_ref().unwrap();
+        let intro_note = service.read_note(&intro_path).unwrap();
+        assert!(intro_note.content.contains("[[Rust Guide]]"));
+
+        // Mentions should now be empty
+        let mentions_after = state.get_unlinked_mentions();
+        assert!(mentions_after.is_empty());
+
+        // Backlinks should now include Intro
+        let backlinks = state.get_current_backlinks();
+        assert_eq!(backlinks.len(), 1);
+    }
+
+    #[test]
+    fn test_properties_frontmatter_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("PropsVault");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("Props Vault".to_string()))
+            .unwrap();
+
+        state.create_note("MyDoc", None).unwrap();
+
+        // Set properties
+        state
+            .set_frontmatter_property("status", serde_yaml::Value::String("published".to_string()))
+            .unwrap();
+        state
+            .set_frontmatter_property("score", serde_yaml::Value::Number(99.into()))
+            .unwrap();
+        state
+            .set_frontmatter_property(
+                "tags",
+                serde_yaml::Value::Sequence(vec![
+                    serde_yaml::Value::String("tech".to_string()),
+                    serde_yaml::Value::String("rust".to_string()),
+                ]),
+            )
+            .unwrap();
+
+        let fm = state.get_active_frontmatter().unwrap();
+        assert_eq!(fm.tags, vec!["tech".to_string(), "rust".to_string()]);
+        assert_eq!(
+            fm.extra.get("status"),
+            Some(&serde_yaml::Value::String("published".to_string()))
+        );
+        assert_eq!(
+            fm.extra.get("score"),
+            Some(&serde_yaml::Value::Number(99.into()))
+        );
+
+        // Remove property
+        state.remove_frontmatter_property("score").unwrap();
+        let fm2 = state.get_active_frontmatter().unwrap();
+        assert_eq!(fm2.extra.get("score"), None);
+        assert_eq!(
+            fm2.extra.get("status"),
+            Some(&serde_yaml::Value::String("published".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_split_view_and_title_increment() {
+        let mut state = AppState::default();
+
+        // Split view toggling
+        assert!(state.split_pane.is_none());
+        state.toggle_split();
+        assert!(state.split_pane.is_some());
+        assert_eq!(state.split_direction, SplitDirection::Horizontal);
+
+        state.toggle_split_direction();
+        assert_eq!(state.split_direction, SplitDirection::Vertical);
+
+        state.close_split();
+        assert!(state.split_pane.is_none());
+
+        // Note auto-increment title
+        assert_eq!(state.next_available_note_title(), "Untitled");
+    }
+
+    #[test]
+    fn test_vault_health_audit_and_broken_link_fixes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("HealthVault");
+        let mut state = AppState::default();
+        state.create_vault(&vault_path, None).unwrap();
+
+        // Note 1 references a non-existent note [[MissingTarget]]
+        state.create_note("Alpha", None).unwrap();
+        state.update_editor_content("# Alpha\nThis links to [[MissingTarget]].\n".to_string());
+        state.save_active_note().unwrap();
+
+        // Note 2 is an orphan with no links
+        state.create_note("OrphanNote", None).unwrap();
+        state.update_editor_content("# Orphan\nCompletely disconnected note.".to_string());
+        state.save_active_note().unwrap();
+        let note2_rel = state.active_note.as_ref().unwrap().relative_path.clone();
+
+        // Note 3 references Note 4
+        state.create_note("Beta", None).unwrap();
+        state.update_editor_content("# Beta\nThis links to [[Gamma]].\n".to_string());
+        state.save_active_note().unwrap();
+
+        state.create_note("Gamma", None).unwrap();
+        state.update_editor_content("# Gamma\nTarget of beta link.\n".to_string());
+        state.save_active_note().unwrap();
+
+        // 1. Audit vault
+        let report = state.audit_vault().expect("Audit report should exist");
+        assert_eq!(report.total_notes, 4);
+        assert_eq!(report.broken_links.len(), 1);
+        assert_eq!(report.broken_links[0].target, "MissingTarget");
+        assert_eq!(report.orphan_notes.len(), 1);
+        assert_eq!(report.orphan_notes[0], note2_rel);
+
+        // 2. Fix broken link by creating note
+        state.fix_broken_link_create_note("MissingTarget").unwrap();
+        let report2 = state.audit_vault().unwrap();
+        assert_eq!(report2.broken_links.len(), 0);
+        assert_eq!(report2.total_notes, 5);
+
+        // 3. Test unlink on a note with broken link
+        state.create_note("Delta", None).unwrap();
+        state.update_editor_content(
+            "# Delta\nReferences [[GhostDoc|Custom Display]].\n".to_string(),
+        );
+        state.save_active_note().unwrap();
+
+        let report3 = state.audit_vault().unwrap();
+        assert_eq!(report3.broken_links.len(), 1);
+        assert_eq!(report3.broken_links[0].target, "GhostDoc");
+
+        state.fix_broken_link_unlink("GhostDoc").unwrap();
+        let report4 = state.audit_vault().unwrap();
+        assert_eq!(report4.broken_links.len(), 0);
+
+        // Verify that [[GhostDoc|Custom Display]] was replaced with Custom Display
+        let note5_rel = state
+            .entries
+            .iter()
+            .find_map(|e| {
+                if let VaultEntry::Note(s) = e {
+                    if s.title == "Delta" {
+                        Some(s.relative_path.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        let note5_content = state
+            .vault_service
+            .as_ref()
+            .unwrap()
+            .read_note(&note5_rel)
+            .unwrap()
+            .content;
+        assert!(note5_content.contains("Custom Display"));
+        assert!(!note5_content.contains("[[GhostDoc"));
+
+        // 4. Batch trash orphans
+        state.batch_trash_orphans(&[note2_rel]).unwrap();
+        let report5 = state.audit_vault().unwrap();
+        // Note that Delta became an orphan when its only link to GhostDoc was unlinked!
+        assert_eq!(report5.orphan_notes.len(), 1);
+        assert_eq!(report5.orphan_notes[0], note5_rel);
+
+        // Trashing Delta leaves 0 orphans
+        state.batch_trash_orphans(&[note5_rel]).unwrap();
+        let report6 = state.audit_vault().unwrap();
+        assert_eq!(report6.orphan_notes.len(), 0);
+    }
+
+    #[test]
+    fn test_related_notes_scoring_in_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("RelatedVault");
+        let mut state = AppState::default();
+        state.create_vault(&vault_path, None).unwrap();
+
+        state.create_note("Rust Concurrency", None).unwrap();
+        state.update_editor_content("# Rust Concurrency\nFearless concurrency with threads and message passing.\nTags: #rust #systems\n".to_string());
+        state.save_active_note().unwrap();
+        let note1_rel = state.active_note.as_ref().unwrap().relative_path.clone();
+
+        state.create_note("Cargo Systems", None).unwrap();
+        state.update_editor_content("# Cargo Systems\nCargo builds and manages dependencies for rust systems.\nTags: #rust #tools\n".to_string());
+        state.save_active_note().unwrap();
+
+        state.create_note("Cooking Recipe", None).unwrap();
+        state.update_editor_content("# Cooking Recipe\nDelicious pasta with tomato sauce and basil leaves.\nTags: #food #cooking\n".to_string());
+        state.save_active_note().unwrap();
+
+        // Select Note 1
+        state.select_note(&note1_rel).unwrap();
+
+        let related = state.get_related_notes_for_active();
+        assert!(!related.is_empty());
+        assert_eq!(related[0].title, "Cargo Systems");
+        assert!(related[0]
+            .shared_tags
+            .iter()
+            .any(|t| t.to_lowercase() == "rust"));
+        assert!(related[0].match_percentage > 0);
+
+        // Test append_link_to_active_note
+        state.append_link_to_active_note("Cargo Systems").unwrap();
+        assert!(state.editor_content.contains("[[Cargo Systems]]"));
+    }
+
+    #[test]
+    fn test_citation_library_and_insertion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("CitationVault");
+        let mut state = AppState::default();
+        state.create_vault(&vault_path, None).unwrap();
+
+        // Write a .bib file inside the vault
+        let bib_content = r#"
+@article{shannon1948mathematical,
+  author = {Shannon, Claude E.},
+  title = {A Mathematical Theory of Communication},
+  journal = {Bell System Technical Journal},
+  year = {1948},
+  volume = {27},
+  pages = {379--423}
+}
+"#;
+        let bib_file = vault_path.join("references.bib");
+        std::fs::write(&bib_file, bib_content).unwrap();
+
+        // Refresh bibliography
+        state.refresh_bib_library();
+        assert_eq!(state.bib_library.entries.len(), 1);
+        assert_eq!(
+            state.bib_library.entries[0].citation_key,
+            "shannon1948mathematical"
+        );
+        assert_eq!(
+            state.bib_library.entries[0].title.as_deref(),
+            Some("A Mathematical Theory of Communication")
+        );
+
+        // Create a note and insert citations
+        state.create_note("Info Theory", None).unwrap();
+        state
+            .update_editor_content("# Info Theory\nFoundations of information theory.".to_string());
+        state.save_active_note().unwrap();
+
+        // 1. Insert citekey [@key]
+        state.insert_citation("shannon1948mathematical", false);
+        assert!(state.editor_content.contains("[@shannon1948mathematical]"));
+
+        // 2. Insert full reference
+        state.insert_citation("shannon1948mathematical", true);
+        assert!(state
+            .editor_content
+            .contains("Claude E. Shannon (1948). A Mathematical Theory of Communication."));
+    }
+
+    #[test]
+    fn test_web_clipper_vault_saving() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("ClipperVault");
+        let mut state = AppState::default();
+        state.create_vault(&vault_path, None).unwrap();
+
+        let payload = crate::web_clipper::WebClipPayload {
+            url: "https://example.org/rust-systems".to_string(),
+            title: "Memory Safety in Modern Systems".to_string(),
+            content: "Rust provides memory safety guarantees without a garbage collector."
+                .to_string(),
+            selected_text: Some("Zero-cost abstractions are key.".to_string()),
+            tags: Some(vec!["systems".to_string(), "rust".to_string()]),
+            author: Some("Jane Doe".to_string()),
+        };
+
+        let rel_path = crate::web_clipper::save_clip_to_vault(&vault_path, &payload).unwrap();
+        assert_eq!(
+            rel_path.to_string_lossy().replace('\\', "/"),
+            "Clippings/Memory Safety in Modern Systems.md"
+        );
+
+        let clip_file = vault_path.join(&rel_path);
+        assert!(clip_file.exists());
+        let saved_text = std::fs::read_to_string(&clip_file).unwrap();
+        assert!(saved_text.contains("title: \"Memory Safety in Modern Systems\""));
+        assert!(saved_text.contains("source_url: \"https://example.org/rust-systems\""));
+        assert!(saved_text.contains("author: \"Jane Doe\""));
+        assert!(saved_text.contains("- web-clip"));
+        assert!(saved_text.contains("- systems"));
+        assert!(saved_text.contains("- rust"));
+        assert!(saved_text.contains("Zero-cost abstractions are key."));
+        assert!(saved_text
+            .contains("Rust provides memory safety guarantees without a garbage collector."));
     }
 }

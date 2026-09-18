@@ -18,10 +18,19 @@ serde.workspace = true
 serde_json.workspace = true
 notify.workspace = true
 chrono.workspace = true
+serde_yaml.workspace = true
+rayon.workspace = true
+
+
 
 [dev-dependencies]
 tempfile.workspace = true
 lopdf.workspace = true
 
+[[bench]]
+name = "vault_benchmarks"
+harness = false
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
