@@ -231,6 +231,65 @@ impl TantivyIndex {
         Ok(results)
     }
 
+    /// Finds notes related to a given note using keyword extraction and BM25 scoring.
+    pub fn find_related_notes(
+        &self,
+        exclude_path: &str,
+        title: &str,
+        body: &str,
+        tags: &[String],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
+        let stopwords = [
+            "the", "and", "is", "in", "to", "of", "for", "on", "with", "as", "by", "at", "an",
+            "be", "this", "that", "from", "or", "are", "it", "not", "your", "all", "have", "new",
+            "was", "will", "can", "but", "about", "note", "markdown",
+        ];
+
+        let mut term_freq: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
+        let mut add_tokens = |text: &str, weight: usize| {
+            for word in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                let w = word.trim().to_lowercase();
+                if w.len() >= 3 && !stopwords.contains(&w.as_str()) {
+                    *term_freq.entry(w).or_insert(0) += weight;
+                }
+            }
+        };
+
+        // Title terms have highest weight
+        add_tokens(title, 3);
+        for tag in tags {
+            add_tokens(tag, 2);
+        }
+        // Body terms
+        add_tokens(body, 1);
+
+        if term_freq.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Take top 8 most frequent keywords
+        let mut sorted_terms: Vec<(String, usize)> = term_freq.into_iter().collect();
+        sorted_terms.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted_terms.truncate(8);
+
+        let query_terms: Vec<String> = sorted_terms.into_iter().map(|(t, _)| t).collect();
+        let query_string = query_terms.join(" OR ");
+
+        let raw_results = self.search(&query_string, limit + 5)?;
+
+        // Exclude the source note itself
+        let filtered: Vec<SearchResult> = raw_results
+            .into_iter()
+            .filter(|r| r.path != exclude_path)
+            .take(limit)
+            .collect();
+
+        Ok(filtered)
+    }
+
     /// Clears all documents in Tantivy index.
     pub fn clear_all(&mut self) -> Result<()> {
         self.writer.delete_all_documents().map_err(search_err)?;

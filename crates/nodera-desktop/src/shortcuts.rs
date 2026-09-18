@@ -45,6 +45,18 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
             s.show_rename_dialog = false;
             return true;
         }
+        if s.show_citation_picker_modal {
+            s.show_citation_picker_modal = false;
+            return true;
+        }
+        if s.show_pdf_annotation_modal {
+            s.show_pdf_annotation_modal = false;
+            return true;
+        }
+        if s.show_vault_health_modal {
+            s.show_vault_health_modal = false;
+            return true;
+        }
         return false;
     }
 
@@ -53,6 +65,20 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
     }
 
     match key {
+        // Ctrl+Shift+C: Citation & Bibliography Picker
+        Key::Character(ref c) if (c == "c" || c == "C") && modifiers.shift() => {
+            let mut s = state.write();
+            s.show_citation_picker_modal = !s.show_citation_picker_modal;
+            true
+        }
+
+        // Ctrl+Shift+E: Extract PDF Annotations
+        Key::Character(ref c) if (c == "e" || c == "E") && modifiers.shift() => {
+            let mut s = state.write();
+            s.show_pdf_annotation_modal = !s.show_pdf_annotation_modal;
+            true
+        }
+
         // Ctrl+Shift+I: Import PDF as Markdown
         Key::Character(ref c) if (c == "i" || c == "I") && modifiers.shift() => {
             let mut s = state.write();
@@ -148,10 +174,17 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
             true
         }
 
-        // Ctrl+\: Toggle Sidebar
-        Key::Character(ref c) if c == "\\" => {
+        // Ctrl+B: Toggle Sidebar
+        Key::Character(ref c) if c == "b" || c == "B" => {
             let mut s = state.write();
             s.sidebar_open = !s.sidebar_open;
+            true
+        }
+
+        // Ctrl+\: Toggle Split View
+        Key::Character(ref c) if c == "\\" => {
+            let mut s = state.write();
+            s.toggle_split();
             true
         }
 

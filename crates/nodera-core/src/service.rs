@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -339,16 +340,232 @@ impl VaultService {
         })
     }
 
-    /// Deletes a note from the vault.
+    /// Deletes a note from the vault permanently.
     #[instrument(skip(self, relative_path))]
     pub fn delete_note(&self, relative_path: impl AsRef<Path>) -> Result<()> {
         let rel = relative_path.as_ref();
         let full_path = self.vault.resolve_path(rel)?;
 
         delete_file(&full_path)?;
-        info!(path = %rel.display(), "Deleted note");
+        info!(path = %rel.display(), "Deleted note permanently");
         Ok(())
     }
+
+    /// Returns the absolute path to the vault's `.trash` directory.
+    pub fn trash_dir(&self) -> PathBuf {
+        self.vault.root().join(".trash")
+    }
+
+    /// Moves a note into the vault's `.trash/` directory and records it in `.trash/.manifest.json`.
+    #[instrument(skip(self, relative_path))]
+    pub fn trash_note(&self, relative_path: impl AsRef<Path>) -> Result<TrashedNoteSummary> {
+        let rel = relative_path.as_ref();
+        let full_path = self.vault.resolve_path(rel)?;
+        if !full_path.exists() {
+            return Err(FileError::NotFound { path: full_path }.into());
+        }
+
+        let trash_dir = self.trash_dir();
+        fs::create_dir_all(&trash_dir).map_err(|source| FileError::Io {
+            path: trash_dir.clone(),
+            source,
+        })?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let stem = rel.file_stem().and_then(|s| s.to_str()).unwrap_or("note");
+        let trash_filename = format!("{stem}_{now}.md");
+        let trash_full_path = trash_dir.join(&trash_filename);
+
+        let metadata = fs::metadata(&full_path).map_err(|source| FileError::Io {
+            path: full_path.clone(),
+            source,
+        })?;
+        let size_bytes = metadata.len();
+
+        if fs::rename(&full_path, &trash_full_path).is_err() {
+            fs::copy(&full_path, &trash_full_path).map_err(|source| FileError::Io {
+                path: full_path.clone(),
+                source,
+            })?;
+            let _ = fs::remove_file(&full_path);
+        }
+
+        let summary = TrashedNoteSummary {
+            trash_filename: trash_filename.clone(),
+            original_path: rel.to_path_buf(),
+            title: stem.to_string(),
+            trashed_at_millis: now,
+            size_bytes,
+        };
+
+        let mut manifest = self.read_trash_manifest()?;
+        manifest.retain(|item| item.trash_filename != trash_filename);
+        manifest.insert(0, summary.clone());
+        self.write_trash_manifest(&manifest)?;
+
+        info!(path = %rel.display(), trash_file = %trash_filename, "Moved note to trash");
+        Ok(summary)
+    }
+
+    /// Restores a previously trashed note back to its original location (or a non-colliding path).
+    #[instrument(skip(self))]
+    pub fn restore_note(&self, trash_filename: &str) -> Result<Note> {
+        let mut manifest = self.read_trash_manifest()?;
+        let pos = manifest
+            .iter()
+            .position(|m| m.trash_filename == trash_filename);
+        let summary = match pos {
+            Some(idx) => manifest.remove(idx),
+            None => {
+                let trash_file = self.trash_dir().join(trash_filename);
+                if !trash_file.exists() {
+                    return Err(FileError::NotFound { path: trash_file }.into());
+                }
+                TrashedNoteSummary {
+                    trash_filename: trash_filename.to_string(),
+                    original_path: PathBuf::from(trash_filename),
+                    title: Path::new(trash_filename)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("Restored Note")
+                        .to_string(),
+                    trashed_at_millis: 0,
+                    size_bytes: 0,
+                }
+            }
+        };
+
+        let trash_full_path = self.trash_dir().join(&summary.trash_filename);
+        if !trash_full_path.exists() {
+            return Err(FileError::NotFound {
+                path: trash_full_path,
+            }
+            .into());
+        }
+
+        let mut target_rel = summary.original_path.clone();
+        let mut target_full = self.vault.resolve_path(&target_rel)?;
+
+        if target_full.exists() {
+            let stem = target_rel
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("note");
+            let new_name = format!("{stem}_restored.md");
+            target_rel = match target_rel.parent() {
+                Some(p) if !p.as_os_str().is_empty() => p.join(new_name),
+                _ => PathBuf::from(new_name),
+            };
+            target_full = self.vault.resolve_path(&target_rel)?;
+        }
+
+        if let Some(parent) = target_full.parent() {
+            fs::create_dir_all(parent).map_err(|source| FileError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        if fs::rename(&trash_full_path, &target_full).is_err() {
+            fs::copy(&trash_full_path, &target_full).map_err(|source| FileError::Io {
+                path: trash_full_path.clone(),
+                source,
+            })?;
+            let _ = fs::remove_file(&trash_full_path);
+        }
+
+        self.write_trash_manifest(&manifest)?;
+        info!(from = %summary.trash_filename, to = %target_rel.display(), "Restored note from trash");
+
+        self.read_note(&target_rel)
+    }
+
+    /// Lists all currently trashed notes.
+    pub fn list_trash(&self) -> Result<Vec<TrashedNoteSummary>> {
+        self.read_trash_manifest()
+    }
+
+    /// Empties all contents of `.trash/`.
+    pub fn empty_trash(&self) -> Result<usize> {
+        let trash_dir = self.trash_dir();
+        if !trash_dir.exists() {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+        let read_dir = fs::read_dir(&trash_dir).map_err(|source| FileError::Io {
+            path: trash_dir.clone(),
+            source,
+        })?;
+
+        for entry in read_dir.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                let _ = fs::remove_file(&p);
+                count += 1;
+            } else if p.is_dir() {
+                let _ = fs::remove_dir_all(&p);
+                count += 1;
+            }
+        }
+
+        info!(deleted_items = count, "Emptied trash");
+        Ok(count)
+    }
+
+    /// Permanently deletes a single file from the trash directory.
+    pub fn delete_permanently(&self, trash_filename: &str) -> Result<()> {
+        let trash_file = self.trash_dir().join(trash_filename);
+        if trash_file.exists() {
+            fs::remove_file(&trash_file).map_err(|source| FileError::Io {
+                path: trash_file.clone(),
+                source,
+            })?;
+        }
+
+        let mut manifest = self.read_trash_manifest()?;
+        manifest.retain(|m| m.trash_filename != trash_filename);
+        self.write_trash_manifest(&manifest)?;
+        Ok(())
+    }
+
+    fn read_trash_manifest(&self) -> Result<Vec<TrashedNoteSummary>> {
+        let manifest_path = self.trash_dir().join(".manifest.json");
+        if !manifest_path.exists() {
+            return Ok(Vec::new());
+        }
+        let data = fs::read_to_string(&manifest_path).unwrap_or_default();
+        let items: Vec<TrashedNoteSummary> = serde_json::from_str(&data).unwrap_or_default();
+        Ok(items)
+    }
+
+    fn write_trash_manifest(&self, items: &[TrashedNoteSummary]) -> Result<()> {
+        let trash_dir = self.trash_dir();
+        if !trash_dir.exists() {
+            fs::create_dir_all(&trash_dir).map_err(|source| FileError::Io {
+                path: trash_dir.clone(),
+                source,
+            })?;
+        }
+        let manifest_path = trash_dir.join(".manifest.json");
+        let json = serde_json::to_string_pretty(items).unwrap_or_default();
+        atomic_write_str(&manifest_path, &json)?;
+        Ok(())
+    }
+}
+
+/// Metadata summary of a note stored in the vault's `.trash` directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashedNoteSummary {
+    pub trash_filename: String,
+    pub original_path: PathBuf,
+    pub title: String,
+    pub trashed_at_millis: u64,
+    pub size_bytes: u64,
 }
 
 #[cfg(test)]
@@ -521,5 +738,73 @@ mod tests {
                 "RootNote.md"
             ]
         );
+    }
+
+    #[test]
+    fn test_soft_delete_and_restore() {
+        let tmp = tempdir().unwrap();
+        let vault = Vault::create(tmp.path().join("Vault"), None).unwrap();
+        let service = VaultService::new(vault);
+
+        let note = service
+            .create_note(Some("Notes"), "Important Idea", Some("Contents of idea"))
+            .unwrap();
+
+        // 1. Verify note is in list_entries
+        let entries = service.list_entries().unwrap();
+        assert!(entries
+            .iter()
+            .any(|e| e.relative_path() == note.relative_path));
+
+        // 2. Soft delete / move to trash
+        let trashed = service.trash_note(&note.relative_path).unwrap();
+        assert_eq!(trashed.title, "Important Idea");
+        assert_eq!(trashed.original_path, note.relative_path);
+
+        // 3. Verify note is no longer in list_entries
+        let entries_after = service.list_entries().unwrap();
+        assert!(!entries_after
+            .iter()
+            .any(|e| e.relative_path() == note.relative_path));
+
+        // 4. Verify trash listing
+        let trash_list = service.list_trash().unwrap();
+        assert_eq!(trash_list.len(), 1);
+        assert_eq!(trash_list[0].trash_filename, trashed.trash_filename);
+
+        // 5. Restore note
+        let restored = service.restore_note(&trashed.trash_filename).unwrap();
+        assert_eq!(restored.title, "Important Idea");
+        assert_eq!(restored.content, "Contents of idea");
+
+        // 6. Verify restored note is back in list_entries and trash is empty
+        let entries_restored = service.list_entries().unwrap();
+        assert!(entries_restored
+            .iter()
+            .any(|e| e.relative_path() == note.relative_path));
+        let trash_after = service.list_trash().unwrap();
+        assert!(trash_after.is_empty());
+    }
+
+    #[test]
+    fn test_empty_trash() {
+        let tmp = tempdir().unwrap();
+        let vault = Vault::create(tmp.path().join("Vault"), None).unwrap();
+        let service = VaultService::new(vault);
+
+        let note1 = service.create_note(Some("Notes"), "N1", None).unwrap();
+        let note2 = service.create_note(Some("Notes"), "N2", None).unwrap();
+
+        service.trash_note(&note1.relative_path).unwrap();
+        service.trash_note(&note2.relative_path).unwrap();
+
+        let trash_list = service.list_trash().unwrap();
+        assert_eq!(trash_list.len(), 2);
+
+        let deleted = service.empty_trash().unwrap();
+        assert!(deleted >= 2);
+
+        let trash_after = service.list_trash().unwrap();
+        assert!(trash_after.is_empty());
     }
 }

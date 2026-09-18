@@ -38,3 +38,6 @@ lopdf = "0.45"
 regex = "1.11"
 notify = "8.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
+rayon = "1.10"
+

@@ -40,3 +40,14 @@ pub struct TagCount {
     pub tag: String,
     pub count: usize,
 }
+
+/// Scored related note recommendation based on hybrid lexical and semantic similarity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelatedNote {
+    pub path: String,
+    pub title: String,
+    pub similarity_score: f32,
+    pub match_percentage: u32,
+    pub shared_tags: Vec<String>,
+    pub snippet: String,
+}

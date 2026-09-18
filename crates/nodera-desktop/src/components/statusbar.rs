@@ -17,17 +17,47 @@ pub fn StatusBar(state: Signal<AppState>) -> Element {
         .iter()
         .filter(|e| matches!(e, nodera_core::VaultEntry::Note(_)))
         .count();
+    let bib_count = app_state.bib_library.entries.len();
+    let clipper_port = app_state.web_clipper_port;
+    let clipper_running = app_state.web_clipper_running;
 
     rsx! {
         footer { class: "bottom-statusbar",
             div { style: "display: flex; align-items: center; gap: 8px;",
                 span { style: "width: 6px; height: 6px; border-radius: 50%; background-color: var(--accent); display: inline-block;" }
                 span { "{status_message}" }
+                if let Some(prog) = &app_state.indexing_progress {
+                    if !prog.is_finished() {
+                        span {
+                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); font-weight: 500; margin-left: 8px;",
+                            "{prog.phase} ({prog.completed}/{prog.total} - {prog.percentage()}%)"
+                        }
+                    }
+                }
             }
             div { style: "font-family: var(--font-editor); opacity: 0.8;",
+
                 "{active_path}"
             }
             div { style: "display: flex; align-items: center; gap: 12px;",
+                if clipper_running {
+                    span {
+                        style: "display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary);",
+                        title: "Web Clipper listening on http://127.0.0.1:{clipper_port}/clip",
+                        span { style: "width: 6px; height: 6px; border-radius: 50%; background-color: #2ecc71; display: inline-block;" }
+                        "Clipper :{clipper_port}"
+                    }
+                }
+                if bib_count > 0 {
+                    span {
+                        style: "font-size: 11px; color: var(--text-secondary); cursor: pointer;",
+                        title: "Open Citation Picker (Ctrl+Shift+C)",
+                        onclick: move |_| {
+                            state.write().show_citation_picker_modal = true;
+                        },
+                        "{bib_count} citations"
+                    }
+                }
                 span { "{notes_count} notes" }
                 span { "UTF-8" }
             }

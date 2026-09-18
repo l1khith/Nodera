@@ -120,6 +120,25 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                     IconGraph { size: 15 }
                     span { "{nav::GRAPH}" }
                 }
+                button {
+                    style: "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;",
+                    onclick: move |_| {
+                        let mut s = state.write();
+                        s.show_trash_modal = true;
+                    },
+                    IconTrash { size: 15 }
+                    span { "Trash Bin" }
+                }
+                button {
+                    style: "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;",
+                    title: "Check broken links & orphan notes",
+                    onclick: move |_| {
+                        let mut s = state.write();
+                        s.show_vault_health_modal = true;
+                    },
+                    IconActivity { size: 15 }
+                    span { "Vault Health" }
+                }
             }
 
             // Quick Search Input

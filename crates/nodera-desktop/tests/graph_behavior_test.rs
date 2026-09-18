@@ -18,6 +18,7 @@ fn test_graph_deterministic_seeding_and_reproducibility() {
             degree: if i < 3 { 2 } else { 1 },
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         });
     }
 
@@ -72,6 +73,7 @@ fn test_multi_cluster_separation_and_spring_attraction() {
             degree: 2,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         },
         GraphNode {
             id: "notes/a1.md".to_string(),
@@ -80,6 +82,7 @@ fn test_multi_cluster_separation_and_spring_attraction() {
             degree: 2,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         },
         GraphNode {
             id: "notes/a2.md".to_string(),
@@ -88,6 +91,7 @@ fn test_multi_cluster_separation_and_spring_attraction() {
             degree: 2,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         },
         GraphNode {
             id: "notes/b0.md".to_string(),
@@ -96,6 +100,7 @@ fn test_multi_cluster_separation_and_spring_attraction() {
             degree: 2,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         },
         GraphNode {
             id: "notes/b1.md".to_string(),
@@ -104,6 +109,7 @@ fn test_multi_cluster_separation_and_spring_attraction() {
             degree: 2,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         },
         GraphNode {
             id: "notes/b2.md".to_string(),
@@ -112,6 +118,7 @@ fn test_multi_cluster_separation_and_spring_attraction() {
             degree: 2,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         },
     ];
 
@@ -248,6 +255,7 @@ fn test_collision_avoidance_no_overlapping_nodes() {
             degree: 0,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         });
     }
 
@@ -516,6 +524,7 @@ fn test_graph_settings_defaults_and_forces() {
             degree: 1,
             is_unresolved: false,
             is_tag: false,
+            ..Default::default()
         });
     }
     let edges = vec![

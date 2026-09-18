@@ -108,6 +108,49 @@ pub fn parse_frontmatter(content: &str) -> Result<(Option<Frontmatter>, &str)> {
     Ok((Some(frontmatter), body))
 }
 
+/// Serializes a `Frontmatter` struct back into a clean YAML string enclosed in `---` delimiters.
+pub fn serialize_frontmatter(fm: &Frontmatter) -> String {
+    let mut map = serde_yaml::Mapping::new();
+    if let Some(ref title) = fm.title {
+        map.insert(
+            serde_yaml::Value::String("title".to_string()),
+            serde_yaml::Value::String(title.clone()),
+        );
+    }
+    if !fm.tags.is_empty() {
+        let tag_seq: Vec<serde_yaml::Value> = fm
+            .tags
+            .iter()
+            .map(|t| serde_yaml::Value::String(t.clone()))
+            .collect();
+        map.insert(
+            serde_yaml::Value::String("tags".to_string()),
+            serde_yaml::Value::Sequence(tag_seq),
+        );
+    }
+    for (k, v) in &fm.extra {
+        map.insert(serde_yaml::Value::String(k.clone()), v.clone());
+    }
+
+    if map.is_empty() {
+        return String::new();
+    }
+
+    let yaml_content = serde_yaml::to_string(&map).unwrap_or_default();
+    format!("---\n{}---\n", yaml_content)
+}
+
+/// Updates or inserts a YAML frontmatter block into a Markdown document, preserving the Markdown body.
+pub fn inject_or_update_frontmatter(content: &str, fm: &Frontmatter) -> String {
+    let (_existing_fm, body) = parse_frontmatter(content).unwrap_or((None, content));
+    let serialized = serialize_frontmatter(fm);
+    if serialized.is_empty() {
+        body.to_string()
+    } else {
+        format!("{}{}", serialized, body.trim_start())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +189,32 @@ mod tests {
         let text = "---\n: [invalid yaml\n---\nBody";
         let result = parse_frontmatter(text);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialize_and_inject_frontmatter() {
+        let mut fm = Frontmatter {
+            title: Some("Serialized Note".to_string()),
+            tags: vec!["alpha".to_string(), "beta".to_string()],
+            extra: HashMap::new(),
+        };
+        fm.extra.insert(
+            "status".to_string(),
+            serde_yaml::Value::String("active".to_string()),
+        );
+
+        let initial_doc = "# Note Content\nHere is some regular markdown.";
+        let injected = inject_or_update_frontmatter(initial_doc, &fm);
+        assert!(injected.starts_with("---\n"));
+        assert!(injected.contains("title: Serialized Note"));
+        assert!(injected.contains("status: active"));
+        assert!(injected.contains("# Note Content\nHere is some regular markdown."));
+
+        let (parsed_fm, body) = parse_frontmatter(&injected).unwrap();
+        assert_eq!(parsed_fm.unwrap().title.as_deref(), Some("Serialized Note"));
+        assert_eq!(
+            body.trim(),
+            "# Note Content\nHere is some regular markdown."
+        );
     }
 }

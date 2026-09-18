@@ -983,3 +983,103 @@ pub fn IconBookmark(props: IconProps) -> Element {
         }
     }
 }
+
+/// Split view / Columns icon
+#[component]
+pub fn IconColumns(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            rect { x: "3", y: "3", width: "18", height: "18", rx: "2" }
+            line { x1: "12", y1: "3", x2: "12", y2: "21" }
+        }
+    }
+}
+
+/// Tag icon
+#[component]
+pub fn IconTag(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" }
+            line { x1: "7", y1: "7", x2: "7.01", y2: "7" }
+        }
+    }
+}
+
+/// Activity / Pulse icon for vault health doctor
+#[component]
+pub fn IconActivity(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polyline { points: "22 12 18 12 15 21 9 3 6 12 2 12" }
+        }
+    }
+}
+
+/// Quote icon for citations and bibliography
+#[component]
+pub fn IconQuote(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M3 21c3 0 7-1 7-8V5c0-1.25-.75-2-2-2H4c-1.25 0-2 .75-2 2v6c0 1.25.75 2 2 2 1 0 1 0 1 1 0 2.5-2 4.5-2 7" }
+            path { d: "M15 21c3 0 7-1 7-8V5c0-1.25-.75-2-2-2h-4c-1.25 0-2 .75-2 2v6c0 1.25.75 2 2 2 1 0 1 0 1 1 0 2.5-2 4.5-2 7" }
+        }
+    }
+}
+
+/// Globe icon for Web Clipper and network status
+#[component]
+pub fn IconGlobe(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "12", r: "10" }
+            line { x1: "2", y1: "12", x2: "22", y2: "12" }
+            path { d: "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" }
+        }
+    }
+}
