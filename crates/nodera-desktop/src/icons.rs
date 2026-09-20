@@ -1083,3 +1083,69 @@ pub fn IconGlobe(props: IconProps) -> Element {
         }
     }
 }
+
+/// More / Horizontal 3 dots icon (⋯)
+#[component]
+pub fn IconMore(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "currentColor",
+            stroke: "none",
+            circle { cx: "12", cy: "12", r: "2" }
+            circle { cx: "19", cy: "12", r: "2" }
+            circle { cx: "5", cy: "12", r: "2" }
+        }
+    }
+}
+
+/// Panel Right / Inspector toggle icon
+#[component]
+pub fn IconPanelRight(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            rect { x: "3", y: "3", width: "18", height: "18", rx: "2" }
+            line { x1: "15", y1: "3", x2: "15", y2: "21" }
+        }
+    }
+}
+
+/// Properties / Frontmatter metadata icon
+#[component]
+pub fn IconProperties(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            line { x1: "4", y1: "21", x2: "4", y2: "14" }
+            line { x1: "4", y1: "10", x2: "4", y2: "3" }
+            line { x1: "12", y1: "21", x2: "12", y2: "12" }
+            line { x1: "12", y1: "8", x2: "12", y2: "3" }
+            line { x1: "20", y1: "21", x2: "20", y2: "16" }
+            line { x1: "20", y1: "12", x2: "20", y2: "3" }
+            line { x1: "1", y1: "14", x2: "7", y2: "14" }
+            line { x1: "9", y1: "8", x2: "15", y2: "8" }
+            line { x1: "17", y1: "16", x2: "23", y2: "16" }
+        }
+    }
+}
+
