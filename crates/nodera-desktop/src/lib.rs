@@ -7,7 +7,6 @@ pub mod state;
 pub mod strings;
 pub mod theme;
 pub mod watcher;
-pub mod web_clipper;
 
 pub use app::App;
 pub use state::AppState;

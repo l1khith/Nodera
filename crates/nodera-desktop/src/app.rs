@@ -18,7 +18,11 @@ pub fn App() -> Element {
         if let Some(path) = app_state.preferences.last_vault.clone() {
             if path.exists() {
                 info!(path = %path.display(), "Auto-opening last vault on startup");
-                let _ = app_state.open_vault(&path);
+                if let Err(e) = app_state.open_vault(&path) {
+                    tracing::warn!("Could not auto-open last vault {}: {e}", path.display());
+                    app_state.vault_service = None;
+                    app_state.vault_path = None;
+                }
             }
         }
         app_state

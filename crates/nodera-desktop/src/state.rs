@@ -315,6 +315,7 @@ pub enum PaletteAction {
     RebuildIndex,
     OpenCitationPicker,
     ExtractPdfAnnotations,
+    ExecutePluginCommand(String),
 }
 
 /// Book or long-form document displayed in the Library view.
@@ -448,9 +449,10 @@ pub struct AppState {
     pub bib_library: BibLibrary,
     pub show_citation_picker_modal: bool,
     pub show_pdf_annotation_modal: bool,
-    pub web_clipper_port: u16,
-    pub web_clipper_running: bool,
     pub indexing_progress: Option<IndexingProgress>,
+
+    // Extensible Plugins (V0.5)
+    pub plugin_manager: nodera_core::PluginManager,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -564,9 +566,8 @@ impl Default for AppState {
             bib_library: BibLibrary::default(),
             show_citation_picker_modal: false,
             show_pdf_annotation_modal: false,
-            web_clipper_port: crate::web_clipper::DEFAULT_WEB_CLIPPER_PORT,
-            web_clipper_running: false,
             indexing_progress: None,
+            plugin_manager: nodera_core::PluginManager::default(),
         }
     }
 }
@@ -597,11 +598,15 @@ impl AppState {
                 None
             })
             .collect();
+        let note_paths: Vec<PathBuf> = entries
+            .iter()
+            .filter_map(|e| match e {
+                VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                _ => None,
+            })
+            .collect();
 
-        let mut link_graph = LinkGraph::new();
-        for (rel_path, links) in note_links {
-            link_graph.update_note_links(rel_path, links);
-        }
+        let link_graph = LinkGraph::build(&note_paths, note_links);
 
         // Initialize derived VaultIndex (SQLite + Tantivy) with parallel pipeline
         let vault_index = match VaultIndex::open(p) {
@@ -628,7 +633,13 @@ impl AppState {
         self.indexing_progress = None;
 
         self.refresh_bib_library();
-        self.web_clipper_running = true;
+
+        let mut plugin_mgr = nodera_core::PluginManager::new();
+        let _ = plugin_mgr.discover_from_vault(p);
+        plugin_mgr.dispatch_hook(&nodera_core::PluginHook::VaultOpened {
+            vault_name: &self.vault_name,
+        });
+        self.plugin_manager = plugin_mgr;
 
         self.preferences.record_vault(p.to_path_buf());
         Ok(())
@@ -664,7 +675,10 @@ impl AppState {
         self.status_message = format!("Vault '{}' created", self.vault_name);
 
         self.refresh_bib_library();
-        self.web_clipper_running = true;
+
+        let mut plugin_mgr = nodera_core::PluginManager::new();
+        let _ = plugin_mgr.discover_from_vault(p);
+        self.plugin_manager = plugin_mgr;
 
         self.preferences.record_vault(p.to_path_buf());
         Ok(())
@@ -930,6 +944,160 @@ impl AppState {
         Ok(())
     }
 
+    /// Attempts to switch to another vault given its name or path.
+    pub fn switch_vault_by_name_or_path(&mut self, target: &str) -> Result<()> {
+        let trimmed = target.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+
+        // If it's already the active vault, nothing to do
+        if self.vault_name.eq_ignore_ascii_case(trimmed) {
+            return Ok(());
+        }
+        if let Some(ref cur_path) = self.vault_path {
+            if cur_path.to_string_lossy().eq_ignore_ascii_case(trimmed) {
+                return Ok(());
+            }
+        }
+
+        // Check if target is a valid directory path on disk
+        let path = Path::new(trimmed);
+        if path.is_dir() {
+            return self.open_vault(path);
+        }
+
+        // Search recent vaults in preferences
+        let matching_recent = self
+            .preferences
+            .recent_vaults
+            .iter()
+            .find(|recent| {
+                recent
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case(trimmed))
+            })
+            .cloned();
+
+        if let Some(recent_path) = matching_recent {
+            return self.open_vault(recent_path);
+        }
+
+        Ok(())
+    }
+
+    /// Handles a `nodera://` deep-linking URI.
+    pub fn handle_nodera_uri(&mut self, uri: &nodera_core::NoderaUri) -> Result<()> {
+        match uri {
+            nodera_core::NoderaUri::Open {
+                vault,
+                note,
+                line: _,
+            } => {
+                if let Some(v) = vault {
+                    let _ = self.switch_vault_by_name_or_path(v);
+                }
+
+                let note_trimmed = note.trim();
+                let mut note_path = PathBuf::from(note_trimmed.replace('\\', "/"));
+                if note_path.extension().is_none() {
+                    note_path.set_extension("md");
+                }
+
+                // Try direct select
+                if let Some(service) = &self.vault_service {
+                    if service.read_note(&note_path).is_ok() {
+                        self.select_note(&note_path)?;
+                        self.status_message = format!("Opened '{}' via URI", note_path.display());
+                        return Ok(());
+                    }
+                }
+
+                // Try target resolver across all notes
+                let note_paths = self.note_paths();
+                let resolver = nodera_markdown::TargetResolver::from_paths(&note_paths);
+                if let Some(resolved) = resolver.resolve(note_trimmed) {
+                    self.select_note(&resolved)?;
+                    self.status_message = format!("Opened '{}' via URI", resolved.display());
+                    return Ok(());
+                }
+
+                // If not found, create new note
+                if let Some(service) = &self.vault_service {
+                    let note_stem = Path::new(note_trimmed)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(note_trimmed);
+                    let folder = Path::new(note_trimmed)
+                        .parent()
+                        .and_then(|p| p.to_str())
+                        .filter(|f| !f.is_empty());
+                    let new_note = service.create_note(folder, note_stem, Some(""))?;
+                    self.refresh_entries()?;
+                    self.select_note(&new_note.relative_path)?;
+                    self.status_message = format!("Created & opened '{}' via URI", new_note.title);
+                }
+                Ok(())
+            }
+            nodera_core::NoderaUri::New {
+                vault,
+                title,
+                content,
+                tags,
+            } => {
+                if let Some(v) = vault {
+                    let _ = self.switch_vault_by_name_or_path(v);
+                }
+
+                let mut body = String::new();
+                if !tags.is_empty() {
+                    body.push_str("---\ntags:\n");
+                    for t in tags {
+                        body.push_str(&format!("  - {}\n", t));
+                    }
+                    body.push_str("---\n\n");
+                }
+                if let Some(c) = content {
+                    body.push_str(c);
+                }
+
+                if let Some(service) = &self.vault_service {
+                    let title_stem = Path::new(title)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(title);
+                    let folder = Path::new(title)
+                        .parent()
+                        .and_then(|p| p.to_str())
+                        .filter(|f| !f.is_empty());
+                    let new_note = service.create_note(folder, title_stem, Some(&body))?;
+                    self.refresh_entries()?;
+                    self.select_note(&new_note.relative_path)?;
+                    self.status_message = format!("Created note '{}' via URI", new_note.title);
+                }
+                Ok(())
+            }
+            nodera_core::NoderaUri::Search { vault, query } => {
+                if let Some(v) = vault {
+                    let _ = self.switch_vault_by_name_or_path(v);
+                }
+                self.show_command_palette = true;
+                self.command_palette_query = query.clone();
+                self.execute_search(query);
+                self.status_message = format!("Searching for '{}'", query);
+                Ok(())
+            }
+            nodera_core::NoderaUri::Daily { vault } => {
+                if let Some(v) = vault {
+                    let _ = self.switch_vault_by_name_or_path(v);
+                }
+                self.open_or_create_daily_note()?;
+                Ok(())
+            }
+        }
+    }
+
     /// Returns available templates from `<vault>/Templates` folder as well as built-in default templates.
     pub fn get_available_templates(&self) -> Vec<TemplateItem> {
         let mut templates = Vec::new();
@@ -1052,13 +1220,29 @@ impl AppState {
         Ok(())
     }
 
+    /// Returns a list of relative paths for all notes in the vault entries.
+    pub fn note_paths(&self) -> Vec<PathBuf> {
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Saves the current editor content to the active note.
     pub fn save_active_note(&mut self) -> Result<()> {
         if let (Some(service), Some(note)) = (&self.vault_service, &self.active_note) {
-            let updated = service.write_note(&note.relative_path, &self.editor_content)?;
+            let rel_path = note.relative_path.clone();
+            let updated = service.write_note(&rel_path, &self.editor_content)?;
             if let Ok(parsed) = parse_document(&self.editor_content) {
-                self.link_graph
-                    .update_note_links(note.relative_path.clone(), parsed.wikilinks.clone());
+                let paths = self.note_paths();
+                self.link_graph.update_note_links_with_paths(
+                    rel_path.clone(),
+                    parsed.wikilinks.clone(),
+                    &paths,
+                );
 
                 if let Some(index_arc) = &self.vault_index {
                     if let Ok(mut idx) = index_arc.lock() {
@@ -1070,6 +1254,12 @@ impl AppState {
             self.is_dirty = false;
             self.status_message = "Saved".to_string();
             self.refresh_entries()?;
+
+            self.plugin_manager
+                .dispatch_hook(&nodera_core::PluginHook::NoteSaved {
+                    relative_path: &rel_path,
+                    content: &self.editor_content,
+                });
         }
         Ok(())
     }
@@ -1342,8 +1532,12 @@ impl AppState {
         if replacement_done {
             let updated_note = service.write_note(source_path, &updated_content)?;
             if let Ok(parsed) = parse_document(&updated_content) {
-                self.link_graph
-                    .update_note_links(source_path.to_path_buf(), parsed.wikilinks.clone());
+                let paths = self.note_paths();
+                self.link_graph.update_note_links_with_paths(
+                    source_path.to_path_buf(),
+                    parsed.wikilinks.clone(),
+                    &paths,
+                );
                 if let Some(index_arc) = &self.vault_index {
                     if let Ok(mut idx) = index_arc.lock() {
                         let _ = idx.index_note(&updated_note, &parsed);
@@ -1403,8 +1597,12 @@ impl AppState {
         let initial_content = format!("# {target_title}\n\n");
         let note = service.create_note(None, target_title, Some(&initial_content))?;
         if let Ok(parsed) = parse_document(&note.content) {
-            self.link_graph
-                .update_note_links(note.relative_path.clone(), parsed.wikilinks.clone());
+            let paths = self.note_paths();
+            self.link_graph.update_note_links_with_paths(
+                note.relative_path.clone(),
+                parsed.wikilinks.clone(),
+                &paths,
+            );
             if let Some(index_arc) = &self.vault_index {
                 if let Ok(mut idx) = index_arc.lock() {
                     let _ = idx.index_note(&note, &parsed);
@@ -1474,11 +1672,15 @@ impl AppState {
             }
         }
 
+        let note_paths = self.note_paths();
         for (path, new_content) in modified_paths {
             let updated_note = service.write_note(&path, &new_content)?;
             if let Ok(parsed) = parse_document(&new_content) {
-                self.link_graph
-                    .update_note_links(path.clone(), parsed.wikilinks.clone());
+                self.link_graph.update_note_links_with_paths(
+                    path.clone(),
+                    parsed.wikilinks.clone(),
+                    &note_paths,
+                );
                 if let Some(index_arc) = &self.vault_index {
                     if let Ok(mut idx) = index_arc.lock() {
                         let _ = idx.index_note(&updated_note, &parsed);
@@ -1872,6 +2074,19 @@ impl AppState {
             }
         }
 
+        for cmd in self.plugin_manager.get_commands() {
+            if q.is_empty()
+                || cmd.name.to_lowercase().contains(&q)
+                || cmd.description.to_lowercase().contains(&q)
+            {
+                items.push(CommandPaletteItem {
+                    title: cmd.name,
+                    description: cmd.description,
+                    action: PaletteAction::ExecutePluginCommand(cmd.command_id),
+                });
+            }
+        }
+
         items
     }
 
@@ -1922,6 +2137,19 @@ impl AppState {
             PaletteAction::ExtractPdfAnnotations => {
                 self.show_pdf_annotation_modal = true;
             }
+            PaletteAction::ExecutePluginCommand(cmd_id) => {
+                let res =
+                    self.plugin_manager
+                        .dispatch_hook(&nodera_core::PluginHook::ExecuteCommand {
+                            command_id: &cmd_id,
+                            args: &[],
+                        });
+                if let Some(output) = res.command_output {
+                    self.status_message = format!("Plugin: {}", output);
+                } else {
+                    self.status_message = format!("Plugin: executed '{}'", cmd_id);
+                }
+            }
         }
         Ok(())
     }
@@ -1929,15 +2157,7 @@ impl AppState {
     /// Returns list of notes that have Wikilinks pointing to the currently active note.
     pub fn get_current_backlinks(&self) -> Vec<PathBuf> {
         if let Some(active) = &self.active_note {
-            let note_paths: Vec<PathBuf> = self
-                .entries
-                .iter()
-                .filter_map(|e| match e {
-                    VaultEntry::Note(s) => Some(s.relative_path.clone()),
-                    _ => None,
-                })
-                .collect();
-
+            let note_paths = self.note_paths();
             self.link_graph
                 .get_backlinks(&active.relative_path, &note_paths)
         } else {
@@ -1947,20 +2167,13 @@ impl AppState {
 
     /// Returns list of outgoing Wikilinks in current editor content and whether they resolve to an existing note.
     pub fn get_current_outgoing_links(&self) -> Vec<(nodera_markdown::Wikilink, Option<PathBuf>)> {
-        let note_paths: Vec<PathBuf> = self
-            .entries
-            .iter()
-            .filter_map(|e| match e {
-                VaultEntry::Note(s) => Some(s.relative_path.clone()),
-                _ => None,
-            })
-            .collect();
-
+        let note_paths = self.note_paths();
+        let resolver = nodera_markdown::TargetResolver::from_paths(&note_paths);
         let links = nodera_markdown::extract_wikilinks(&self.editor_content);
         links
             .into_iter()
             .map(|l| {
-                let resolved = LinkGraph::resolve_target(&l.target, &note_paths);
+                let resolved = resolver.resolve(&l.target);
                 (l, resolved)
             })
             .collect()
@@ -2086,14 +2299,7 @@ impl AppState {
 
     /// Opens an existing note or creates a new one for a Wikilink target.
     pub fn open_or_create_target(&mut self, target: &str) -> Result<()> {
-        let note_paths: Vec<PathBuf> = self
-            .entries
-            .iter()
-            .filter_map(|e| match e {
-                VaultEntry::Note(s) => Some(s.relative_path.clone()),
-                _ => None,
-            })
-            .collect();
+        let note_paths = self.note_paths();
 
         if let Some(existing) = LinkGraph::resolve_target(target, &note_paths) {
             self.select_note(&existing)?;
@@ -3167,39 +3373,55 @@ mod tests {
     }
 
     #[test]
-    fn test_web_clipper_vault_saving() {
+    fn test_handle_nodera_uri_workflow() {
         let tmp = tempfile::tempdir().unwrap();
-        let vault_path = tmp.path().join("ClipperVault");
+        let vault_path = tmp.path().join("UriVault");
         let mut state = AppState::default();
         state.create_vault(&vault_path, None).unwrap();
 
-        let payload = crate::web_clipper::WebClipPayload {
-            url: "https://example.org/rust-systems".to_string(),
-            title: "Memory Safety in Modern Systems".to_string(),
-            content: "Rust provides memory safety guarantees without a garbage collector."
-                .to_string(),
-            selected_text: Some("Zero-cost abstractions are key.".to_string()),
-            tags: Some(vec!["systems".to_string(), "rust".to_string()]),
-            author: Some("Jane Doe".to_string()),
+        // 1. Handle New note URI
+        let new_uri = nodera_core::NoderaUri::New {
+            vault: None,
+            title: "QuickIdea".to_string(),
+            content: Some("Remember to research distributed consensus.".to_string()),
+            tags: vec!["idea".to_string(), "distributed".to_string()],
         };
+        state.handle_nodera_uri(&new_uri).unwrap();
+        assert!(state.active_note.is_some());
+        let active = state.active_note.as_ref().unwrap();
+        assert_eq!(active.title, "QuickIdea");
+        assert!(state.editor_content.contains("distributed consensus"));
+        assert!(state.editor_content.contains("idea"));
 
-        let rel_path = crate::web_clipper::save_clip_to_vault(&vault_path, &payload).unwrap();
-        assert_eq!(
-            rel_path.to_string_lossy().replace('\\', "/"),
-            "Clippings/Memory Safety in Modern Systems.md"
-        );
+        // 2. Handle Search URI
+        let search_uri = nodera_core::NoderaUri::Search {
+            vault: None,
+            query: "consensus".to_string(),
+        };
+        state.handle_nodera_uri(&search_uri).unwrap();
+        assert!(state.show_command_palette);
+        assert_eq!(state.command_palette_query, "consensus");
+        assert_eq!(state.search_query, "consensus");
 
-        let clip_file = vault_path.join(&rel_path);
-        assert!(clip_file.exists());
-        let saved_text = std::fs::read_to_string(&clip_file).unwrap();
-        assert!(saved_text.contains("title: \"Memory Safety in Modern Systems\""));
-        assert!(saved_text.contains("source_url: \"https://example.org/rust-systems\""));
-        assert!(saved_text.contains("author: \"Jane Doe\""));
-        assert!(saved_text.contains("- web-clip"));
-        assert!(saved_text.contains("- systems"));
-        assert!(saved_text.contains("- rust"));
-        assert!(saved_text.contains("Zero-cost abstractions are key."));
-        assert!(saved_text
-            .contains("Rust provides memory safety guarantees without a garbage collector."));
+        // 3. Handle Open note URI (existing note)
+        let open_uri = nodera_core::NoderaUri::Open {
+            vault: None,
+            note: "QuickIdea.md".to_string(),
+            line: None,
+        };
+        state.handle_nodera_uri(&open_uri).unwrap();
+        assert_eq!(state.active_view, ActiveView::Editor);
+        assert_eq!(state.active_note.as_ref().unwrap().title, "QuickIdea");
+
+        // 4. Handle Daily note URI
+        let daily_uri = nodera_core::NoderaUri::Daily { vault: None };
+        state.handle_nodera_uri(&daily_uri).unwrap();
+        assert!(state
+            .active_note
+            .as_ref()
+            .unwrap()
+            .relative_path
+            .to_string_lossy()
+            .starts_with("Daily"));
     }
 }
