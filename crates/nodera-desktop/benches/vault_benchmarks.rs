@@ -177,11 +177,13 @@ fn run_benchmark_tier(note_count: usize) {
     parse_stats.print_row("2. Markdown Parsing (serial)");
 
     // 3. Graph Construction
+    // 3. Graph Construction (LinkGraph::build O(N+E))
     let start_graph = Instant::now();
-    let mut link_graph = LinkGraph::new();
+    let mut note_links = Vec::with_capacity(parsed_docs.len());
     for (i, doc) in parsed_docs.iter().enumerate() {
-        link_graph.update_note_links(note_paths[i].clone(), doc.wikilinks.clone());
+        note_links.push((note_paths[i].clone(), doc.wikilinks.clone()));
     }
+    let mut link_graph = LinkGraph::build(&note_paths, note_links);
     let graph_dur = start_graph.elapsed();
     let graph_stats = LatencyStats {
         total: graph_dur,
@@ -193,7 +195,7 @@ fn run_benchmark_tier(note_count: usize) {
         min: graph_dur,
         max: graph_dur,
     };
-    graph_stats.print_row("3. Graph Construction");
+    graph_stats.print_row("3. Graph Construction (build)");
 
     // 4. Graph Layout Simulation Tick
     let graph_data = link_graph.to_graph_data(&note_paths);
@@ -279,7 +281,7 @@ fn run_benchmark_tier(note_count: usize) {
             end: 25,
         }];
         let t0 = Instant::now();
-        link_graph.update_note_links(target_path.clone(), new_links);
+        link_graph.update_note_links_with_paths(target_path.clone(), new_links, &note_paths);
         graph_inc_samples.push(t0.elapsed());
     }
     let graph_inc_stats = LatencyStats::compute(graph_inc_samples);
@@ -301,6 +303,52 @@ fn run_benchmark_tier(note_count: usize) {
         max: open_dur,
     };
     open_stats.print_row("9. Cold AppState::open_vault");
+
+    // 10. Graph Data Generation (TargetResolver O(N + E))
+    let start_gen = Instant::now();
+    let _ = link_graph.to_graph_data(&note_paths);
+    let gen_dur = start_gen.elapsed();
+    let gen_stats = LatencyStats {
+        total: gen_dur,
+        count: note_paths.len(),
+        throughput: note_paths.len() as f64 / gen_dur.as_secs_f64().max(0.0001),
+        median: gen_dur,
+        p95: gen_dur,
+        p99: gen_dur,
+        min: gen_dur,
+        max: gen_dur,
+    };
+    gen_stats.print_row("10. Graph Generation (O(N+E))");
+
+    // 11. Backlink Lookups (O(1) on note select)
+    let mut backlink_samples = Vec::new();
+    for target in note_paths.iter().take(100) {
+        let t0 = Instant::now();
+        let _ = link_graph.get_backlinks(target, &note_paths);
+        backlink_samples.push(t0.elapsed());
+    }
+    let backlink_stats = LatencyStats::compute(backlink_samples);
+    backlink_stats.print_row("11. Backlink Query (100 notes)");
+
+    // 12. Vault Health Audit (audit_vault_links O(N+E))
+    let mut note_contents_map = std::collections::HashMap::new();
+    for (p, c) in note_paths.iter().zip(note_contents.iter()) {
+        note_contents_map.insert(p.clone(), c.clone());
+    }
+    let start_audit = Instant::now();
+    let _ = link_graph.audit_vault_links(&note_paths, &note_contents_map);
+    let audit_dur = start_audit.elapsed();
+    let audit_stats = LatencyStats {
+        total: audit_dur,
+        count: note_paths.len(),
+        throughput: note_paths.len() as f64 / audit_dur.as_secs_f64().max(0.0001),
+        median: audit_dur,
+        p95: audit_dur,
+        p99: audit_dur,
+        min: audit_dur,
+        max: audit_dur,
+    };
+    audit_stats.print_row("12. Vault Link Audit (O(N+E))");
 }
 
 fn main() {

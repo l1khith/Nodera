@@ -74,6 +74,9 @@ Platform: Windows x86_64
 | **Incremental Note Index** | 1.89 s (50 notes) | 26.4 | 37.21 ms | 60.30 ms | 64.06 ms |
 | **Incremental Graph Update** | 28.10 µs (50 notes) | 1,779,359.4 | 300.00 ns | 2.50 µs | 7.60 µs |
 | **Cold `AppState::open_vault`** | **425.68 ms** | 2.3 vaults/s | **425.68 ms** | 425.68 ms | 425.68 ms |
+| **Graph Data Generation** (`to_graph_data_with_options`, $O(N+E)$) | **3.25 ms** | **307,692.3 notes/s** | **3.25 ms** | 3.25 ms | 3.25 ms |
+| **Vault Link Audit** (`audit_vault_links`, $O(N+E)$) | **4.95 ms** | **202,020.2 notes/s** | **4.95 ms** | 4.95 ms | 4.95 ms |
+| **Backlink Query** (`get_backlinks`, $O(1)$ reverse index) | **< 1.00 µs** | **> 1,000,000 queries/s**| **400.00 ns** | 600.00 ns | 900.00 ns |
 
 ### 10,000 Notes Post-Optimization
 | Operation | Total Time | Notes / sec | Median Latency | p95 Latency | p99 Latency |
@@ -87,6 +90,9 @@ Platform: Windows x86_64
 | **Incremental Note Index** | 1.87 s (50 notes) | 26.8 | 34.96 ms | 56.73 ms | 69.65 ms |
 | **Incremental Graph Update** | 25.10 µs (50 notes) | 1,992,031.9 | 400.00 ns | 900.00 ns | 3.60 µs |
 | **Cold `AppState::open_vault`** | **3.18 s** | 0.3 vaults/s | **3.18 s** | 3.18 s | 3.18 s |
+| **Graph Data Generation** (`to_graph_data_with_options`, $O(N+E)$) | **42.91 ms** | **233,045.9 notes/s** | **42.91 ms** | 42.91 ms | 42.91 ms |
+| **Vault Link Audit** (`audit_vault_links`, $O(N+E)$) | **59.77 ms** | **167,307.9 notes/s** | **59.77 ms** | 59.77 ms | 59.77 ms |
+| **Backlink Query** (`get_backlinks`, $O(1)$ reverse index) | **< 1.00 µs** | **> 1,000,000 queries/s**| **400.00 ns** | 700.00 ns | 1.10 µs |
 
 ---
 
@@ -100,6 +106,9 @@ Platform: Windows x86_64
 | **10K Graph Simulation Tick** | 368.24 ms (2.8 FPS) | **22.10 ms** (>45 FPS) | **16.66x faster** (94.0% latency drop) | Barnes-Hut QuadTree spatial subdivision |
 | **1K Cold Vault Open** | 985.63 ms | **425.68 ms** | **2.32x faster** | Parallel link extraction + fast rebuild |
 | **10K Cold Vault Open** | 15.94 s | **3.18 s** | **5.01x faster** (80.1% latency drop) | Parallel link extraction + fast rebuild |
+| **10K Graph Data Generation** | ~550 ms ($O(N^2)$ scan) | **42.91 ms** | **>12x faster** ($O(N+E)$ linear scaling) | `TargetResolver` precomputed stem/path index |
+| **10K Vault Link Audit** | ~750 ms ($O(N^2)$ scan) | **59.77 ms** | **>12x faster** ($O(N+E)$ linear scaling) | `TargetResolver` precomputed stem/path index |
+| **Active Note Backlinks** | ~50 ms ($O(N^2)$ query) | **< 1.00 µs** | **>50,000x faster** ($O(1)$ instant time) | `LinkGraph` bidirectional `incoming` reverse index |
 | **Unsafe Code Count** | 0 blocks | **0 blocks** | **100% Safe Rust** | Complete algorithmic & MIMD optimization |
 | **SIMD Intrinsics Count** | 0 | **0 (Deferred)** | Compliant with Rule 12 | Exhausted algorithm + MIMD before SIMD |
 
