@@ -3,87 +3,28 @@ use nodera_core::VaultEntry;
 
 use crate::icons::*;
 use crate::state::AppState;
-use crate::strings::{actions, app as app_strings, empty_states, nav, placeholders, tooltips};
+use crate::strings::{actions, app as app_strings, empty_states, nav, placeholders};
 
 #[component]
 pub fn Sidebar(state: Signal<AppState>) -> Element {
+    let mut context_menu = use_signal(|| None::<(std::path::PathBuf, f64, f64)>);
+
     let app_state = state.read();
-    let vault_name = app_state.vault_name.clone();
-    let has_vault = app_state.vault_service.is_some();
     let entries = app_state.entries.clone();
     let active_path = app_state
         .active_note
         .as_ref()
         .map(|n| n.relative_path.clone());
+    let has_vault = app_state.vault_service.is_some();
 
     rsx! {
         aside { class: "pane-sidebar",
-            // Header / Vault section
+            // Workspace navigation header
             div {
-                style: "padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;",
-                div {
-                    style: "display: flex; align-items: center; justify-content: space-between;",
-                    span {
-                        style: "font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);",
-                        "{app_strings::WORKSPACE}"
-                    }
-                    div { style: "display: flex; gap: 4px;",
-                        button {
-                            class: "btn-icon",
-                            title: actions::OPEN_EXISTING_VAULT,
-                            onclick: move |_| {
-                                spawn(async move {
-                                    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
-                                        let path = folder.path().to_path_buf();
-                                        let mut s = state.write();
-                                        let _ = s.open_vault(path);
-                                    }
-                                });
-                            },
-                            IconFolderOpen { size: 15 }
-                        }
-                        button {
-                            class: "btn-icon",
-                            title: actions::NEW_VAULT,
-                            onclick: move |_| {
-                                spawn(async move {
-                                    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
-                                        let path = folder.path().to_path_buf();
-                                        let mut s = state.write();
-                                        let _ = s.create_vault(path, None);
-                                    }
-                                });
-                            },
-                            IconFolderPlus { size: 15 }
-                        }
-                        if has_vault {
-                            button {
-                                class: "btn-icon",
-                                title: tooltips::IMPORT_PDF,
-                                onclick: move |_| {
-                                    let mut s = state.write();
-                                    s.open_pdf_import_modal();
-                                },
-                                IconImport { size: 15 }
-                            }
-                            button {
-                                class: "btn-icon",
-                                title: tooltips::NEW_NOTE,
-                                onclick: move |_| {
-                                    let mut s = state.write();
-                                    s.show_new_note_dialog = true;
-                                },
-                                IconPlus { size: 15 }
-                            }
-                        }
-                    }
-                }
-                div {
-                    class: "vault-badge",
-                    style: "display: flex; align-items: center; gap: 6px;",
-                    title: "{vault_name}",
-                    IconVault { size: 13 }
-                    span { "{vault_name}" }
+                style: "padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;",
+                span {
+                    style: "font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);",
+                    "{app_strings::WORKSPACE}"
                 }
             }
 
@@ -454,9 +395,8 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                 VaultEntry::Note(summary) => {
                                     let summary_path = summary.relative_path.clone();
                                     let click_path = summary_path.clone();
-                                    let delete_target = summary_path.clone();
-                                    let rename_target = summary_path.clone();
-                                    let bookmark_target = summary_path.clone();
+                                    let context_path = summary_path.clone();
+                                    let is_bookmarked = app_state.is_bookmarked(&summary_path);
                                     let active_bg = if is_active { "var(--bg-active)" } else { "transparent" };
                                     let active_color = if is_active { "var(--text-primary)" } else { "var(--text-secondary)" };
                                     let depth = summary_path.components().count().saturating_sub(1);
@@ -465,56 +405,106 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                     rsx! {
                                         div {
                                             key: "{summary_path.display()}",
-                                            style: format!("padding: 4px 8px; padding-left: {pad_left}px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; background-color: {active_bg}; color: {active_color}; font-size: 13px;"),
+                                            style: format!("padding: 4px 8px; padding-left: {pad_left}px; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; background-color: {active_bg}; color: {active_color}; font-size: 13px; user-select: none;"),
                                             onclick: move |_| {
                                                 let mut s = state.write();
                                                 let _ = s.select_note(&click_path);
                                             },
+                                            oncontextmenu: move |evt: MouseEvent| {
+                                                evt.prevent_default();
+                                                let coords = evt.client_coordinates();
+                                                context_menu.set(Some((context_path.clone(), coords.x, coords.y)));
+                                            },
                                             span {
                                                 style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; display: inline-flex; align-items: center; gap: 6px;",
-                                                IconFile { size: 14 }
+                                                IconFile { size: 14, class: "opacity-70" }
                                                 span { "{summary.title}" }
                                             }
-                                            div {
-                                                style: "display: flex; gap: 2px;",
-                                                button {
-                                                    class: "btn-icon",
-                                                    style: if app_state.is_bookmarked(&summary_path) { "width: 20px; height: 20px; color: var(--accent);" } else { "width: 20px; height: 20px; opacity: 0.4;" },
-                                                    title: if app_state.is_bookmarked(&summary_path) { "Remove bookmark" } else { "Bookmark note" },
-                                                    onclick: move |e| {
-                                                        e.stop_propagation();
-                                                        state.write().toggle_bookmark(&bookmark_target);
-                                                    },
+                                            if is_bookmarked {
+                                                span {
+                                                    style: "color: var(--accent); margin-left: 4px; display: inline-flex;",
+                                                    title: "Bookmarked",
                                                     IconBookmark { size: 11 }
-                                                }
-                                                button {
-                                                    class: "btn-icon",
-                                                    style: "width: 20px; height: 20px;",
-                                                    title: tooltips::RENAME_NOTE,
-                                                    onclick: move |e| {
-                                                        e.stop_propagation();
-                                                        let mut s = state.write();
-                                                        s.note_to_rename = Some(rename_target.clone());
-                                                        s.show_rename_dialog = true;
-                                                    },
-                                                    IconEdit { size: 11 }
-                                                }
-                                                button {
-                                                    class: "btn-icon btn-danger",
-                                                    style: "width: 20px; height: 20px;",
-                                                    title: tooltips::DELETE_NOTE,
-                                                    onclick: move |e| {
-                                                        e.stop_propagation();
-                                                        let mut s = state.write();
-                                                        s.note_to_delete = Some(delete_target.clone());
-                                                        s.show_delete_confirm_dialog = true;
-                                                    },
-                                                    IconTrash { size: 11 }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Right-Click Context Menu for Note Rows
+            if let Some((cm_path, x, y)) = context_menu.read().clone() {
+                {
+                    let open_path = cm_path.clone();
+                    let bookmark_path = cm_path.clone();
+                    let rename_path = cm_path.clone();
+                    let delete_path = cm_path.clone();
+
+                    rsx! {
+                        div {
+                            style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1099;",
+                            onclick: move |_| context_menu.set(None),
+                            oncontextmenu: move |e| {
+                                e.prevent_default();
+                                context_menu.set(None);
+                            },
+                        }
+                        div {
+                            class: "context-menu",
+                            style: "left: {x}px; top: {y}px;",
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    let mut s = state.write();
+                                    s.active_view = crate::state::ActiveView::Editor;
+                                    let _ = s.select_note(&open_path);
+                                    context_menu.set(None);
+                                },
+                                IconNotes { size: 13 }
+                                span { "Open" }
+                            }
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    let mut s = state.write();
+                                    s.toggle_bookmark(&bookmark_path);
+                                    context_menu.set(None);
+                                },
+                                IconBookmark { size: 13 }
+                                span {
+                                    if app_state.is_bookmarked(&cm_path) {
+                                        "Remove Bookmark"
+                                    } else {
+                                        "Bookmark"
+                                    }
+                                }
+                            }
+                            button {
+                                class: "context-menu-item",
+                                onclick: move |_| {
+                                    let mut s = state.write();
+                                    s.note_to_rename = Some(rename_path.clone());
+                                    s.show_rename_dialog = true;
+                                    context_menu.set(None);
+                                },
+                                IconEdit { size: 13 }
+                                span { "Rename…" }
+                            }
+                            div { class: "dropdown-divider" }
+                            button {
+                                class: "context-menu-item danger",
+                                onclick: move |_| {
+                                    let mut s = state.write();
+                                    s.note_to_delete = Some(delete_path.clone());
+                                    s.show_delete_confirm_dialog = true;
+                                    context_menu.set(None);
+                                },
+                                IconTrash { size: 13 }
+                                span { "Delete…" }
                             }
                         }
                     }

@@ -9,18 +9,18 @@ use crate::strings::{actions, empty_states, graph as graph_strings, placeholders
 use nodera_markdown::GraphData;
 
 pub const COMMUNITY_COLORS: [&str; 12] = [
-    "#5B6CFF", // Vibrant Blue
-    "#9A4BFF", // Purple
-    "#10B981", // Emerald
-    "#F59E0B", // Amber
-    "#F43F5E", // Rose
-    "#06B6D4", // Cyan
-    "#6366F1", // Indigo
-    "#F97316", // Orange
-    "#84CC16", // Lime
-    "#EC4899", // Pink
-    "#8B5CF6", // Violet
-    "#14B8A6", // Teal
+    "#5C6FE6",
+    "#7081F0",
+    "#8492F6",
+    "#4F61C9",
+    "#3F4D9E",
+    "#6B7DF2",
+    "#7E8DF4",
+    "#4555B8",
+    "#364391",
+    "#5466DB",
+    "#6475E8",
+    "#4A5CC5",
 ];
 
 /// Node in the 2D physics simulation canvas
@@ -557,9 +557,7 @@ pub fn step_simulation_with_forces(
 #[component]
 pub fn GraphView(state: Signal<AppState>) -> Element {
     let app_state = state.read();
-    let mut settings = use_signal(|| app_state.preferences.graph_settings.clone());
-
-    let current_settings = settings.read().clone();
+    let current_settings = app_state.preferences.graph_settings.clone();
     let graph_data = app_state.get_full_graph_data_with_settings(&current_settings);
     let total_notes = graph_data.nodes.len();
     let total_edges = graph_data.edges.len();
@@ -583,7 +581,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
 
     // When filters or vault entries change, recompute simulation
     use_effect(move || {
-        let s = settings.read().clone();
+        let s = state.read().preferences.graph_settings.clone();
         let current_graph = state.read().get_full_graph_data_with_settings(&s);
         let (n, e) = init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces);
         nodes_state.set(n);
@@ -598,16 +596,15 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                 IconGraph { size: 64, class: "opacity-40" }
                 h2 { style: "font-size: 18px; font-weight: 600; color: var(--text-primary);", "{empty_states::NO_GRAPH_NODES_TITLE}" }
                 p { style: "font-size: 13px; color: var(--text-muted); max-width: 360px; text-align: center;", "{empty_states::NO_GRAPH_NODES_DESC}" }
-                if settings.read().filters.existing_files_only || !settings.read().filters.orphans {
+                if current_settings.filters.existing_files_only || !current_settings.filters.orphans {
                     button {
                         class: "btn-secondary",
                         style: "margin-top: 8px; font-size: 12px; padding: 6px 14px;",
                         onclick: move |_| {
-                            let mut s = settings.write();
-                            s.filters.existing_files_only = false;
-                            s.filters.orphans = true;
-                            s.filters.search_query.clear();
-                            state.write().preferences.graph_settings = s.clone();
+                            let mut s = state.write();
+                            s.preferences.graph_settings.filters.existing_files_only = false;
+                            s.preferences.graph_settings.filters.orphans = true;
+                            s.preferences.graph_settings.filters.search_query.clear();
                         },
                         "{graph_strings::RESTORE_DEFAULTS}"
                     }
@@ -687,9 +684,9 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         if drag_idx < ns.len() {
                             ns[drag_idx].x = world_x;
                             ns[drag_idx].y = world_y;
-                            if settings.read().display.animate {
+                            if current_settings.display.animate {
                                 let es = edges_state.read();
-                                let forces = settings.read().forces.clone();
+                                let forces = current_settings.forces.clone();
                                 // Reheat connected neighbors during drag
                                 step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.25, &forces);
                                 step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.20, &forces);
@@ -729,8 +726,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         oninput: move |evt: FormEvent| {
                             let val = evt.value();
                             search_query.set(val.clone());
-                            let mut s = settings.write();
-                            s.filters.search_query = val;
+                            state.write().preferences.graph_settings.filters.search_query = val;
                         },
                     }
                     if !search_query.read().is_empty() {
@@ -739,7 +735,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             style: "padding: 2px;",
                             onclick: move |_| {
                                 search_query.set(String::new());
-                                settings.write().filters.search_query.clear();
+                                state.write().preferences.graph_settings.filters.search_query.clear();
                             },
                             IconClose { size: 12 }
                         }
@@ -829,7 +825,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         class: "graph-btn",
                         title: actions::REFRESH_GRAPH,
                         onclick: move |_| {
-                            let s = settings.read().clone();
+                            let s = state.read().preferences.graph_settings.clone();
                             let current_graph = state.read().get_full_graph_data_with_settings(&s);
                             spawn(async move {
                                 let (n, e) = tokio::task::spawn_blocking(move || {
@@ -843,12 +839,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     }
                     span { class: "graph-divider" }
                     button {
-                        class: if settings.read().is_panel_open { "graph-btn active" } else { "graph-btn" },
+                        class: if state.read().context_panel_open { "graph-btn active" } else { "graph-btn" },
                         title: graph_strings::TOGGLE_CONTROLS,
                         onclick: move |_| {
-                            let mut s = settings.write();
-                            s.is_panel_open = !s.is_panel_open;
-                            state.write().preferences.graph_settings = s.clone();
+                            let mut s = state.write();
+                            s.context_panel_open = !s.context_panel_open;
                         },
                         IconSliders { size: 13 }
                     }
@@ -1177,557 +1172,6 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                 }
             }
 
-            // Right-side Graph Controls Panel (Drawer)
-            if settings.read().is_panel_open {
-                div {
-                    class: "graph-settings-panel",
-                    onmousedown: move |evt: MouseEvent| {
-                        evt.stop_propagation();
-                    },
-                    // Panel Header
-                    div {
-                        class: "graph-panel-header",
-                        span {
-                            class: "graph-panel-title",
-                            "{graph_strings::FILTERS}"
-                        }
-                        div {
-                            style: "display: flex; align-items: center; gap: 4px;",
-                            button {
-                                class: "btn-icon",
-                                title: graph_strings::RESTORE_DEFAULTS,
-                                onclick: move |_| {
-                                    let mut s = settings.write();
-                                    s.reset_to_defaults();
-                                    s.is_panel_open = true;
-                                    state.write().preferences.graph_settings = s.clone();
-                                },
-                                IconRefresh { size: 13 }
-                            }
-                            button {
-                                class: "btn-icon",
-                                title: graph_strings::CLOSE_CONTROLS,
-                                onclick: move |_| {
-                                    settings.write().is_panel_open = false;
-                                    state.write().preferences.graph_settings.is_panel_open = false;
-                                },
-                                IconClose { size: 13 }
-                            }
-                        }
-                    }
-
-                    // Panel Content (Scrollable)
-                    div {
-                        class: "graph-panel-content",
-
-                        // Section 1: Filters
-                        div {
-                            class: "graph-section",
-                            div {
-                                class: "graph-section-header",
-                                onclick: move |_| {
-                                    let mut s = settings.write();
-                                    s.expanded_sections.filters = !s.expanded_sections.filters;
-                                },
-                                if settings.read().expanded_sections.filters {
-                                    IconChevronDown { size: 12 }
-                                } else {
-                                    IconChevronRight { size: 12 }
-                                }
-                                span { "{graph_strings::FILTERS}" }
-                            }
-                            if settings.read().expanded_sections.filters {
-                                div {
-                                    class: "graph-section-body",
-                                    // Search input
-                                    div {
-                                        style: "display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px;",
-                                        IconSearch { size: 12, class: "opacity-60" }
-                                        input {
-                                            style: "border: none; background: transparent; font-size: 11px; outline: none; color: var(--text-primary); width: 100%;",
-                                            placeholder: graph_strings::SEARCH_FILES,
-                                            value: "{settings.read().filters.search_query}",
-                                            oninput: move |evt: FormEvent| {
-                                                let val = evt.value();
-                                                settings.write().filters.search_query = val.clone();
-                                                search_query.set(val);
-                                            },
-                                        }
-                                        if !settings.read().filters.search_query.is_empty() {
-                                            button {
-                                                class: "btn-icon",
-                                                style: "padding: 1px;",
-                                                onclick: move |_| {
-                                                    settings.write().filters.search_query.clear();
-                                                    search_query.set(String::new());
-                                                },
-                                                IconClose { size: 10 }
-                                            }
-                                        }
-                                    }
-
-                                    // Tags toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "{graph_strings::TAGS}" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().filters.tags,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.filters.tags = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-
-                                    // Attachments toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "{graph_strings::ATTACHMENTS}" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().filters.attachments,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.filters.attachments = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-
-                                    // Existing files only toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "{graph_strings::EXISTING_FILES_ONLY}" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().filters.existing_files_only,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.filters.existing_files_only = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-
-                                    // Orphans toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "{graph_strings::ORPHANS}" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().filters.orphans,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.filters.orphans = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Section 2: Groups
-                        div {
-                            class: "graph-section",
-                            div {
-                                class: "graph-section-header",
-                                onclick: move |_| {
-                                    let mut s = settings.write();
-                                    s.expanded_sections.groups = !s.expanded_sections.groups;
-                                },
-                                if settings.read().expanded_sections.groups {
-                                    IconChevronDown { size: 12 }
-                                } else {
-                                    IconChevronRight { size: 12 }
-                                }
-                                span { "{graph_strings::GROUPS}" }
-                            }
-                            if settings.read().expanded_sections.groups {
-                                div {
-                                    class: "graph-section-body",
-                                    p {
-                                        style: "font-size: 11px; color: var(--text-muted); margin: 0 0 6px 0; line-height: 1.4;",
-                                        "Color nodes automatically by note clusters, paths, or tags."
-                                    }
-                                    div {
-                                        style: "display: flex; flex-wrap: wrap; gap: 6px;",
-                                        div {
-                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-secondary);",
-                                            span { style: "width: 7px; height: 7px; border-radius: 50%; background: #9A4BFF;" }
-                                            "Active"
-                                        }
-                                        div {
-                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-secondary);",
-                                            span { style: "width: 7px; height: 7px; border-radius: 50%; background: #5B6CFF;" }
-                                            "Notes"
-                                        }
-                                        div {
-                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-secondary);",
-                                            span { style: "width: 7px; height: 7px; border-radius: 50%; background: #E5A158;" }
-                                            "Tags"
-                                        }
-                                        div {
-                                            style: "display: inline-flex; align-items: center; gap: 5px; font-size: 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; color: var(--text-muted);",
-                                            span { style: "width: 7px; height: 7px; border-radius: 50%; border: 1px dashed var(--text-muted);" }
-                                            "Unresolved"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Section 3: Display
-                        div {
-                            class: "graph-section",
-                            div {
-                                class: "graph-section-header",
-                                onclick: move |_| {
-                                    let mut s = settings.write();
-                                    s.expanded_sections.display = !s.expanded_sections.display;
-                                },
-                                if settings.read().expanded_sections.display {
-                                    IconChevronDown { size: 12 }
-                                } else {
-                                    IconChevronRight { size: 12 }
-                                }
-                                span { "{graph_strings::DISPLAY}" }
-                            }
-                            if settings.read().expanded_sections.display {
-                                div {
-                                    class: "graph-section-body",
-                                    // Arrows toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "{graph_strings::ARROWS}" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().display.arrows,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.display.arrows = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-
-                                    // Text fade slider
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::TEXT_FADE}" }
-                                            span { class: "graph-slider-val", "{settings.read().display.text_fade_threshold:.1}" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "0.2",
-                                            max: "2.0",
-                                            step: "0.1",
-                                            value: "{settings.read().display.text_fade_threshold}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.display.text_fade_threshold = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                }
-                                            },
-                                        }
-                                    }
-
-                                    // Node size slider
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::NODE_SIZE}" }
-                                            span { class: "graph-slider-val", "{settings.read().display.node_size:.1}x" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "0.4",
-                                            max: "2.5",
-                                            step: "0.1",
-                                            value: "{settings.read().display.node_size}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.display.node_size = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                }
-                                            },
-                                        }
-                                    }
-
-                                    // Link thickness slider
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::LINK_THICKNESS}" }
-                                            span { class: "graph-slider-val", "{settings.read().display.link_thickness:.1}x" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "0.4",
-                                            max: "3.0",
-                                            step: "0.1",
-                                            value: "{settings.read().display.link_thickness}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.display.link_thickness = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                }
-                                            },
-                                        }
-                                    }
-
-                                    // Animate toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "{graph_strings::ANIMATE}" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().display.animate,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.display.animate = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-
-                                    // Color by Community toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "Color by Community" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().display.color_by_community,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.display.color_by_community = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-
-                                    // Size by Centrality toggle
-                                    div {
-                                        class: "graph-toggle-row",
-                                        span { "Size by Centrality" }
-                                        label {
-                                            class: "graph-switch",
-                                            input {
-                                                r#type: "checkbox",
-                                                checked: settings.read().display.centrality_sizing,
-                                                onchange: move |evt: FormEvent| {
-                                                    let checked = evt.value() == "true";
-                                                    let mut s = settings.write();
-                                                    s.display.centrality_sizing = checked;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                },
-                                            }
-                                            span { class: "graph-switch-slider" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Section 4: Forces
-                        div {
-                            class: "graph-section",
-                            div {
-                                class: "graph-section-header",
-                                onclick: move |_| {
-                                    let mut s = settings.write();
-                                    s.expanded_sections.forces = !s.expanded_sections.forces;
-                                },
-                                if settings.read().expanded_sections.forces {
-                                    IconChevronDown { size: 12 }
-                                } else {
-                                    IconChevronRight { size: 12 }
-                                }
-                                span { "{graph_strings::FORCES}" }
-                            }
-                            if settings.read().expanded_sections.forces {
-                                div {
-                                    class: "graph-section-body",
-                                    // Center force
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::CENTER_FORCE}" }
-                                            span { class: "graph-slider-val", "{settings.read().forces.center_force:.2}" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "0.05",
-                                            max: "2.0",
-                                            step: "0.05",
-                                            value: "{settings.read().forces.center_force}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.forces.center_force = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                    if s.display.animate {
-                                                        let mut ns = nodes_state.write();
-                                                        let es = edges_state.read();
-                                                        for _ in 0..12 {
-                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                        }
-                                    }
-
-                                    // Repel force
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::REPEL_FORCE}" }
-                                            span { class: "graph-slider-val", "{settings.read().forces.repel_force:.1}" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "1.0",
-                                            max: "20.0",
-                                            step: "0.5",
-                                            value: "{settings.read().forces.repel_force}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.forces.repel_force = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                    if s.display.animate {
-                                                        let mut ns = nodes_state.write();
-                                                        let es = edges_state.read();
-                                                        for _ in 0..12 {
-                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                        }
-                                    }
-
-                                    // Link force
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::LINK_FORCE}" }
-                                            span { class: "graph-slider-val", "{settings.read().forces.link_force:.2}" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "0.1",
-                                            max: "2.0",
-                                            step: "0.05",
-                                            value: "{settings.read().forces.link_force}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.forces.link_force = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                    if s.display.animate {
-                                                        let mut ns = nodes_state.write();
-                                                        let es = edges_state.read();
-                                                        for _ in 0..12 {
-                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                        }
-                                    }
-
-                                    // Link distance
-                                    div {
-                                        class: "graph-slider-row",
-                                        div {
-                                            class: "graph-slider-header",
-                                            span { "{graph_strings::LINK_DISTANCE}" }
-                                            span { class: "graph-slider-val", "{settings.read().forces.link_distance:.0}" }
-                                        }
-                                        input {
-                                            class: "graph-slider",
-                                            r#type: "range",
-                                            min: "30.0",
-                                            max: "300.0",
-                                            step: "5.0",
-                                            value: "{settings.read().forces.link_distance}",
-                                            oninput: move |evt: FormEvent| {
-                                                if let Ok(v) = evt.value().parse::<f32>() {
-                                                    let mut s = settings.write();
-                                                    s.forces.link_distance = v;
-                                                    state.write().preferences.graph_settings = s.clone();
-                                                    if s.display.animate {
-                                                        let mut ns = nodes_state.write();
-                                                        let es = edges_state.read();
-                                                        for _ in 0..12 {
-                                                            step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), None, 0.30, &s.forces);
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

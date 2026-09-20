@@ -37,18 +37,20 @@ pub fn StatusBar(state: Signal<AppState>) -> Element {
 
                 "{active_path}"
             }
-            div { style: "display: flex; align-items: center; gap: 12px;",
+            div { style: "display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted);",
                 if bib_count > 0 {
                     span {
-                        style: "font-size: 11px; color: var(--text-secondary); cursor: pointer;",
+                        style: "color: var(--text-secondary); cursor: pointer;",
                         title: "Open Citation Picker (Ctrl+Shift+C)",
                         onclick: move |_| {
                             state.write().show_citation_picker_modal = true;
                         },
                         "{bib_count} citations"
                     }
+                    span { "·" }
                 }
                 span { "{notes_count} notes" }
+                span { "·" }
                 span { "UTF-8" }
             }
         }
