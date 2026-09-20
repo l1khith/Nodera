@@ -6,10 +6,11 @@ members = [
     "crates/nodera-index",
     "crates/nodera-pdf",
     "crates/nodera-desktop",
+    "crates/nodera-cli",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Nodera Contributors"]
 license = "AGPL-3.0-or-later"
@@ -40,4 +41,8 @@ notify = "8.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-fancy"] }
 rayon = "1.10"
+aes-gcm = "0.10"
+sha2 = { version = "0.10", default-features = false }
+pbkdf2 = { version = "0.12", default-features = false, features = ["simple"] }
+
 
