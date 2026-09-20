@@ -193,9 +193,14 @@ VERIFIED_COMPLETE
      - Reduced 10K graph simulation tick from **368.24 ms** (~2.8 FPS) down to **22.10 ms** (>45 FPS) (**16.66x faster**, 94.0% latency reduction).
      - Eliminated duplicate mount layout calculation.
      - Unit tests: `test_barnes_hut_quadtree_construction_and_repulsion`, `test_barnes_hut_large_scale_convergence`.
-  6. Strict Rules Compliance:
-     - **Zero Unsafe Blocks**: 100% safe Rust maintained across all crates.
-     - **Zero SIMD**: SIMD strictly deferred; massive 4.26x - 16.66x speedups achieved purely through algorithmic efficiency, batching, and MIMD.
+   6. Priority 0: Complete Elimination of $O(N^2)$ Link Resolution:
+      - Implemented `TargetResolver` in `nodera-markdown::links` with normalized path and stem hash maps.
+      - Upgraded `LinkGraph` to bidirectional indexing (`incoming: HashMap<PathBuf, HashSet<PathBuf>>`), enabling $O(1)$ backlink lookups on note selection.
+      - Refactored `LinkGraph::to_graph_data_with_options` and `LinkGraph::audit_vault_links` to use `TargetResolver`, bringing graph generation and health audits to strict linear $O(N + E)$ time (10K graph generation: **42.91 ms** at 233,000 notes/sec; 10K audit: **59.77 ms** at 167,000 notes/sec).
+      - Unit and integration tests: `test_target_resolver_direct_and_stem_lookup`, `test_link_graph_build_bidirectional_and_incremental_updates`, benchmarks 10, 11, and 12 in `vault_benchmarks.rs`.
+   7. Strict Rules Compliance:
+      - **Zero Unsafe Blocks**: 100% safe Rust maintained across all crates.
+      - **Zero SIMD**: SIMD strictly deferred; massive speedups achieved purely through algorithmic efficiency, batching, hash indices, and MIMD.
 
 ## Current Blockers
 None
@@ -205,3 +210,4 @@ None
 `cargo check --workspace` → PASS
 `cargo clippy --workspace --all-targets -- -D warnings` → PASS
 `cargo test --workspace` → PASS (all tests pass across all crates)
+`cargo bench --bench vault_benchmarks` → PASS (linear scaling verified in release mode)

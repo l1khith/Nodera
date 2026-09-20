@@ -32,10 +32,13 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                             class: "btn-icon",
                             title: actions::OPEN_EXISTING_VAULT,
                             onclick: move |_| {
-                                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                    let mut s = state.write();
-                                    let _ = s.open_vault(folder);
-                                }
+                                spawn(async move {
+                                    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
+                                        let path = folder.path().to_path_buf();
+                                        let mut s = state.write();
+                                        let _ = s.open_vault(path);
+                                    }
+                                });
                             },
                             IconFolderOpen { size: 15 }
                         }
@@ -43,10 +46,13 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                             class: "btn-icon",
                             title: actions::NEW_VAULT,
                             onclick: move |_| {
-                                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                    let mut s = state.write();
-                                    let _ = s.create_vault(folder, None);
-                                }
+                                spawn(async move {
+                                    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
+                                        let path = folder.path().to_path_buf();
+                                        let mut s = state.write();
+                                        let _ = s.create_vault(path, None);
+                                    }
+                                });
                             },
                             IconFolderPlus { size: 15 }
                         }
@@ -183,10 +189,13 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                             class: "btn-action btn-primary",
                             style: "align-self: center;",
                             onclick: move |_| {
-                                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                    let mut s = state.write();
-                                    let _ = s.open_vault(folder);
-                                }
+                                spawn(async move {
+                                    if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
+                                        let path = folder.path().to_path_buf();
+                                        let mut s = state.write();
+                                        let _ = s.open_vault(path);
+                                    }
+                                });
                             },
                             "{empty_states::OPEN_VAULT_FOLDER}"
                         }

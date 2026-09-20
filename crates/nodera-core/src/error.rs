@@ -25,6 +25,12 @@ pub enum NoderaError {
     #[error("Validation error: {0}")]
     Validation(#[from] ValidationError),
 
+    #[error("URI error: {0}")]
+    Uri(#[from] UriError),
+
+    #[error("Plugin error: {0}")]
+    Plugin(#[from] PluginError),
+
     #[error("Operation cancelled: {message}")]
     OperationCancelled { message: String },
 }
@@ -189,6 +195,38 @@ pub enum ValidationError {
 
     #[error("Empty input: {field}")]
     EmptyInput { field: String },
+}
+
+/// Errors occurring during custom URI parsing, dispatch, and protocol handling.
+#[derive(Debug, Error)]
+pub enum UriError {
+    #[error("Invalid scheme: {0}")]
+    InvalidScheme(String),
+
+    #[error("Missing parameter: {0}")]
+    MissingParameter(String),
+
+    #[error("Unsupported action: {0}")]
+    UnsupportedAction(String),
+
+    #[error("Protocol registration error: {0}")]
+    RegistrationError(String),
+}
+
+/// Errors related to plugin discovery, validation, and execution.
+#[derive(Debug, Error)]
+pub enum PluginError {
+    #[error("Plugin manifest error at {path}: {reason}")]
+    ManifestError { path: PathBuf, reason: String },
+
+    #[error("Invalid plugin identifier '{id}': {reason}")]
+    InvalidId { id: String, reason: String },
+
+    #[error("Plugin not found: '{id}'")]
+    NotFound { id: String },
+
+    #[error("Plugin execution error: {reason}")]
+    ExecutionError { reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, NoderaError>;

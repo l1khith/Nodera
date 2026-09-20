@@ -94,11 +94,86 @@ pub struct GraphData {
     pub edges: Vec<GraphEdge>,
 }
 
-/// Maintains in-memory link relationships and graph connections between notes in a vault.
+/// High-performance O(1) link target resolver using precomputed hash lookup tables.
+#[derive(Debug, Clone, Default)]
+pub struct TargetResolver {
+    /// Normalized relative path (with and without .md, lowercase, forward-slash) -> canonical PathBuf
+    by_path: HashMap<String, PathBuf>,
+    /// Lowercase file stem -> canonical PathBuf
+    by_stem: HashMap<String, PathBuf>,
+}
+
+impl TargetResolver {
+    /// Constructs an O(1) lookup resolver from vault note paths in a single O(N) pass.
+    pub fn from_paths(paths: &[PathBuf]) -> Self {
+        let mut by_path = HashMap::with_capacity(paths.len() * 2);
+        let mut by_stem = HashMap::with_capacity(paths.len());
+
+        for path in paths {
+            let path_str = path.to_string_lossy().replace('\\', "/").to_lowercase();
+            let path_no_md = path_str
+                .strip_suffix(".md")
+                .unwrap_or(&path_str)
+                .to_string();
+
+            by_path.insert(path_str.clone(), path.clone());
+            by_path.insert(path_no_md, path.clone());
+
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                by_stem
+                    .entry(stem.to_lowercase())
+                    .or_insert_with(|| path.clone());
+            }
+        }
+
+        Self { by_path, by_stem }
+    }
+
+    /// Resolves a Wikilink target string in O(1) time.
+    ///
+    /// Resolution strategy (matching Obsidian):
+    /// 1. Direct path match: if target is `Folder/Note` or `Folder/Note.md` (case-insensitive).
+    /// 2. Note title (file stem) match: matches case-insensitively against note filenames.
+    pub fn resolve(&self, target: &str) -> Option<PathBuf> {
+        let clean = target.trim();
+        if clean.is_empty() {
+            return None;
+        }
+
+        let clean_normalized = clean.replace('\\', "/").to_lowercase();
+        let with_md = if clean_normalized.ends_with(".md") {
+            clean_normalized.clone()
+        } else {
+            format!("{clean_normalized}.md")
+        };
+
+        // 1. Direct path match (with or without .md)
+        if let Some(p) = self.by_path.get(&with_md) {
+            return Some(p.clone());
+        }
+        if let Some(p) = self.by_path.get(&clean_normalized) {
+            return Some(p.clone());
+        }
+
+        // 2. Note title (stem) match
+        let stem = clean_normalized
+            .strip_suffix(".md")
+            .unwrap_or(&clean_normalized);
+        if let Some(p) = self.by_stem.get(stem) {
+            return Some(p.clone());
+        }
+
+        None
+    }
+}
+
+/// Maintains in-memory bidirectional link relationships and graph connections between notes in a vault.
 #[derive(Debug, Clone, Default)]
 pub struct LinkGraph {
     /// Maps source note relative path -> list of outgoing Wikilinks
     outgoing: HashMap<PathBuf, Vec<Wikilink>>,
+    /// Maps target note relative path -> set of source notes that link to it (reverse index)
+    incoming: HashMap<PathBuf, HashSet<PathBuf>>,
 }
 
 impl LinkGraph {
@@ -106,14 +181,106 @@ impl LinkGraph {
         Self::default()
     }
 
-    /// Records or updates all outgoing links for a specific note.
+    /// Constructs a fully bidirectional LinkGraph with populated outgoing and incoming indices in a single O(N + E) pass.
+    pub fn build(all_paths: &[PathBuf], note_links: Vec<(PathBuf, Vec<Wikilink>)>) -> Self {
+        let resolver = TargetResolver::from_paths(all_paths);
+        let mut outgoing = HashMap::with_capacity(note_links.len());
+        let mut incoming: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+
+        for (source_path, links) in note_links {
+            for link in &links {
+                if let Some(target_path) = resolver.resolve(&link.target) {
+                    if target_path != source_path {
+                        incoming
+                            .entry(target_path)
+                            .or_default()
+                            .insert(source_path.clone());
+                    }
+                }
+            }
+            outgoing.insert(source_path, links);
+        }
+
+        Self { outgoing, incoming }
+    }
+
+    /// Recomputes the reverse incoming index across all known note paths in O(N + E) time.
+    pub fn reindex(&mut self, all_paths: &[PathBuf]) {
+        let resolver = TargetResolver::from_paths(all_paths);
+        let mut incoming: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+
+        for (source_path, links) in &self.outgoing {
+            for link in links {
+                if let Some(target_path) = resolver.resolve(&link.target) {
+                    if &target_path != source_path {
+                        incoming
+                            .entry(target_path)
+                            .or_default()
+                            .insert(source_path.clone());
+                    }
+                }
+            }
+        }
+
+        self.incoming = incoming;
+    }
+
+    /// Records or updates all outgoing links for a specific note (backwards-compatible).
     pub fn update_note_links(&mut self, source_path: PathBuf, links: Vec<Wikilink>) {
         self.outgoing.insert(source_path, links);
     }
 
-    /// Removes a note from the link graph upon deletion.
+    /// Updates outgoing links for a note and synchronizes the incoming reverse index in O(L) time.
+    pub fn update_note_links_with_paths(
+        &mut self,
+        source_path: PathBuf,
+        links: Vec<Wikilink>,
+        all_paths: &[PathBuf],
+    ) {
+        let resolver = TargetResolver::from_paths(all_paths);
+        self.update_note_links_with_resolver(source_path, links, &resolver);
+    }
+
+    /// Updates outgoing links for a note using a precomputed resolver in O(L) time.
+    pub fn update_note_links_with_resolver(
+        &mut self,
+        source_path: PathBuf,
+        links: Vec<Wikilink>,
+        resolver: &TargetResolver,
+    ) {
+        // Remove old incoming references from affected targets
+        if let Some(old_links) = self.outgoing.get(&source_path) {
+            for old_link in old_links {
+                if let Some(old_target) = resolver.resolve(&old_link.target) {
+                    if let Some(sources) = self.incoming.get_mut(&old_target) {
+                        sources.remove(&source_path);
+                    }
+                }
+            }
+        }
+
+        // Add new incoming references
+        for link in &links {
+            if let Some(target_path) = resolver.resolve(&link.target) {
+                if target_path != source_path {
+                    self.incoming
+                        .entry(target_path)
+                        .or_default()
+                        .insert(source_path.clone());
+                }
+            }
+        }
+
+        self.outgoing.insert(source_path, links);
+    }
+
+    /// Removes a note from the link graph upon deletion, clearing outgoing and reverse incoming links.
     pub fn remove_note(&mut self, source_path: &Path) {
         self.outgoing.remove(source_path);
+        self.incoming.remove(source_path);
+        for sources in self.incoming.values_mut() {
+            sources.remove(source_path);
+        }
     }
 
     /// Returns all outgoing links from a specific note.
@@ -125,44 +292,22 @@ impl LinkGraph {
     }
 
     /// Resolves a Wikilink target string to an existing note path in the vault.
-    ///
-    /// Resolution strategy:
-    /// 1. Direct path match: if target is `Folder/Note` or `Folder/Note.md`.
-    /// 2. Note title/stem match: matches case-insensitively against note filenames.
     pub fn resolve_target(target: &str, all_paths: &[PathBuf]) -> Option<PathBuf> {
-        let clean_target = target.trim();
-        let target_with_md = if clean_target.ends_with(".md") {
-            clean_target.to_string()
-        } else {
-            format!("{clean_target}.md")
-        };
-
-        // 1. Direct relative path match
-        for path in all_paths {
-            let path_str = path.to_string_lossy().replace('\\', "/");
-            if path_str.eq_ignore_ascii_case(&target_with_md)
-                || path_str.eq_ignore_ascii_case(clean_target)
-            {
-                return Some(path.clone());
-            }
-        }
-
-        // 2. Note title (file stem) match
-        let target_stem = clean_target.strip_suffix(".md").unwrap_or(clean_target);
-
-        for path in all_paths {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                if stem.eq_ignore_ascii_case(target_stem) {
-                    return Some(path.clone());
-                }
-            }
-        }
-
-        None
+        TargetResolver::from_paths(all_paths).resolve(target)
     }
 
     /// Finds all source notes that contain a Wikilink pointing to `target_note`.
+    ///
+    /// Executes in O(1) instant time when the incoming reverse index is populated.
     pub fn get_backlinks(&self, target_note: &Path, all_paths: &[PathBuf]) -> Vec<PathBuf> {
+        if let Some(sources) = self.incoming.get(target_note) {
+            let mut backlinks: Vec<PathBuf> = sources.iter().cloned().collect();
+            backlinks.sort();
+            return backlinks;
+        }
+
+        // Fallback if incoming index is unpopulated: use TargetResolver in O(N + E)
+        let resolver = TargetResolver::from_paths(all_paths);
         let mut backlinks = Vec::new();
 
         for (source_path, links) in &self.outgoing {
@@ -171,7 +316,7 @@ impl LinkGraph {
             }
 
             for link in links {
-                if let Some(resolved) = Self::resolve_target(&link.target, all_paths) {
+                if let Some(resolved) = resolver.resolve(&link.target) {
                     if resolved == target_note {
                         backlinks.push(source_path.clone());
                         break;
@@ -203,6 +348,8 @@ impl LinkGraph {
     }
 
     /// Builds knowledge graph data with full support for note titles, tag relationships, and filter options.
+    ///
+    /// Scales in O(N + E) linear time by utilizing precomputed TargetResolver lookups.
     pub fn to_graph_data_with_options(
         &self,
         all_paths: &[PathBuf],
@@ -216,7 +363,9 @@ impl LinkGraph {
         let mut edges_set: HashSet<GraphEdge> = HashSet::new();
         let mut unresolved_targets: HashSet<String> = HashSet::new();
 
-        // 1. Resolve all edges between known vault notes, and collect unresolved targets
+        let resolver = TargetResolver::from_paths(all_paths);
+
+        // 1. Resolve all edges between known vault notes, and collect unresolved targets in O(1) per link
         for (source_path, links) in &self.outgoing {
             let source_str = source_path.to_string_lossy().replace('\\', "/");
             for link in links {
@@ -225,7 +374,7 @@ impl LinkGraph {
                     continue;
                 }
 
-                if let Some(target_path) = Self::resolve_target(trimmed_target, all_paths) {
+                if let Some(target_path) = resolver.resolve(trimmed_target) {
                     if &target_path != source_path {
                         let target_str = target_path.to_string_lossy().replace('\\', "/");
                         let edge = GraphEdge {
@@ -515,6 +664,8 @@ impl LinkGraph {
             out_degree.insert(path.clone(), 0);
         }
 
+        let resolver = TargetResolver::from_paths(all_paths);
+
         for (source_path, links) in &self.outgoing {
             *out_degree.entry(source_path.clone()).or_insert(0) += links.len();
             total_links += links.len();
@@ -525,7 +676,7 @@ impl LinkGraph {
                 .unwrap_or("");
 
             for link in links {
-                if let Some(resolved) = Self::resolve_target(&link.target, all_paths) {
+                if let Some(resolved) = resolver.resolve(&link.target) {
                     *in_degree.entry(resolved).or_insert(0) += 1;
                 } else {
                     let clean_target = link.target.trim().to_string();
@@ -1298,5 +1449,120 @@ mod tests {
         assert_eq!(report.orphan_notes, vec![note_orphan]);
         assert_eq!(report.total_notes, 3);
         assert_eq!(report.total_links, 2);
+    }
+
+    #[test]
+    fn test_target_resolver_direct_and_stem_lookup() {
+        let paths = vec![
+            PathBuf::from("Notes/Deep/Quantum Computing.md"),
+            PathBuf::from("Notes/Algorithms.md"),
+            PathBuf::from("RootNote.md"),
+        ];
+
+        let resolver = TargetResolver::from_paths(&paths);
+
+        // Exact full path match (with or without .md, case-insensitive)
+        assert_eq!(
+            resolver.resolve("notes/deep/quantum computing.md"),
+            Some(PathBuf::from("Notes/Deep/Quantum Computing.md"))
+        );
+        assert_eq!(
+            resolver.resolve("Notes/Deep/Quantum Computing"),
+            Some(PathBuf::from("Notes/Deep/Quantum Computing.md"))
+        );
+        assert_eq!(
+            resolver.resolve("Notes\\Deep\\Quantum Computing"),
+            Some(PathBuf::from("Notes/Deep/Quantum Computing.md"))
+        );
+
+        // Title/stem match
+        assert_eq!(
+            resolver.resolve("Quantum Computing"),
+            Some(PathBuf::from("Notes/Deep/Quantum Computing.md"))
+        );
+        assert_eq!(
+            resolver.resolve("quantum computing"),
+            Some(PathBuf::from("Notes/Deep/Quantum Computing.md"))
+        );
+        assert_eq!(
+            resolver.resolve("Algorithms"),
+            Some(PathBuf::from("Notes/Algorithms.md"))
+        );
+        assert_eq!(
+            resolver.resolve("RootNote"),
+            Some(PathBuf::from("RootNote.md"))
+        );
+
+        // Non-existent target returns None
+        assert_eq!(resolver.resolve("Artificial Intelligence"), None);
+        assert_eq!(resolver.resolve("   "), None);
+    }
+
+    #[test]
+    fn test_link_graph_build_bidirectional_and_incremental_updates() {
+        let path_a = PathBuf::from("Notes/Note A.md");
+        let path_b = PathBuf::from("Notes/Note B.md");
+        let path_c = PathBuf::from("Notes/Note C.md");
+        let paths = vec![path_a.clone(), path_b.clone(), path_c.clone()];
+
+        let note_links = vec![
+            (
+                path_a.clone(),
+                vec![Wikilink {
+                    raw: "[[Note B]]".to_string(),
+                    target: "Note B".to_string(),
+                    display_text: None,
+                    start: 0,
+                    end: 10,
+                }],
+            ),
+            (
+                path_c.clone(),
+                vec![Wikilink {
+                    raw: "[[Note B]]".to_string(),
+                    target: "Note B".to_string(),
+                    display_text: None,
+                    start: 0,
+                    end: 10,
+                }],
+            ),
+        ];
+
+        // Build populated LinkGraph
+        let mut graph = LinkGraph::build(&paths, note_links);
+
+        // Note B's incoming backlinks should immediately contain A and C in O(1)
+        let backlinks_b = graph.get_backlinks(&path_b, &paths);
+        assert_eq!(backlinks_b, vec![path_a.clone(), path_c.clone()]);
+
+        // Note A's incoming backlinks should be empty
+        let backlinks_a = graph.get_backlinks(&path_a, &paths);
+        assert!(backlinks_a.is_empty());
+
+        // Incrementally update Note A to link to Note C instead of Note B
+        graph.update_note_links_with_paths(
+            path_a.clone(),
+            vec![Wikilink {
+                raw: "[[Note C]]".to_string(),
+                target: "Note C".to_string(),
+                display_text: None,
+                start: 0,
+                end: 10,
+            }],
+            &paths,
+        );
+
+        // Now Note B only has backlink from Note C
+        let backlinks_b_updated = graph.get_backlinks(&path_b, &paths);
+        assert_eq!(backlinks_b_updated, vec![path_c.clone()]);
+
+        // Note C now has backlink from Note A
+        let backlinks_c = graph.get_backlinks(&path_c, &paths);
+        assert_eq!(backlinks_c, vec![path_a.clone()]);
+
+        // Remove Note C
+        graph.remove_note(&path_c);
+        let backlinks_b_after_delete = graph.get_backlinks(&path_b, &paths);
+        assert!(backlinks_b_after_delete.is_empty());
     }
 }

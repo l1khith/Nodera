@@ -68,13 +68,16 @@ pub fn PdfAnnotationModal(state: Signal<AppState>) -> Element {
                         class: "btn-secondary",
                         style: "font-size: 12px; display: flex; align-items: center; gap: 6px; white-space: nowrap;",
                         onclick: move |_| {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("PDF Document", &["pdf"])
-                                .pick_file()
-                            {
-                                selected_pdf.set(Some(path));
-                                status_msg.set(None);
-                            }
+                            spawn(async move {
+                                if let Some(file) = rfd::AsyncFileDialog::new()
+                                    .add_filter("PDF Document", &["pdf"])
+                                    .pick_file()
+                                    .await
+                                {
+                                    selected_pdf.set(Some(file.path().to_path_buf()));
+                                    status_msg.set(None);
+                                }
+                            });
                         },
                         IconFile { size: 14 }
                         "Browse PDF..."

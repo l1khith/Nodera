@@ -13,7 +13,7 @@ pub use frontmatter::{
 };
 pub use links::{
     calculate_centrality, detect_communities, BrokenLinkGroup, BrokenLinkItem, GraphData,
-    GraphEdge, GraphFilterOptions, GraphNode, LinkAuditReport, LinkGraph,
+    GraphEdge, GraphFilterOptions, GraphNode, LinkAuditReport, LinkGraph, TargetResolver,
 };
 pub use parser::{parse_document, Heading, ParsedDocument};
 pub use renderer::{render_to_html, render_to_html_with_resolver};

@@ -18,8 +18,6 @@ pub fn StatusBar(state: Signal<AppState>) -> Element {
         .filter(|e| matches!(e, nodera_core::VaultEntry::Note(_)))
         .count();
     let bib_count = app_state.bib_library.entries.len();
-    let clipper_port = app_state.web_clipper_port;
-    let clipper_running = app_state.web_clipper_running;
 
     rsx! {
         footer { class: "bottom-statusbar",
@@ -40,14 +38,6 @@ pub fn StatusBar(state: Signal<AppState>) -> Element {
                 "{active_path}"
             }
             div { style: "display: flex; align-items: center; gap: 12px;",
-                if clipper_running {
-                    span {
-                        style: "display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary);",
-                        title: "Web Clipper listening on http://127.0.0.1:{clipper_port}/clip",
-                        span { style: "width: 6px; height: 6px; border-radius: 50%; background-color: #2ecc71; display: inline-block;" }
-                        "Clipper :{clipper_port}"
-                    }
-                }
                 if bib_count > 0 {
                     span {
                         style: "font-size: 11px; color: var(--text-secondary); cursor: pointer;",
