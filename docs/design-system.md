@@ -1017,3 +1017,72 @@ Minimal chrome
 ```
 
 That combination should remain consistent across Notes, Tasks, Library, Graph, Search, Settings, and PDF Import.
+
+---
+
+## 40. First-Principles UI Consolidation & Visual Rules
+
+### 40.1 The 12 First-Principles Rules
+
+1. **ONE CANONICAL VISIBLE ENTRY POINT**: Every action has one primary visible location. The Command Palette (`Ctrl+P`) is a universal secondary invocation mechanism and does not count as a duplicate visual control. Context-specific actions appear only where directly relevant.
+2. **NAVIGATION ≠ ACTION**: "Notes / Tasks / Library / Graph" are destinations. "Delete / Rename / Import / Rebuild" are actions.
+3. **GLOBAL ACTIONS LIVE IN GLOBAL CHROME; CONTEXTUAL ACTIONS LIVE IN SURFACES**: Specialist tools (PDF annotations, citation insertion, note properties, graph controls) live in their contextual panels or Command Palette.
+4. **ONE PRIMARY ACTION PER SURFACE**: Avoid multiple competing primary-weight buttons on a single card or toolbar.
+5. **ICON-ONLY IS RESERVED FOR**: universally understood primitives, compact window controls, and actions with strong tooltip labels.
+6. **GENERIC ICONS MUST NOT REPRESENT UNRELATED CONCEPTS**: Separate note properties (`IconProperties`) from tags (`IconTag`).
+7. **COLOR COMMUNICATES MEANING**: Neutral by default. Cobalt accent for focus/selection. Green = success. Amber = warning. Red = danger. Blue = information/action.
+8. **NO DECORATION WITHOUT FUNCTION**: No gradients, glass, glow, or decorative radial orbs just to fill space.
+9. **NO DUPLICATE TOOLBARS**: A contextual operation must not simultaneously appear in top bar + sidebar + panel + card unless there is a deliberate workflow reason.
+10. **THE CONTENT SURFACE GETS MOST OF THE VISUAL WEIGHT**: Minimize chrome thickness and borders.
+11. **SECONDARY ACTIONS COLLAPSE INTO OVERFLOW, CONTEXT MENU, OR PALETTE**: Avoid multi-button row clutter.
+12. **EVERY ICON MUST ANSWER**: icon → meaning → action → scope.
+
+### 40.2 Visual No-Go List
+
+```text
+❌ UI gradients (linear or radial)
+❌ Gradient text
+❌ Neon borders
+❌ Glowing buttons
+❌ Liquid / frosted glass (backdrop-filter: blur)
+❌ Decorative radial orbs
+❌ Sparkle icons / decorative arrows
+❌ Rainbow UI or graph color systems
+❌ Pastel-accent overload
+❌ Giant card drop-shadows
+❌ Hover card lift (translateY)
+❌ Emoji as application chrome
+❌ Duplicate action clusters in table/list rows
+❌ Oversized empty-state illustrations
+```
+
+### 40.3 Semantic Elevation Tokens
+
+```css
+--shadow-none: none;
+--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+```
+
+Shadows are permitted only on floating surfaces:
+- Editor/Sidebar/Library surface: `--shadow-none`
+- Dropdown menus & popovers: `--shadow-sm`
+- Modal dialogs & Command Palette: `--shadow-lg`
+
+### 40.4 Contextual Inspector Architecture
+
+The right-side rail is a single, contextual Inspector surface:
+- **Editor / Note Mode**:
+  - Outline (headings with jump-to-section)
+  - Properties (frontmatter title, tags, custom key-values)
+  - Links (Backlinks, Outgoing, Unlinked mentions)
+  - Related Notes (Lexical BM25 + Tag Overlap)
+  - Local Graph (Depth 1, 2, 3)
+- **Graph Mode**:
+  - Filters (Tags, Attachments, Existing, Orphans)
+  - Groups (Color by Community)
+  - Display (Size by Centrality, Arrows, Text fade, Node size)
+  - Forces (Center, Repel, Link distance)
+
+Never render note-inspector sections and graph-control sections together. The active view determines the inspector mode.
