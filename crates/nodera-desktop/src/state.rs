@@ -433,9 +433,6 @@ pub struct AppState {
     // Trash modal
     pub show_trash_modal: bool,
 
-    // Properties drawer
-    pub show_properties_drawer: bool,
-
     // Split view
     pub split_pane: Option<SplitPane>,
     pub split_direction: SplitDirection,
@@ -555,7 +552,6 @@ impl Default for AppState {
             pdf_error: None,
 
             show_trash_modal: false,
-            show_properties_drawer: false,
             split_pane: None,
             split_direction: SplitDirection::default(),
 
@@ -620,6 +616,11 @@ impl AppState {
             }
         };
 
+        // Flush pending unsaved changes from previous vault if any
+        if self.is_dirty && self.active_note.is_some() {
+            let _ = self.save_active_note();
+        }
+
         self.vault_path = Some(p.to_path_buf());
         self.vault_name = name;
         self.entries = entries;
@@ -629,6 +630,14 @@ impl AppState {
         self.active_note = None;
         self.editor_content.clear();
         self.is_dirty = false;
+        self.open_tabs.clear();
+        self.active_tab_index = None;
+        self.nav_history.clear();
+        self.nav_history_index = 0;
+        self.split_pane = None;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.toc_headings.clear();
         self.status_message = format!("Vault '{}' opened", self.vault_name);
         self.indexing_progress = None;
 
@@ -649,6 +658,11 @@ impl AppState {
     pub fn create_vault(&mut self, path: impl AsRef<Path>, name: Option<String>) -> Result<()> {
         let p = path.as_ref();
         info!(path = %p.display(), "Creating vault in AppState");
+
+        // Flush pending unsaved changes from previous vault if any
+        if self.is_dirty && self.active_note.is_some() {
+            let _ = self.save_active_note();
+        }
 
         let vault = Vault::create(p, name)?;
         let vault_name = vault.config().name.clone();
@@ -672,6 +686,14 @@ impl AppState {
         self.active_note = None;
         self.editor_content.clear();
         self.is_dirty = false;
+        self.open_tabs.clear();
+        self.active_tab_index = None;
+        self.nav_history.clear();
+        self.nav_history_index = 0;
+        self.split_pane = None;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.toc_headings.clear();
         self.status_message = format!("Vault '{}' created", self.vault_name);
 
         self.refresh_bib_library();
@@ -681,6 +703,42 @@ impl AppState {
         self.plugin_manager = plugin_mgr;
 
         self.preferences.record_vault(p.to_path_buf());
+        Ok(())
+    }
+
+    /// Closes the currently active vault, flushes pending edits, and resets all vault-scoped state.
+    pub fn close_vault(&mut self) -> Result<()> {
+        if self.is_dirty && self.active_note.is_some() {
+            let _ = self.save_active_note();
+        }
+
+        self.vault_service = None;
+        self.vault_path = None;
+        self.vault_name = "No Vault Opened".to_string();
+        self.entries.clear();
+
+        self.active_note = None;
+        self.editor_content.clear();
+        self.is_dirty = false;
+        self.is_reading_mode = false;
+
+        self.open_tabs.clear();
+        self.active_tab_index = None;
+        self.nav_history.clear();
+        self.nav_history_index = 0;
+
+        self.vault_index = None;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.toc_headings.clear();
+
+        self.link_graph = LinkGraph::new();
+        self.split_pane = None;
+        self.bib_library = BibLibrary::default();
+        self.indexing_progress = None;
+        self.plugin_manager = nodera_core::PluginManager::default();
+
+        self.status_message = "Vault closed".to_string();
         Ok(())
     }
 
@@ -3424,4 +3482,52 @@ mod tests {
             .to_string_lossy()
             .starts_with("Daily"));
     }
+
+    #[test]
+    fn test_cross_vault_state_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_a = tmp.path().join("VaultA");
+        let vault_b = tmp.path().join("VaultB");
+
+        let mut state = AppState::default();
+
+        // 1. Setup Vault A with an active note, open tab, navigation history, and split pane
+        state.create_vault(&vault_a, Some("VaultA".to_string())).unwrap();
+        state.create_note("NoteInA", None).unwrap();
+        state.update_editor_content("Content in Vault A".to_string());
+        assert!(!state.open_tabs.is_empty());
+        assert!(!state.nav_history.is_empty());
+        state.split_pane = Some(SplitPane {
+            relative_path: Some(PathBuf::from("NoteInA.md")),
+            is_reading_mode: false,
+            editor_content: "Content in Vault A".to_string(),
+        });
+
+        // 2. Open Vault B - check that state from Vault A does not leak
+        state.create_vault(&vault_b, Some("VaultB".to_string())).unwrap();
+        assert_eq!(state.vault_name, "VaultB");
+        assert!(state.open_tabs.is_empty(), "Tabs must be cleared on vault switch");
+        assert!(state.active_tab_index.is_none());
+        assert!(state.nav_history.is_empty(), "Nav history must be cleared on vault switch");
+        assert_eq!(state.nav_history_index, 0);
+        assert!(state.split_pane.is_none(), "Split pane must be cleared on vault switch");
+        assert!(state.active_note.is_none(), "Active note must be cleared on vault switch");
+        assert!(state.editor_content.is_empty(), "Editor content must be cleared on vault switch");
+
+        // 3. Test close_vault
+        state.create_note("NoteInB", None).unwrap();
+        assert!(!state.open_tabs.is_empty());
+        state.close_vault().unwrap();
+
+        assert_eq!(state.vault_name, "No Vault Opened");
+        assert!(state.vault_path.is_none());
+        assert!(state.vault_service.is_none());
+        assert!(state.entries.is_empty());
+        assert!(state.open_tabs.is_empty());
+        assert!(state.active_note.is_none());
+        assert!(state.editor_content.is_empty());
+        assert!(state.split_pane.is_none());
+        assert!(state.nav_history.is_empty());
+    }
 }
+
