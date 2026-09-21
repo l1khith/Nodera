@@ -556,6 +556,114 @@ impl VaultService {
         atomic_write_str(&manifest_path, &json)?;
         Ok(())
     }
+
+    /// Creates a directory in the vault at the given relative path.
+    #[instrument(skip(self, relative_path))]
+    pub fn create_folder(&self, relative_path: impl AsRef<Path>) -> Result<PathBuf> {
+        let rel = relative_path.as_ref();
+        if rel.as_os_str().is_empty() {
+            return Err(ValidationError::EmptyInput {
+                field: "folder_name".to_string(),
+            }
+            .into());
+        }
+
+        for component in rel.components() {
+            if let std::path::Component::Normal(os_str) = component {
+                let name = os_str.to_str().unwrap_or("");
+                validate_filename(name)?;
+            }
+        }
+
+        let full_path = self.vault.resolve_path(rel)?;
+
+        if full_path.exists() {
+            return Err(FileError::AlreadyExists { path: full_path }.into());
+        }
+
+        fs::create_dir_all(&full_path).map_err(|source| FileError::Io {
+            path: full_path.clone(),
+            source,
+        })?;
+
+        info!(path = %rel.display(), "Created new folder");
+        Ok(rel.to_path_buf())
+    }
+
+    /// Renames a folder in the vault, preserving its parent directory location.
+    #[instrument(skip(self, relative_path))]
+    pub fn rename_folder(
+        &self,
+        relative_path: impl AsRef<Path>,
+        new_name: &str,
+    ) -> Result<PathBuf> {
+        let old_rel = relative_path.as_ref();
+        let old_full = self.vault.resolve_path(old_rel)?;
+
+        if !old_full.exists() {
+            return Err(FileError::NotFound { path: old_full }.into());
+        }
+        if !old_full.is_dir() {
+            return Err(ValidationError::InvalidPath {
+                path: old_rel.to_path_buf(),
+                reason: format!("Path '{}' is not a folder", old_rel.display()),
+            }
+            .into());
+        }
+
+        let trimmed_new = new_name.trim();
+        validate_filename(trimmed_new)?;
+
+        let parent = old_rel.parent().unwrap_or_else(|| Path::new(""));
+        let new_rel = parent.join(trimmed_new);
+        let new_full = self.vault.resolve_path(&new_rel)?;
+
+        if new_full.exists() && new_full != old_full {
+            return Err(FileError::AlreadyExists { path: new_full }.into());
+        }
+
+        fs::rename(&old_full, &new_full).map_err(|source| FileError::Io {
+            path: new_full.clone(),
+            source,
+        })?;
+
+        info!(old = %old_rel.display(), new = %new_rel.display(), "Renamed folder");
+        Ok(new_rel)
+    }
+
+    /// Deletes a folder and all its contents from the vault permanently.
+    #[instrument(skip(self, relative_path))]
+    pub fn delete_folder(&self, relative_path: impl AsRef<Path>) -> Result<()> {
+        let rel = relative_path.as_ref();
+        if rel.as_os_str().is_empty() {
+            return Err(ValidationError::InvalidPath {
+                path: rel.to_path_buf(),
+                reason: "Cannot delete the vault root folder".to_string(),
+            }
+            .into());
+        }
+
+        let full_path = self.vault.resolve_path(rel)?;
+
+        if !full_path.exists() {
+            return Err(FileError::NotFound { path: full_path }.into());
+        }
+        if !full_path.is_dir() {
+            return Err(ValidationError::InvalidPath {
+                path: rel.to_path_buf(),
+                reason: format!("Path '{}' is not a folder", rel.display()),
+            }
+            .into());
+        }
+
+        fs::remove_dir_all(&full_path).map_err(|source| FileError::Io {
+            path: full_path.clone(),
+            source,
+        })?;
+
+        info!(path = %rel.display(), "Deleted folder permanently");
+        Ok(())
+    }
 }
 
 /// Metadata summary of a note stored in the vault's `.trash` directory.
@@ -806,5 +914,77 @@ mod tests {
 
         let trash_after = service.list_trash().unwrap();
         assert!(trash_after.is_empty());
+    }
+
+    #[test]
+    fn test_folder_crud_operations() {
+        let tmp = tempdir().unwrap();
+        let vault = Vault::create(tmp.path().join("Vault"), None).unwrap();
+        let service = VaultService::new(vault);
+
+        // 1. Create root folder
+        let created = service.create_folder("Workspaces").unwrap();
+        assert_eq!(created, PathBuf::from("Workspaces"));
+        assert!(service.vault().root().join("Workspaces").is_dir());
+
+        // Verify folder appears in list_entries
+        let entries = service.list_entries().unwrap();
+        assert!(entries
+            .iter()
+            .any(|e| matches!(e, VaultEntry::Folder { name, .. } if name == "Workspaces")));
+
+        // 2. Create nested folder
+        let nested = service.create_folder("Workspaces/Nodera").unwrap();
+        assert_eq!(nested, PathBuf::from("Workspaces/Nodera"));
+        assert!(service.vault().root().join("Workspaces/Nodera").is_dir());
+
+        // Create a note inside nested folder
+        let _note = service
+            .create_note(Some("Workspaces/Nodera"), "Architecture", Some("# Arch"))
+            .unwrap();
+        assert!(service
+            .vault()
+            .root()
+            .join("Workspaces/Nodera/Architecture.md")
+            .is_file());
+
+        // 3. Duplicate folder creation fails
+        let dup = service.create_folder("Workspaces");
+        assert!(dup.is_err());
+
+        // 4. Invalid filename fails
+        let invalid = service.create_folder("Invalid:Folder");
+        assert!(invalid.is_err());
+
+        // 5. Path traversal escapes are rejected
+        let traversal = service.create_folder("../Escaped");
+        assert!(traversal.is_err());
+
+        // 6. Rename folder
+        let renamed = service
+            .rename_folder("Workspaces/Nodera", "NoderaCore")
+            .unwrap();
+        assert_eq!(renamed, PathBuf::from("Workspaces/NoderaCore"));
+        assert!(service
+            .vault()
+            .root()
+            .join("Workspaces/NoderaCore")
+            .is_dir());
+        assert!(!service.vault().root().join("Workspaces/Nodera").exists());
+        assert!(service
+            .vault()
+            .root()
+            .join("Workspaces/NoderaCore/Architecture.md")
+            .is_file());
+
+        // 7. Delete folder recursively
+        service.delete_folder("Workspaces").unwrap();
+        assert!(!service.vault().root().join("Workspaces").exists());
+
+        // 8. Deleting non-existent folder fails
+        assert!(service.delete_folder("Workspaces").is_err());
+
+        // 9. Deleting vault root fails
+        assert!(service.delete_folder("").is_err());
     }
 }

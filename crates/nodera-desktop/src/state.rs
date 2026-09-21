@@ -1,11 +1,13 @@
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info};
 
-use nodera_core::{BibLibrary, IndexingProgress, Note, Result, Vault, VaultEntry, VaultService};
+use nodera_core::{
+    BibLibrary, IndexingProgress, Note, NoteSummary, Result, Vault, VaultEntry, VaultService,
+};
 use nodera_markdown::{parse_document, LinkAuditReport, LinkGraph};
 
 use crate::strings::palette;
@@ -18,10 +20,10 @@ fn default_context_width() -> u32 {
     280
 }
 fn default_editor_font_size() -> u32 {
-    14
+    15
 }
 fn default_reading_font_size() -> u32 {
-    16
+    15
 }
 fn default_true() -> bool {
     true
@@ -207,6 +209,10 @@ pub struct AppPreferences {
     pub bookmarks: Vec<PathBuf>,
     #[serde(default)]
     pub recent_notes: Vec<PathBuf>,
+    #[serde(default)]
+    pub vault_recent_notes: HashMap<String, Vec<PathBuf>>,
+    #[serde(default)]
+    pub vault_bookmarks: HashMap<String, Vec<PathBuf>>,
 }
 
 impl Default for AppPreferences {
@@ -218,13 +224,15 @@ impl Default for AppPreferences {
             sidebar_width: 260,
             context_panel_width: 280,
             reading_progress: HashMap::new(),
-            editor_font_size: 14,
-            reading_font_size: 16,
+            editor_font_size: 15,
+            reading_font_size: 15,
             show_line_numbers: true,
             auto_save_seconds: 2,
             graph_settings: GraphSettings::default(),
             bookmarks: Vec::new(),
             recent_notes: Vec::new(),
+            vault_recent_notes: HashMap::new(),
+            vault_bookmarks: HashMap::new(),
         }
     }
 }
@@ -236,7 +244,10 @@ impl AppPreferences {
         if path.exists() {
             match fs::read_to_string(&path) {
                 Ok(content) => match serde_json::from_str::<Self>(&content) {
-                    Ok(prefs) => return prefs,
+                    Ok(mut prefs) => {
+                        prefs.recent_vaults.retain(|p| p.exists());
+                        return prefs;
+                    }
                     Err(e) => error!("Failed to parse preferences: {e}"),
                 },
                 Err(e) => error!("Failed to read preferences: {e}"),
@@ -258,7 +269,8 @@ impl AppPreferences {
 
     pub fn record_vault(&mut self, vault_path: PathBuf) {
         self.last_vault = Some(vault_path.clone());
-        self.recent_vaults.retain(|p| p != &vault_path);
+        self.recent_vaults
+            .retain(|p| p != &vault_path && p.exists());
         self.recent_vaults.insert(0, vault_path);
         if self.recent_vaults.len() > 10 {
             self.recent_vaults.truncate(10);
@@ -266,7 +278,15 @@ impl AppPreferences {
         self.save();
     }
 
-    fn preferences_path() -> PathBuf {
+    pub fn preferences_path() -> PathBuf {
+        if let Some(custom) = std::env::var_os("NODERA_PREFERENCES_PATH") {
+            return PathBuf::from(custom);
+        }
+
+        if Self::is_test_runner() {
+            return std::env::temp_dir().join("nodera_test_preferences.json");
+        }
+
         let base_dir = std::env::var_os("APPDATA")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .or_else(|| std::env::var_os("HOME"))
@@ -275,9 +295,35 @@ impl AppPreferences {
 
         base_dir.join(".nodera").join("desktop_preferences.json")
     }
+
+    fn is_test_runner() -> bool {
+        if cfg!(test) {
+            return true;
+        }
+        if std::env::var_os("NODERA_TEST").is_some() {
+            return true;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            let path_str = exe.to_string_lossy().to_lowercase();
+            if path_str.contains("deps") || path_str.contains("-test") || path_str.contains("_test")
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
 
-use nodera_index::{IndexedTask, RelatedNote, SearchResult, TaskFilter, VaultIndex};
+use nodera_index::{
+    IndexedTask, KnowledgeStats, RelatedNote, ReviewCategory, ReviewQueueItem, SearchResult,
+    TaskFilter, VaultIndex,
+};
+use nodera_markdown::{
+    index_note_template, inject_or_update_frontmatter, meeting_note_template, parse_frontmatter,
+    permanent_note_template, project_note_template, rough_note_template, source_note_template,
+    video_source_template, NOTE_TYPE_INDEX, NOTE_TYPE_MEETING, NOTE_TYPE_PERMANENT,
+    NOTE_TYPE_PROJECT, NOTE_TYPE_ROUGH, NOTE_TYPE_SOURCE, SOURCE_TYPE_BOOK, SOURCE_TYPE_VIDEO,
+};
 use nodera_pdf::{CancellationToken, ConversionOptions, ConversionProgress, ImportResult};
 use std::sync::{Arc, Mutex};
 
@@ -286,7 +332,9 @@ use std::sync::{Arc, Mutex};
 pub enum ActiveView {
     #[default]
     Editor,
+    Today,
     Tasks,
+    ReviewQueue,
     Library,
     Graph,
 }
@@ -305,8 +353,15 @@ pub enum PaletteAction {
     OpenNote(PathBuf),
     OpenDailyNote,
     CreateNote,
+    CreateTypedNote {
+        note_type: String,
+        sub_type: Option<String>,
+    },
+    OpenQuickCapture,
+    PromoteActiveNoteToPermanent,
     ImportPdf,
     SwitchView(ActiveView),
+    OpenGoToDateDialog,
     ToggleTheme,
     ToggleReadingMode,
     OpenSettings,
@@ -347,6 +402,166 @@ pub struct TemplateItem {
     pub name: String,
     pub description: String,
     pub content: String,
+}
+
+/// A node in the hierarchical file tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileTreeNode {
+    Folder {
+        name: String,
+        relative_path: PathBuf,
+        children: Vec<FileTreeNode>,
+    },
+    File(NoteSummary),
+}
+
+impl FileTreeNode {
+    pub fn name(&self) -> &str {
+        match self {
+            FileTreeNode::Folder { name, .. } => name,
+            FileTreeNode::File(summary) => &summary.title,
+        }
+    }
+
+    pub fn relative_path(&self) -> &Path {
+        match self {
+            FileTreeNode::Folder { relative_path, .. } => relative_path,
+            FileTreeNode::File(summary) => &summary.relative_path,
+        }
+    }
+
+    pub fn is_folder(&self) -> bool {
+        matches!(self, FileTreeNode::Folder { .. })
+    }
+}
+
+/// Builds a sorted, hierarchical file tree from a flat list of vault entries.
+/// Preserves root-level files, root folders, nested folders, empty folders,
+/// and orders folders first (alphabetical, case-insensitive), then files (alphabetical, case-insensitive).
+pub fn build_file_tree(entries: &[VaultEntry]) -> Vec<FileTreeNode> {
+    let mut folder_names: HashMap<PathBuf, String> = HashMap::new();
+    let mut folder_children: HashMap<PathBuf, (Vec<PathBuf>, Vec<NoteSummary>)> = HashMap::new();
+
+    folder_children.entry(PathBuf::new()).or_default();
+
+    for entry in entries {
+        match entry {
+            VaultEntry::Folder {
+                name,
+                relative_path,
+            } => {
+                folder_names.insert(relative_path.clone(), name.clone());
+                folder_children.entry(relative_path.clone()).or_default();
+
+                let parent = relative_path
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .to_path_buf();
+                let (subfolders, _) = folder_children.entry(parent.clone()).or_default();
+                if !subfolders.contains(relative_path) {
+                    subfolders.push(relative_path.clone());
+                }
+
+                // Ensure all missing ancestor folders are accounted for
+                let mut curr = parent.as_path();
+                while let Some(ancestor_parent) = curr.parent() {
+                    if curr.as_os_str().is_empty() {
+                        break;
+                    }
+                    let p_buf = ancestor_parent.to_path_buf();
+                    let curr_buf = curr.to_path_buf();
+                    if !folder_names.contains_key(&curr_buf) {
+                        let n = curr
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Folder")
+                            .to_string();
+                        folder_names.insert(curr_buf.clone(), n);
+                    }
+                    let (ancestor_subfolders, _) = folder_children.entry(p_buf).or_default();
+                    if !ancestor_subfolders.contains(&curr_buf) {
+                        ancestor_subfolders.push(curr_buf);
+                    }
+                    curr = ancestor_parent;
+                }
+            }
+            VaultEntry::Note(summary) => {
+                let parent = summary
+                    .relative_path
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .to_path_buf();
+                let (_, files) = folder_children.entry(parent.clone()).or_default();
+                files.push(summary.clone());
+
+                // Ensure all missing ancestor folders are accounted for
+                let mut curr = parent.as_path();
+                while let Some(ancestor_parent) = curr.parent() {
+                    if curr.as_os_str().is_empty() {
+                        break;
+                    }
+                    let p_buf = ancestor_parent.to_path_buf();
+                    let curr_buf = curr.to_path_buf();
+                    if !folder_names.contains_key(&curr_buf) {
+                        let n = curr
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Folder")
+                            .to_string();
+                        folder_names.insert(curr_buf.clone(), n);
+                    }
+                    let (ancestor_subfolders, _) = folder_children.entry(p_buf).or_default();
+                    if !ancestor_subfolders.contains(&curr_buf) {
+                        ancestor_subfolders.push(curr_buf);
+                    }
+                    curr = ancestor_parent;
+                }
+            }
+        }
+    }
+
+    fn assemble(
+        parent: &Path,
+        folder_names: &HashMap<PathBuf, String>,
+        folder_children: &HashMap<PathBuf, (Vec<PathBuf>, Vec<NoteSummary>)>,
+    ) -> Vec<FileTreeNode> {
+        let mut result = Vec::new();
+        if let Some((subfolders, files)) = folder_children.get(parent) {
+            let mut folder_nodes: Vec<FileTreeNode> = subfolders
+                .iter()
+                .map(|folder_path| {
+                    let name = folder_names.get(folder_path).cloned().unwrap_or_else(|| {
+                        folder_path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Folder")
+                            .to_string()
+                    });
+                    let children = assemble(folder_path, folder_names, folder_children);
+                    FileTreeNode::Folder {
+                        name,
+                        relative_path: folder_path.clone(),
+                        children,
+                    }
+                })
+                .collect();
+
+            folder_nodes.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
+
+            let mut file_nodes: Vec<FileTreeNode> = files
+                .iter()
+                .map(|summary| FileTreeNode::File(summary.clone()))
+                .collect();
+
+            file_nodes.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
+
+            result.extend(folder_nodes);
+            result.extend(file_nodes);
+        }
+        result
+    }
+
+    assemble(Path::new(""), &folder_names, &folder_children)
 }
 
 /// Runtime application state driving the UI.
@@ -395,6 +610,16 @@ pub struct AppState {
     pub show_bookmarks_section: bool,
     pub show_recent_section: bool,
 
+    // File tree & folder state
+    pub expanded_folders: HashSet<PathBuf>,
+    pub new_file_target_folder: Option<PathBuf>,
+    pub new_folder_target_parent: Option<PathBuf>,
+    pub show_new_folder_dialog: bool,
+    pub show_rename_folder_dialog: bool,
+    pub folder_to_rename: Option<PathBuf>,
+    pub show_delete_folder_dialog: bool,
+    pub folder_to_delete: Option<PathBuf>,
+
     // Library view
     pub library_search_query: String,
 
@@ -433,9 +658,6 @@ pub struct AppState {
     // Trash modal
     pub show_trash_modal: bool,
 
-    // Properties drawer
-    pub show_properties_drawer: bool,
-
     // Split view
     pub split_pane: Option<SplitPane>,
     pub split_direction: SplitDirection,
@@ -453,6 +675,19 @@ pub struct AppState {
 
     // Extensible Plugins (V0.5)
     pub plugin_manager: nodera_core::PluginManager,
+
+    // Quick Capture & Review Queue (V0.6)
+    pub show_quick_capture: bool,
+    pub quick_capture_title: String,
+    pub quick_capture_body: String,
+    pub quick_capture_tags: String,
+    pub review_queue_filter: ReviewCategory,
+
+    // Calendar & Today view
+    pub calendar_state: crate::calendar::CalendarState,
+    pub show_go_to_date_dialog: bool,
+    pub go_to_date_input: String,
+    pub go_to_date_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -522,6 +757,15 @@ impl Default for AppState {
             show_bookmarks_section: true,
             show_recent_section: true,
 
+            expanded_folders: HashSet::new(),
+            new_file_target_folder: None,
+            new_folder_target_parent: None,
+            show_new_folder_dialog: false,
+            show_rename_folder_dialog: false,
+            folder_to_rename: None,
+            show_delete_folder_dialog: false,
+            folder_to_delete: None,
+
             library_search_query: String::new(),
 
             preferences: prefs,
@@ -555,7 +799,6 @@ impl Default for AppState {
             pdf_error: None,
 
             show_trash_modal: false,
-            show_properties_drawer: false,
             split_pane: None,
             split_direction: SplitDirection::default(),
 
@@ -568,6 +811,17 @@ impl Default for AppState {
             show_pdf_annotation_modal: false,
             indexing_progress: None,
             plugin_manager: nodera_core::PluginManager::default(),
+
+            show_quick_capture: false,
+            quick_capture_title: String::new(),
+            quick_capture_body: String::new(),
+            quick_capture_tags: String::new(),
+            review_queue_filter: ReviewCategory::RoughNote,
+
+            calendar_state: crate::calendar::CalendarState::default(),
+            show_go_to_date_dialog: false,
+            go_to_date_input: String::new(),
+            go_to_date_error: None,
         }
     }
 }
@@ -620,6 +874,11 @@ impl AppState {
             }
         };
 
+        // Flush pending unsaved changes from previous vault if any
+        if self.is_dirty && self.active_note.is_some() {
+            let _ = self.save_active_note();
+        }
+
         self.vault_path = Some(p.to_path_buf());
         self.vault_name = name;
         self.entries = entries;
@@ -629,8 +888,17 @@ impl AppState {
         self.active_note = None;
         self.editor_content.clear();
         self.is_dirty = false;
+        self.open_tabs.clear();
+        self.active_tab_index = None;
+        self.nav_history.clear();
+        self.nav_history_index = 0;
+        self.split_pane = None;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.toc_headings.clear();
         self.status_message = format!("Vault '{}' opened", self.vault_name);
         self.indexing_progress = None;
+        self.expanded_folders.clear();
 
         self.refresh_bib_library();
 
@@ -649,6 +917,11 @@ impl AppState {
     pub fn create_vault(&mut self, path: impl AsRef<Path>, name: Option<String>) -> Result<()> {
         let p = path.as_ref();
         info!(path = %p.display(), "Creating vault in AppState");
+
+        // Flush pending unsaved changes from previous vault if any
+        if self.is_dirty && self.active_note.is_some() {
+            let _ = self.save_active_note();
+        }
 
         let vault = Vault::create(p, name)?;
         let vault_name = vault.config().name.clone();
@@ -672,7 +945,16 @@ impl AppState {
         self.active_note = None;
         self.editor_content.clear();
         self.is_dirty = false;
+        self.open_tabs.clear();
+        self.active_tab_index = None;
+        self.nav_history.clear();
+        self.nav_history_index = 0;
+        self.split_pane = None;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.toc_headings.clear();
         self.status_message = format!("Vault '{}' created", self.vault_name);
+        self.expanded_folders.clear();
 
         self.refresh_bib_library();
 
@@ -684,12 +966,267 @@ impl AppState {
         Ok(())
     }
 
+    /// Closes the currently active vault, flushes pending edits, and resets all vault-scoped state.
+    pub fn close_vault(&mut self) -> Result<()> {
+        if self.is_dirty && self.active_note.is_some() {
+            let _ = self.save_active_note();
+        }
+
+        self.vault_service = None;
+        self.vault_path = None;
+        self.vault_name = "No Vault Opened".to_string();
+        self.entries.clear();
+        self.expanded_folders.clear();
+
+        self.active_note = None;
+        self.editor_content.clear();
+        self.is_dirty = false;
+        self.is_reading_mode = false;
+
+        self.open_tabs.clear();
+        self.active_tab_index = None;
+        self.nav_history.clear();
+        self.nav_history_index = 0;
+
+        self.vault_index = None;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.toc_headings.clear();
+
+        self.link_graph = LinkGraph::new();
+        self.split_pane = None;
+        self.bib_library = BibLibrary::default();
+        self.indexing_progress = None;
+        self.plugin_manager = nodera_core::PluginManager::default();
+
+        self.show_quick_capture = false;
+        self.quick_capture_title.clear();
+        self.quick_capture_body.clear();
+        self.quick_capture_tags.clear();
+        self.review_queue_filter = ReviewCategory::RoughNote;
+        self.show_go_to_date_dialog = false;
+
+        self.status_message = "Vault closed".to_string();
+        Ok(())
+    }
+
     /// Refreshes the file tree listing from the vault.
     pub fn refresh_entries(&mut self) -> Result<()> {
         if let Some(service) = &self.vault_service {
             self.entries = service.list_entries()?;
         }
         Ok(())
+    }
+
+    /// Toggles expansion state of a folder.
+    pub fn toggle_folder_expanded(&mut self, path: impl AsRef<Path>) {
+        let p = path.as_ref().to_path_buf();
+        if self.expanded_folders.contains(&p) {
+            self.expanded_folders.remove(&p);
+        } else {
+            self.expanded_folders.insert(p);
+        }
+    }
+
+    /// Expands a specific folder.
+    pub fn expand_folder(&mut self, path: impl AsRef<Path>) {
+        self.expanded_folders.insert(path.as_ref().to_path_buf());
+    }
+
+    /// Expands a folder and all its parent ancestors so it is fully visible in the tree.
+    pub fn expand_folder_and_ancestors(&mut self, path: impl AsRef<Path>) {
+        let mut curr = path.as_ref();
+        while let Some(parent) = curr.parent() {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            self.expanded_folders.insert(parent.to_path_buf());
+            curr = parent;
+        }
+        self.expanded_folders.insert(path.as_ref().to_path_buf());
+    }
+
+    /// Collapses a specific folder.
+    pub fn collapse_folder(&mut self, path: impl AsRef<Path>) {
+        self.expanded_folders.remove(path.as_ref());
+    }
+
+    /// Checks if a folder is expanded.
+    pub fn is_folder_expanded(&self, path: impl AsRef<Path>) -> bool {
+        self.expanded_folders.contains(path.as_ref())
+    }
+
+    /// Creates a new folder in the vault, expanding ancestors and the new folder.
+    pub fn create_folder(&mut self, parent: Option<&Path>, name: &str) -> Result<PathBuf> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(nodera_core::NoderaError::Validation(
+                nodera_core::ValidationError::EmptyInput {
+                    field: "folder_name".to_string(),
+                },
+            ));
+        }
+
+        let rel_path = match parent {
+            Some(p) if !p.as_os_str().is_empty() => p.join(trimmed),
+            _ => PathBuf::from(trimmed),
+        };
+
+        if let Some(service) = &self.vault_service {
+            let created = service.create_folder(&rel_path)?;
+            self.expand_folder_and_ancestors(&created);
+            self.refresh_entries()?;
+            self.status_message = format!("Created folder '{}'", created.display());
+            Ok(created)
+        } else {
+            Err(nodera_core::NoderaError::Validation(
+                nodera_core::ValidationError::InvalidPath {
+                    path: rel_path,
+                    reason: "No active vault".to_string(),
+                },
+            ))
+        }
+    }
+
+    /// Renames a folder in the vault and rebases all open tabs, active note, bookmarks, and recent notes.
+    pub fn rename_folder(
+        &mut self,
+        folder_path: impl AsRef<Path>,
+        new_name: &str,
+    ) -> Result<PathBuf> {
+        let old_rel = folder_path.as_ref();
+        if let Some(service) = &self.vault_service {
+            let new_rel = service.rename_folder(old_rel, new_name)?;
+
+            // Rebase open tabs
+            for tab in &mut self.open_tabs {
+                if let Ok(suffix) = tab.relative_path.strip_prefix(old_rel) {
+                    tab.relative_path = new_rel.join(suffix);
+                }
+            }
+
+            // Rebase navigation history
+            for p in &mut self.nav_history {
+                if let Ok(suffix) = p.strip_prefix(old_rel) {
+                    *p = new_rel.join(suffix);
+                }
+            }
+
+            // Rebase active note
+            if let Some(active) = &mut self.active_note {
+                if let Ok(suffix) = active.relative_path.strip_prefix(old_rel) {
+                    active.relative_path = new_rel.join(suffix);
+                }
+            }
+
+            // Rebase bookmarks and recent notes
+            for b in &mut self.preferences.bookmarks {
+                if let Ok(suffix) = b.strip_prefix(old_rel) {
+                    *b = new_rel.join(suffix);
+                }
+            }
+            for r in &mut self.preferences.recent_notes {
+                if let Ok(suffix) = r.strip_prefix(old_rel) {
+                    *r = new_rel.join(suffix);
+                }
+            }
+            if let Some(key) = self.current_vault_key() {
+                if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
+                    for b in list {
+                        if let Ok(suffix) = b.strip_prefix(old_rel) {
+                            *b = new_rel.join(suffix);
+                        }
+                    }
+                }
+                if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                    for r in list {
+                        if let Ok(suffix) = r.strip_prefix(old_rel) {
+                            *r = new_rel.join(suffix);
+                        }
+                    }
+                }
+            }
+            self.preferences.save();
+
+            // Rebase expanded folders
+            let old_expanded: Vec<PathBuf> = self.expanded_folders.drain().collect();
+            for p in old_expanded {
+                if let Ok(suffix) = p.strip_prefix(old_rel) {
+                    self.expanded_folders.insert(new_rel.join(suffix));
+                } else {
+                    self.expanded_folders.insert(p);
+                }
+            }
+
+            self.refresh_entries()?;
+            self.status_message = format!("Renamed folder to '{}'", new_rel.display());
+            Ok(new_rel)
+        } else {
+            Err(nodera_core::NoderaError::Validation(
+                nodera_core::ValidationError::InvalidPath {
+                    path: old_rel.to_path_buf(),
+                    reason: "No active vault".to_string(),
+                },
+            ))
+        }
+    }
+
+    /// Deletes a folder and all its contents recursively from the vault.
+    pub fn delete_folder(&mut self, folder_path: impl AsRef<Path>) -> Result<()> {
+        let rel = folder_path.as_ref();
+        if let Some(service) = &self.vault_service {
+            service.delete_folder(rel)?;
+
+            // Close tabs inside deleted folder
+            self.open_tabs.retain(|t| !t.relative_path.starts_with(rel));
+            if let Some(idx) = self.active_tab_index {
+                if idx >= self.open_tabs.len() {
+                    self.active_tab_index = if self.open_tabs.is_empty() {
+                        None
+                    } else {
+                        Some(self.open_tabs.len() - 1)
+                    };
+                }
+            }
+
+            // If active note was inside, reset
+            if let Some(active) = &self.active_note {
+                if active.relative_path.starts_with(rel) {
+                    self.active_note = None;
+                    self.editor_content.clear();
+                    self.is_dirty = false;
+                }
+            }
+
+            // Remove from bookmarks and recent notes
+            self.preferences.bookmarks.retain(|p| !p.starts_with(rel));
+            self.preferences
+                .recent_notes
+                .retain(|p| !p.starts_with(rel));
+            if let Some(key) = self.current_vault_key() {
+                if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
+                    list.retain(|p| !p.starts_with(rel));
+                }
+                if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                    list.retain(|p| !p.starts_with(rel));
+                }
+            }
+            self.preferences.save();
+
+            // Remove from expanded folders
+            self.expanded_folders.retain(|p| !p.starts_with(rel));
+
+            self.refresh_entries()?;
+            self.status_message = format!("Deleted folder '{}'", rel.display());
+            Ok(())
+        } else {
+            Err(nodera_core::NoderaError::Validation(
+                nodera_core::ValidationError::InvalidPath {
+                    path: rel.to_path_buf(),
+                    reason: "No active vault".to_string(),
+                },
+            ))
+        }
     }
 
     /// Opens a note into the editor and manages open tabs and navigation history.
@@ -815,14 +1352,88 @@ impl AppState {
         }
     }
 
+    /// Normalized string identifier for the currently open vault.
+    pub fn current_vault_key(&self) -> Option<String> {
+        self.vault_path.as_ref().map(|p| {
+            p.canonicalize()
+                .unwrap_or_else(|_| p.clone())
+                .to_string_lossy()
+                .to_string()
+        })
+    }
+
+    /// Returns recent notes for the currently active vault, strictly verified to exist in the vault.
+    pub fn current_vault_recent_notes(&self) -> Vec<PathBuf> {
+        let key = match self.current_vault_key() {
+            Some(k) => k,
+            None => return Vec::new(),
+        };
+
+        let raw_list = if let Some(notes) = self.preferences.vault_recent_notes.get(&key) {
+            notes.clone()
+        } else {
+            self.preferences.recent_notes.clone()
+        };
+
+        raw_list
+            .into_iter()
+            .filter(|p| {
+                self.entries.iter().any(|entry| match entry {
+                    VaultEntry::Note(summary) => &summary.relative_path == p,
+                    _ => false,
+                })
+            })
+            .collect()
+    }
+
+    /// Returns bookmarks for the currently active vault, strictly verified to exist in the vault.
+    pub fn current_vault_bookmarks(&self) -> Vec<PathBuf> {
+        let key = match self.current_vault_key() {
+            Some(k) => k,
+            None => return Vec::new(),
+        };
+
+        let raw_list = if let Some(notes) = self.preferences.vault_bookmarks.get(&key) {
+            notes.clone()
+        } else {
+            self.preferences.bookmarks.clone()
+        };
+
+        raw_list
+            .into_iter()
+            .filter(|p| {
+                self.entries.iter().any(|entry| match entry {
+                    VaultEntry::Note(summary) => &summary.relative_path == p,
+                    _ => false,
+                })
+            })
+            .collect()
+    }
+
     /// Toggles a note's bookmark status.
     pub fn toggle_bookmark(&mut self, path: impl AsRef<Path>) {
         let p = path.as_ref().to_path_buf();
-        if let Some(idx) = self.preferences.bookmarks.iter().position(|b| b == &p) {
-            self.preferences.bookmarks.remove(idx);
+        let key = self.current_vault_key();
+
+        let is_already = self.is_bookmarked(&p);
+        if is_already {
+            if let Some(k) = &key {
+                if let Some(list) = self.preferences.vault_bookmarks.get_mut(k) {
+                    list.retain(|b| b != &p);
+                }
+            }
+            self.preferences.bookmarks.retain(|b| b != &p);
             self.status_message = format!("Removed bookmark: {}", p.display());
         } else {
-            self.preferences.bookmarks.push(p.clone());
+            if let Some(k) = key {
+                let list = self.preferences.vault_bookmarks.entry(k).or_default();
+                if !list.contains(&p) {
+                    list.push(p.clone());
+                }
+            }
+            if !self.preferences.bookmarks.contains(&p) {
+                self.preferences.bookmarks.push(p.clone());
+            }
             self.status_message = format!("Bookmarked: {}", p.display());
         }
         self.preferences.save();
@@ -830,15 +1441,40 @@ impl AppState {
 
     /// Checks if a note is bookmarked.
     pub fn is_bookmarked(&self, path: impl AsRef<Path>) -> bool {
-        self.preferences
-            .bookmarks
-            .iter()
-            .any(|b| b == path.as_ref())
+        let p = path.as_ref();
+        if let Some(key) = self.current_vault_key() {
+            if let Some(list) = self.preferences.vault_bookmarks.get(&key) {
+                return list.iter().any(|b| b == p);
+            }
+        }
+        self.preferences.bookmarks.iter().any(|b| b == p)
     }
 
     /// Records a note as recently opened, keeping up to 10 entries.
     pub fn record_recent_note(&mut self, path: impl AsRef<Path>) {
         let p = path.as_ref().to_path_buf();
+
+        let exists_in_vault = self.entries.iter().any(|e| match e {
+            VaultEntry::Note(s) => s.relative_path == p,
+            _ => false,
+        }) || self
+            .vault_path
+            .as_ref()
+            .is_some_and(|vp| vp.join(&p).exists());
+
+        if !exists_in_vault {
+            return;
+        }
+
+        if let Some(key) = self.current_vault_key() {
+            let list = self.preferences.vault_recent_notes.entry(key).or_default();
+            list.retain(|x| x != &p);
+            list.insert(0, p.clone());
+            if list.len() > 10 {
+                list.truncate(10);
+            }
+        }
+
         self.preferences.recent_notes.retain(|x| x != &p);
         self.preferences.recent_notes.insert(0, p);
         if self.preferences.recent_notes.len() > 10 {
@@ -850,12 +1486,20 @@ impl AppState {
     /// Removes a note from recent list.
     pub fn remove_recent_note(&mut self, path: impl AsRef<Path>) {
         let p = path.as_ref();
+        if let Some(key) = self.current_vault_key() {
+            if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                list.retain(|x| x != p);
+            }
+        }
         self.preferences.recent_notes.retain(|x| x != p);
         self.preferences.save();
     }
 
-    /// Clears all recent notes.
+    /// Clears all recent notes for the active vault.
     pub fn clear_recent_notes(&mut self) {
+        if let Some(key) = self.current_vault_key() {
+            self.preferences.vault_recent_notes.remove(&key);
+        }
         self.preferences.recent_notes.clear();
         self.preferences.save();
     }
@@ -924,24 +1568,155 @@ impl AppState {
         Ok(())
     }
 
-    /// Opens or creates today's Daily Note (e.g. `Daily/YYYY-MM-DD.md`).
-    pub fn open_or_create_daily_note(&mut self) -> Result<()> {
-        let now = chrono::Local::now();
-        let date_str = now.format("%Y-%m-%d").to_string();
-        let rel_path = PathBuf::from("Daily").join(format!("{date_str}.md"));
+    /// Returns the folder configured for daily notes (defaults to "Daily").
+    pub fn daily_notes_folder(&self) -> &str {
+        "Daily"
+    }
+
+    /// Resolves the relative path for a daily note for the given date.
+    pub fn daily_note_path_for_date(&self, date: chrono::NaiveDate) -> PathBuf {
+        let date_str = date.format("%Y-%m-%d").to_string();
+        PathBuf::from(self.daily_notes_folder()).join(format!("{date_str}.md"))
+    }
+
+    /// Checks whether a daily note exists for the given date in the vault.
+    pub fn daily_note_exists_for_date(&self, date: chrono::NaiveDate) -> bool {
+        let rel_path = self.daily_note_path_for_date(date);
+        self.entries.iter().any(|e| e.relative_path() == rel_path)
+    }
+
+    /// Collects all existing daily note dates currently indexed in `self.entries`.
+    pub fn get_existing_daily_note_dates(&self) -> std::collections::HashSet<chrono::NaiveDate> {
+        use chrono::NaiveDate;
+        let mut set = std::collections::HashSet::new();
+        let folder = self.daily_notes_folder();
+        for entry in &self.entries {
+            if let nodera_core::VaultEntry::Note(summary) = entry {
+                if let Ok(rel) = summary.relative_path.strip_prefix(folder) {
+                    if let Some(stem) = rel.file_stem().and_then(|s| s.to_str()) {
+                        if let Ok(d) = NaiveDate::parse_from_str(stem, "%Y-%m-%d") {
+                            set.insert(d);
+                        }
+                    }
+                }
+            }
+        }
+        set
+    }
+
+    /// Returns the active `CalendarMonth` derived from current view state and existing notes.
+    pub fn get_calendar_month(&self) -> crate::calendar::CalendarMonth {
+        let existing = self.get_existing_daily_note_dates();
+        let today = chrono::Local::now().date_naive();
+        crate::calendar::generate_calendar_month(
+            self.calendar_state.view_year,
+            self.calendar_state.view_month,
+            self.calendar_state.selected_date,
+            today,
+            |d| existing.contains(&d),
+        )
+    }
+
+    /// Advances the calendar view by one month.
+    pub fn calendar_next_month(&mut self) {
+        self.calendar_state.next_month();
+    }
+
+    /// Moves the calendar view back by one month.
+    pub fn calendar_prev_month(&mut self) {
+        self.calendar_state.prev_month();
+    }
+
+    /// Jumps the calendar view and selection to today.
+    pub fn calendar_go_to_today(&mut self) {
+        let today = chrono::Local::now().date_naive();
+        self.calendar_state.go_to_today(today);
+    }
+
+    /// Selects a date in the calendar without opening the note.
+    pub fn calendar_select_date(&mut self, date: chrono::NaiveDate) {
+        self.calendar_state.select_date(date);
+    }
+
+    /// Selects a date and opens or creates its daily note in the editor.
+    pub fn calendar_select_and_open_date(&mut self, date: chrono::NaiveDate) -> Result<()> {
+        self.calendar_state.select_date(date);
+        self.open_or_create_daily_note_for(date)
+    }
+
+    /// Opens or creates a Daily Note for a specific date (e.g. `Daily/YYYY-MM-DD.md`).
+    pub fn open_or_create_daily_note_for(&mut self, date: chrono::NaiveDate) -> Result<()> {
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let rel_path = self.daily_note_path_for_date(date);
+        let folder = self.daily_notes_folder().to_string();
 
         if let Some(service) = &self.vault_service {
             if service.read_note(&rel_path).is_err() {
-                let initial_body = format!(
-                    "---\ntitle: {}\ndate: {}\ntags:\n  - daily\n---\n\n# Daily Note — {}\n\n## Tasks\n- [ ] \n\n## Notes\n\n",
-                    date_str, date_str, date_str
-                );
-                let _ = service.create_note(Some("Daily"), &date_str, Some(&initial_body))?;
+                // Check if a custom daily template file is defined in vault Templates/ or templates/
+                let mut custom_daily_template = None;
+                if let Some(vault_path) = &self.vault_path {
+                    for sub in &["Templates", "templates"] {
+                        for name in &["Daily Note.md", "Daily.md", "Daily Journal.md"] {
+                            let tmpl_path = vault_path.join(sub).join(name);
+                            if tmpl_path.is_file() {
+                                if let Ok(content) = std::fs::read_to_string(&tmpl_path) {
+                                    custom_daily_template = Some(content);
+                                    break;
+                                }
+                            }
+                        }
+                        if custom_daily_template.is_some() {
+                            break;
+                        }
+                    }
+                }
+
+                let body = if let Some(tmpl_content) = custom_daily_template {
+                    let now = chrono::Local::now();
+                    let time_str = now.format("%H:%M").to_string();
+                    let datetime_str = format!("{date_str} {time_str}");
+                    let title_str = format!("Daily Note — {date_str}");
+                    let expanded = tmpl_content
+                        .replace("{{date}}", &date_str)
+                        .replace("{{time}}", &time_str)
+                        .replace("{{datetime}}", &datetime_str)
+                        .replace("{{title}}", &title_str);
+
+                    if expanded.starts_with("---") {
+                        expanded
+                    } else {
+                        format!(
+                            "---\ntitle: {}\ndate: {}\ntags:\n  - daily\n---\n\n{}",
+                            date_str, date_str, expanded
+                        )
+                    }
+                } else {
+                    format!(
+                        "---\ntitle: {}\ndate: {}\ntags:\n  - daily\n---\n\n# Daily Note — {}\n\n## Tasks\n- [ ] \n\n## Notes\n\n",
+                        date_str, date_str, date_str
+                    )
+                };
+
+                let created = service.create_note(Some(&folder), &date_str, Some(&body))?;
                 self.refresh_entries()?;
+
+                if let Some(index_arc) = &self.vault_index {
+                    if let Ok(mut index) = index_arc.lock() {
+                        if let Ok(doc) = parse_document(&body) {
+                            let _ = index.index_note(&created, &doc);
+                        }
+                    }
+                }
             }
             self.select_note(&rel_path)?;
         }
         Ok(())
+    }
+
+    /// Opens or creates today's Daily Note (convenience wrapper).
+    pub fn open_or_create_daily_note(&mut self) -> Result<()> {
+        let today = chrono::Local::now().date_naive();
+        self.open_or_create_daily_note_for(today)
     }
 
     /// Attempts to switch to another vault given its name or path.
@@ -1276,6 +2051,14 @@ impl AppState {
         self.nav_history.retain(|p| p != &rel_buf);
         self.preferences.bookmarks.retain(|b| b != rel);
         self.preferences.recent_notes.retain(|r| r != rel);
+        if let Some(key) = self.current_vault_key() {
+            if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
+                list.retain(|b| b != rel);
+            }
+            if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                list.retain(|r| r != rel);
+            }
+        }
         self.preferences.save();
         if let Some(active_idx) = self.active_tab_index {
             if active_idx >= self.open_tabs.len() {
@@ -1992,6 +2775,16 @@ impl AppState {
                 PaletteAction::SwitchView(ActiveView::Editor),
             ),
             (
+                palette::SWITCH_TO_TODAY.0,
+                palette::SWITCH_TO_TODAY.1,
+                PaletteAction::SwitchView(ActiveView::Today),
+            ),
+            (
+                palette::SWITCH_TO_CALENDAR.0,
+                palette::SWITCH_TO_CALENDAR.1,
+                PaletteAction::SwitchView(ActiveView::Today),
+            ),
+            (
                 palette::SWITCH_TO_TASKS.0,
                 palette::SWITCH_TO_TASKS.1,
                 PaletteAction::SwitchView(ActiveView::Tasks),
@@ -2047,6 +2840,11 @@ impl AppState {
                 PaletteAction::OpenDailyNote,
             ),
             (
+                palette::GO_TO_DATE.0,
+                palette::GO_TO_DATE.1,
+                PaletteAction::OpenGoToDateDialog,
+            ),
+            (
                 "Insert Citation",
                 "Search and insert BibTeX / Zotero citations (Ctrl+Shift+C)",
                 PaletteAction::OpenCitationPicker,
@@ -2060,6 +2858,61 @@ impl AppState {
                 palette::REBUILD_INDEX.0,
                 palette::REBUILD_INDEX.1,
                 PaletteAction::RebuildIndex,
+            ),
+            (
+                "Quick Capture (Rough Note)",
+                "Capture fleeting thoughts directly to Inbox (Ctrl+Shift+Q)",
+                PaletteAction::OpenQuickCapture,
+            ),
+            (
+                "New Permanent Note",
+                "Create an atomic permanent note with tags and links",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_PERMANENT.to_string(),
+                    sub_type: None,
+                },
+            ),
+            (
+                "New Rough Note",
+                "Create a rough capture note for later review",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_ROUGH.to_string(),
+                    sub_type: None,
+                },
+            ),
+            (
+                "New Source Note (Book)",
+                "Create a literature source note for a book",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_SOURCE.to_string(),
+                    sub_type: Some(SOURCE_TYPE_BOOK.to_string()),
+                },
+            ),
+            (
+                "New Source Note (Video)",
+                "Create a source note with key takeaways and timestamps",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_SOURCE.to_string(),
+                    sub_type: Some(SOURCE_TYPE_VIDEO.to_string()),
+                },
+            ),
+            (
+                "New Index / MOC Note",
+                "Create a Map of Content note to curate and connect ideas",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_INDEX.to_string(),
+                    sub_type: None,
+                },
+            ),
+            (
+                "Promote Active Note to Permanent",
+                "Promote current rough note to permanent without moving files or breaking links",
+                PaletteAction::PromoteActiveNoteToPermanent,
+            ),
+            (
+                "Open Review Queue",
+                "Triage rough notes, unlinked thoughts, and stale sources",
+                PaletteAction::SwitchView(ActiveView::ReviewQueue),
             ),
         ];
 
@@ -2116,6 +2969,12 @@ impl AppState {
             PaletteAction::SwitchView(view) => {
                 self.active_view = view;
             }
+            PaletteAction::OpenGoToDateDialog => {
+                self.show_go_to_date_dialog = true;
+                let today = chrono::Local::now().date_naive();
+                self.go_to_date_input = today.format("%Y-%m-%d").to_string();
+                self.go_to_date_error = None;
+            }
             PaletteAction::ToggleTheme => {
                 self.toggle_theme();
             }
@@ -2149,6 +3008,18 @@ impl AppState {
                 } else {
                     self.status_message = format!("Plugin: executed '{}'", cmd_id);
                 }
+            }
+            PaletteAction::CreateTypedNote {
+                note_type,
+                sub_type,
+            } => {
+                self.create_typed_note(&note_type, "", sub_type.as_deref())?;
+            }
+            PaletteAction::OpenQuickCapture => {
+                self.open_quick_capture();
+            }
+            PaletteAction::PromoteActiveNoteToPermanent => {
+                self.promote_active_note_to_permanent()?;
             }
         }
         Ok(())
@@ -2353,8 +3224,13 @@ impl AppState {
         }
     }
 
-    /// Creates a new note, saves it to disk, and opens it in the editor.
-    pub fn create_note(&mut self, title: &str, folder: Option<&str>) -> Result<()> {
+    /// Creates a new note with specified initial content in an optional folder, saves it to disk, and opens it in the editor.
+    pub fn create_note_with_content_in_folder(
+        &mut self,
+        title: &str,
+        folder: Option<&Path>,
+        content: &str,
+    ) -> Result<()> {
         let resolved_title = if title.trim().is_empty() {
             self.next_available_note_title()
         } else {
@@ -2362,11 +3238,12 @@ impl AppState {
         };
 
         if let Some(service) = &self.vault_service {
-            let note = service.create_note(folder, &resolved_title, Some(""))?;
-            self.editor_content.clear();
+            let folder_str = folder.and_then(|p| p.to_str());
+            let note = service.create_note(folder_str, &resolved_title, Some(content))?;
+            self.editor_content = content.to_string();
             let rel = note.relative_path.clone();
             let title_str = note.title.clone();
-            self.active_note = Some(note);
+            self.active_note = Some(note.clone());
             self.active_view = ActiveView::Editor;
             self.is_reading_mode = false;
             self.is_dirty = false;
@@ -2395,11 +3272,301 @@ impl AppState {
                 self.nav_history_index = self.nav_history.len() - 1;
             }
 
-            self.record_recent_note(&rel);
+            // Automatically expand target folder and its ancestors so user sees the new note
+            if let Some(f) = folder {
+                self.expand_folder_and_ancestors(f);
+            }
+
             self.refresh_entries()?;
+            self.record_recent_note(&rel);
+
+            // Index new note
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(content) {
+                        let _ = idx.index_note(&note, &parsed);
+                    }
+                }
+            }
+
             debug!(path = %rel.display(), "Created and opened note in state");
         }
         Ok(())
+    }
+
+    /// Creates a new note with specified initial content, saves it to disk, and opens it in the editor.
+    pub fn create_note_with_content(
+        &mut self,
+        title: &str,
+        folder: Option<&str>,
+        content: &str,
+    ) -> Result<()> {
+        self.create_note_with_content_in_folder(title, folder.map(Path::new), content)
+    }
+
+    /// Creates a new note in an optional Path folder, saves it to disk, and opens it in the editor.
+    pub fn create_note_in_folder(&mut self, title: &str, folder: Option<&Path>) -> Result<()> {
+        self.create_note_with_content_in_folder(title, folder, "")
+    }
+
+    /// Creates a new note, saves it to disk, and opens it in the editor.
+    pub fn create_note(&mut self, title: &str, folder: Option<&str>) -> Result<()> {
+        self.create_note_with_content(title, folder, "")
+    }
+
+    /// Creates a note of a specific workflow type with standard frontmatter and structure.
+    pub fn create_typed_note(
+        &mut self,
+        note_type: &str,
+        title: &str,
+        sub_type: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let resolved_title = if title.trim().is_empty() {
+            match note_type {
+                NOTE_TYPE_ROUGH => format!("Rough Note {}", now.format("%Y-%m-%d %H%M")),
+                NOTE_TYPE_PERMANENT => format!("Permanent {}", now.format("%Y-%m-%d")),
+                NOTE_TYPE_SOURCE => format!("Source {}", now.format("%Y-%m-%d")),
+                NOTE_TYPE_INDEX => "Master Index".to_string(),
+                NOTE_TYPE_PROJECT => format!("Project {}", now.format("%Y-%m-%d")),
+                NOTE_TYPE_MEETING => format!("Meeting {}", now.format("%Y-%m-%d")),
+                _ => self.next_available_note_title(),
+            }
+        } else {
+            title.trim().to_string()
+        };
+
+        // Determine target folder if present in vault
+        let mut target_folder: Option<&str> = None;
+        let folder_candidates: &[&str] = match note_type {
+            NOTE_TYPE_ROUGH => &["00 Inbox", "Inbox"],
+            NOTE_TYPE_SOURCE => &[
+                "02 Literature",
+                "01 Sources",
+                "Literature",
+                "Sources",
+                "Books",
+            ],
+            NOTE_TYPE_PERMANENT => &["03 Permanent", "02 Notes", "Notes", "Permanent"],
+            NOTE_TYPE_INDEX => &["04 Index", "Index", "Notes"],
+            NOTE_TYPE_PROJECT => &["01 Projects", "Projects"],
+            _ => &[],
+        };
+
+        for candidate in folder_candidates {
+            if self.entries.iter().any(|e| match e {
+                VaultEntry::Folder { name, .. } => name.eq_ignore_ascii_case(candidate),
+                _ => false,
+            }) {
+                target_folder = Some(*candidate);
+                break;
+            }
+        }
+
+        let content = match note_type {
+            NOTE_TYPE_ROUGH => rough_note_template(&resolved_title, "", &date_str),
+            NOTE_TYPE_PERMANENT => permanent_note_template(&resolved_title, "", &date_str),
+            NOTE_TYPE_SOURCE => {
+                let st = sub_type.unwrap_or(SOURCE_TYPE_BOOK);
+                if st == SOURCE_TYPE_VIDEO {
+                    video_source_template(
+                        &resolved_title,
+                        "YouTube Channel",
+                        "https://...",
+                        &date_str,
+                    )
+                } else {
+                    source_note_template(
+                        &resolved_title,
+                        st,
+                        "Author Name",
+                        "https://...",
+                        &date_str,
+                    )
+                }
+            }
+            NOTE_TYPE_INDEX => index_note_template(&resolved_title, &resolved_title),
+            NOTE_TYPE_PROJECT => project_note_template(&resolved_title, &date_str),
+            NOTE_TYPE_MEETING => meeting_note_template(&resolved_title, &date_str),
+            _ => format!(
+                "---\ntitle: \"{resolved_title}\"\ntype: {note_type}\ncreated: \"{date_str}\"\n---\n# {resolved_title}\n\n"
+            ),
+        };
+
+        self.create_note_with_content(&resolved_title, target_folder, &content)
+    }
+
+    /// Opens the Quick Capture modal dialog.
+    pub fn open_quick_capture(&mut self) {
+        self.show_quick_capture = true;
+        self.quick_capture_title.clear();
+        self.quick_capture_body.clear();
+        self.quick_capture_tags.clear();
+    }
+
+    /// Closes the Quick Capture modal dialog.
+    pub fn close_quick_capture(&mut self) {
+        self.show_quick_capture = false;
+        self.quick_capture_title.clear();
+        self.quick_capture_body.clear();
+        self.quick_capture_tags.clear();
+    }
+
+    /// Executes saving the captured rough note with optional open in editor.
+    pub fn execute_quick_capture(&mut self, open_after: bool) -> Result<()> {
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let title = if self.quick_capture_title.trim().is_empty() {
+            format!("Thought {}", now.format("%Y-%m-%d %H%M%S"))
+        } else {
+            self.quick_capture_title.trim().to_string()
+        };
+
+        let body = self.quick_capture_body.trim().to_string();
+
+        let mut target_folder: Option<&str> = None;
+        for candidate in &["00 Inbox", "Inbox"] {
+            if self.entries.iter().any(|e| match e {
+                VaultEntry::Folder { name, .. } => name.eq_ignore_ascii_case(candidate),
+                _ => false,
+            }) {
+                target_folder = Some(*candidate);
+                break;
+            }
+        }
+
+        let mut content = rough_note_template(&title, &body, &date_str);
+
+        // Inject custom tags if provided
+        if !self.quick_capture_tags.trim().is_empty() {
+            if let Ok((Some(mut fm), body_part)) = parse_frontmatter(&content) {
+                for t in self.quick_capture_tags.split(',').map(str::trim) {
+                    let clean = t.trim_start_matches('#');
+                    if !clean.is_empty() && !fm.tags.contains(&clean.to_string()) {
+                        fm.tags.push(clean.to_string());
+                    }
+                }
+                content = inject_or_update_frontmatter(body_part, &fm);
+            }
+        }
+
+        self.close_quick_capture();
+
+        if open_after {
+            self.create_note_with_content(&title, target_folder, &content)?;
+        } else if let Some(service) = &self.vault_service {
+            let note = service.create_note(target_folder, &title, Some(&content))?;
+            self.entries = service.list_entries()?;
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(&content) {
+                        let _ = idx.index_note(&note, &parsed);
+                    }
+                }
+            }
+            self.status_message = format!("Captured rough note '{title}' to Inbox");
+        }
+        Ok(())
+    }
+
+    /// Safely promotes the active note from a rough/untyped note to a permanent note.
+    /// Invariant: NEVER renames or moves the file, strictly preserving 100% of vault wikilinks.
+    pub fn promote_active_note_to_permanent(&mut self) -> Result<()> {
+        let (existing_fm, body) =
+            parse_frontmatter(&self.editor_content).unwrap_or((None, &self.editor_content));
+        let mut fm = existing_fm.unwrap_or_default();
+
+        if fm.title.is_none() {
+            if let Some(note) = &self.active_note {
+                fm.title = Some(note.title.clone());
+            }
+        }
+
+        fm.set_note_type(NOTE_TYPE_PERMANENT);
+        if !fm.tags.contains(&"permanent".to_string()) {
+            fm.tags.push("permanent".to_string());
+        }
+        // Remove rough/inbox tags if present
+        fm.tags.retain(|t| t != "rough" && t != "inbox");
+
+        let updated = inject_or_update_frontmatter(body, &fm);
+        self.editor_content = updated;
+        self.is_dirty = true;
+        self.save_active_note()?;
+        self.status_message = "Promoted note to Permanent (links & path preserved)".to_string();
+        Ok(())
+    }
+
+    /// Marks a note as reviewed by adding `reviewed: YYYY-MM-DD` to its frontmatter.
+    pub fn mark_note_reviewed(&mut self, rel_path: &Path) -> Result<()> {
+        let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if let Some(service) = &self.vault_service {
+            let note = service.read_note(rel_path)?;
+            let (existing_fm, body) =
+                parse_frontmatter(&note.content).unwrap_or((None, &note.content));
+            let mut fm = existing_fm.unwrap_or_default();
+            fm.mark_reviewed(&date_str);
+            let updated = inject_or_update_frontmatter(body, &fm);
+            let updated_note = service.write_note(rel_path, &updated)?;
+
+            // If active note is the one being marked, update editor content too
+            if let Some(active) = &self.active_note {
+                if active.relative_path == rel_path {
+                    self.editor_content = updated.clone();
+                    self.is_dirty = false;
+                }
+            }
+
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(&updated) {
+                        let _ = idx.index_note(&updated_note, &parsed);
+                    }
+                }
+            }
+            self.status_message = format!("Marked '{}' as reviewed", note.title);
+        }
+        Ok(())
+    }
+
+    /// Queries the review queue items for the current filter category.
+    pub fn get_review_queue_items(&self) -> Vec<ReviewQueueItem> {
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(idx) = index_arc.lock() {
+                match self.review_queue_filter {
+                    ReviewCategory::RoughNote => idx.query_rough_notes().unwrap_or_default(),
+                    ReviewCategory::Unlinked => idx.query_unlinked_notes().unwrap_or_default(),
+                    ReviewCategory::StaleSource => {
+                        let now_ns = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos() as u64)
+                            .unwrap_or(0);
+                        let fourteen_days_ns = 14 * 24 * 3600 * 1_000_000_000u64;
+                        let cutoff_ns = now_ns.saturating_sub(fourteen_days_ns);
+                        idx.query_stale_sources(cutoff_ns).unwrap_or_default()
+                    }
+                    ReviewCategory::Orphan => idx.query_orphan_notes().unwrap_or_default(),
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Queries vault-wide knowledge health metrics.
+    pub fn get_knowledge_stats(&self) -> KnowledgeStats {
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(idx) = index_arc.lock() {
+                idx.query_knowledge_stats().unwrap_or_default()
+            } else {
+                KnowledgeStats::default()
+            }
+        } else {
+            KnowledgeStats::default()
+        }
     }
 
     /// Renames a note on disk and updates active note if open.
@@ -2437,6 +3604,22 @@ impl AppState {
                     *r = renamed.relative_path.clone();
                 }
             }
+            if let Some(key) = self.current_vault_key() {
+                if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
+                    for b in list {
+                        if *b == old_buf {
+                            *b = renamed.relative_path.clone();
+                        }
+                    }
+                }
+                if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                    for r in list {
+                        if *r == old_buf {
+                            *r = renamed.relative_path.clone();
+                        }
+                    }
+                }
+            }
             self.preferences.save();
             if let Some(active) = &self.active_note {
                 if active.relative_path == rel {
@@ -2455,6 +3638,30 @@ impl AppState {
             self.editor_content = content;
             self.is_dirty = true;
         }
+    }
+
+    /// Appends or inserts a Wikilink snippet into the active editor note.
+    pub fn insert_wikilink_snippet(&mut self, target: &str) {
+        let snippet = format!("[[{target}]]");
+        if self.editor_content.ends_with('\n') || self.editor_content.is_empty() {
+            self.editor_content.push_str(&snippet);
+        } else {
+            self.editor_content.push(' ');
+            self.editor_content.push_str(&snippet);
+        }
+        self.is_dirty = true;
+    }
+
+    /// Appends or inserts an embed snippet into the active editor note.
+    pub fn insert_embed_snippet(&mut self, target: &str) {
+        let snippet = format!("![[{target}]]");
+        if self.editor_content.ends_with('\n') || self.editor_content.is_empty() {
+            self.editor_content.push_str(&snippet);
+        } else {
+            self.editor_content.push(' ');
+            self.editor_content.push_str(&snippet);
+        }
+        self.is_dirty = true;
     }
 
     /// Toggles light/dark theme and persists the choice.
@@ -2572,11 +3779,13 @@ impl AppState {
         self.status_message = "Layout reset to default".to_string();
     }
 
-    /// Cycles through active view modes: Editor -> Tasks -> Library -> Graph -> Editor.
+    /// Cycles through active view modes: Editor -> Today -> Tasks -> ReviewQueue -> Library -> Graph -> Editor.
     pub fn cycle_view(&mut self) {
         self.active_view = match self.active_view {
-            ActiveView::Editor => ActiveView::Tasks,
-            ActiveView::Tasks => ActiveView::Library,
+            ActiveView::Editor => ActiveView::Today,
+            ActiveView::Today => ActiveView::Tasks,
+            ActiveView::Tasks => ActiveView::ReviewQueue,
+            ActiveView::ReviewQueue => ActiveView::Library,
             ActiveView::Library => ActiveView::Graph,
             ActiveView::Graph => ActiveView::Editor,
         };
@@ -3034,6 +4243,67 @@ mod tests {
         state.delete_note(&renamed_path).unwrap();
         assert!(!state.is_bookmarked(&renamed_path));
         assert!(!state.preferences.recent_notes.contains(&renamed_path));
+        assert!(!state.current_vault_recent_notes().contains(&renamed_path));
+        assert!(!state.current_vault_bookmarks().contains(&renamed_path));
+    }
+
+    #[test]
+    fn test_vault_scoped_recent_notes_and_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_a = tmp.path().join("VaultA");
+        let vault_b = tmp.path().join("VaultB");
+
+        let mut state = AppState::default();
+
+        // 1. Open Vault A and create NoteA1, NoteA2
+        state
+            .create_vault(&vault_a, Some("Vault A".to_string()))
+            .unwrap();
+        state.create_note("NoteA1", None).unwrap();
+        state.create_note("NoteA2", None).unwrap();
+
+        let path_a1 = PathBuf::from("Notes").join("NoteA1.md");
+        let path_a2 = PathBuf::from("Notes").join("NoteA2.md");
+        state.toggle_bookmark(&path_a1);
+
+        assert_eq!(state.current_vault_recent_notes().len(), 2);
+        assert_eq!(state.current_vault_recent_notes().first(), Some(&path_a2));
+        assert!(state.current_vault_bookmarks().contains(&path_a1));
+
+        // 2. Open Vault B - recent notes and bookmarks from Vault A must NOT appear
+        state
+            .create_vault(&vault_b, Some("Vault B".to_string()))
+            .unwrap();
+        assert!(state.current_vault_recent_notes().is_empty());
+        assert!(state.current_vault_bookmarks().is_empty());
+
+        // Create NoteB1 in Vault B
+        state.create_note("NoteB1", None).unwrap();
+        let path_b1 = PathBuf::from("Notes").join("NoteB1.md");
+        assert_eq!(state.current_vault_recent_notes(), vec![path_b1.clone()]);
+        assert!(!state.current_vault_recent_notes().contains(&path_a1));
+
+        // 3. Switch back to Vault A - NoteA notes must be restored, NoteB must NOT appear
+        state.open_vault(&vault_a).unwrap();
+        assert_eq!(state.current_vault_recent_notes().len(), 2);
+        assert!(!state.current_vault_recent_notes().contains(&path_b1));
+        assert!(state.current_vault_bookmarks().contains(&path_a1));
+
+        // 4. Inject a non-existent phantom note into preferences - it must NOT show in current_vault_recent_notes
+        state
+            .preferences
+            .recent_notes
+            .insert(0, PathBuf::from("Notes").join("NonExistentPhantom.md"));
+        let key = state.current_vault_key().unwrap();
+        state
+            .preferences
+            .vault_recent_notes
+            .entry(key)
+            .or_default()
+            .insert(0, PathBuf::from("Notes").join("NonExistentPhantom.md"));
+
+        let recents = state.current_vault_recent_notes();
+        assert!(!recents.iter().any(|p| p.ends_with("NonExistentPhantom.md")));
     }
 
     #[test]
@@ -3423,5 +4693,303 @@ mod tests {
             .relative_path
             .to_string_lossy()
             .starts_with("Daily"));
+    }
+
+    #[test]
+    fn test_cross_vault_state_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_a = tmp.path().join("VaultA");
+        let vault_b = tmp.path().join("VaultB");
+
+        let mut state = AppState::default();
+
+        // 1. Setup Vault A with an active note, open tab, navigation history, and split pane
+        state
+            .create_vault(&vault_a, Some("VaultA".to_string()))
+            .unwrap();
+        state.create_note("NoteInA", None).unwrap();
+        state.update_editor_content("Content in Vault A".to_string());
+        assert!(!state.open_tabs.is_empty());
+        assert!(!state.nav_history.is_empty());
+        state.split_pane = Some(SplitPane {
+            relative_path: Some(PathBuf::from("NoteInA.md")),
+            is_reading_mode: false,
+            editor_content: "Content in Vault A".to_string(),
+        });
+
+        // 2. Open Vault B - check that state from Vault A does not leak
+        state
+            .create_vault(&vault_b, Some("VaultB".to_string()))
+            .unwrap();
+        assert_eq!(state.vault_name, "VaultB");
+        assert!(
+            state.open_tabs.is_empty(),
+            "Tabs must be cleared on vault switch"
+        );
+        assert!(state.active_tab_index.is_none());
+        assert!(
+            state.nav_history.is_empty(),
+            "Nav history must be cleared on vault switch"
+        );
+        assert_eq!(state.nav_history_index, 0);
+        assert!(
+            state.split_pane.is_none(),
+            "Split pane must be cleared on vault switch"
+        );
+        assert!(
+            state.active_note.is_none(),
+            "Active note must be cleared on vault switch"
+        );
+        assert!(
+            state.editor_content.is_empty(),
+            "Editor content must be cleared on vault switch"
+        );
+
+        // 3. Test close_vault
+        state.create_note("NoteInB", None).unwrap();
+        assert!(!state.open_tabs.is_empty());
+        state.close_vault().unwrap();
+
+        assert_eq!(state.vault_name, "No Vault Opened");
+        assert!(state.vault_path.is_none());
+        assert!(state.vault_service.is_none());
+        assert!(state.entries.is_empty());
+        assert!(state.open_tabs.is_empty());
+        assert!(state.active_note.is_none());
+        assert!(state.editor_content.is_empty());
+        assert!(state.split_pane.is_none());
+        assert!(state.nav_history.is_empty());
+    }
+
+    #[test]
+    fn test_safe_note_promotion_preserves_path_and_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("PromotionVault");
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("PromotionVault".to_string()))
+            .unwrap();
+
+        // 1. Create a rough note
+        state
+            .create_typed_note(NOTE_TYPE_ROUGH, "Raw Insight", None)
+            .unwrap();
+        let initial_path = state.active_note.as_ref().unwrap().relative_path.clone();
+
+        // 2. Create another note linking to this rough note
+        state.create_note("Synthesis Hub", None).unwrap();
+        state.update_editor_content("# Hub\nSee [[Raw Insight]] for details.".to_string());
+        state.save_active_note().unwrap();
+
+        // 3. Switch back to rough note
+        state.select_note(&initial_path).unwrap();
+        assert!(state.editor_content.contains("type: rough"));
+
+        // 4. Promote note to permanent
+        state.promote_active_note_to_permanent().unwrap();
+
+        // 5. Invariant checks:
+        // - Path MUST be identical (no silent renames or moves!)
+        let promoted_path = state.active_note.as_ref().unwrap().relative_path.clone();
+        assert_eq!(
+            initial_path, promoted_path,
+            "Path must not change during promotion"
+        );
+
+        // - Frontmatter type must now be permanent
+        let (fm, _) = parse_frontmatter(&state.editor_content).unwrap();
+        let fm = fm.unwrap();
+        assert_eq!(fm.note_type(), Some("permanent"));
+        assert!(fm.is_permanent());
+        assert!(!fm.is_rough());
+
+        // - Links to the note remain 100% valid in the index
+        state.select_note(&promoted_path).unwrap();
+        let backlinks_after = state.get_current_backlinks();
+        assert!(backlinks_after
+            .iter()
+            .any(|p| p.file_stem().and_then(|s| s.to_str()) == Some("Synthesis Hub")));
+    }
+
+    #[test]
+    fn test_quick_capture_and_review_queue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("CaptureVault");
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_path, Some("CaptureVault".to_string()))
+            .unwrap();
+
+        // 1. Trigger Quick Capture
+        state.open_quick_capture();
+        assert!(state.show_quick_capture);
+        state.quick_capture_title = "Eureka Moment".to_string();
+        state.quick_capture_body = "The key to architecture is simplicity.".to_string();
+        state.quick_capture_tags = "spark, insight".to_string();
+
+        state.execute_quick_capture(false).unwrap();
+        assert!(!state.show_quick_capture);
+
+        // 2. Query Review Queue
+        state.review_queue_filter = ReviewCategory::RoughNote;
+        let items = state.get_review_queue_items();
+        assert!(items.iter().any(|item| item.title == "Eureka Moment"));
+
+        // 3. Mark as reviewed
+        let note_path = items
+            .iter()
+            .find(|i| i.title == "Eureka Moment")
+            .unwrap()
+            .path
+            .clone();
+        state.mark_note_reviewed(Path::new(&note_path)).unwrap();
+
+        // 4. Verify it no longer appears in unprocessed rough notes
+        let items_after = state.get_review_queue_items();
+        assert!(!items_after.iter().any(|item| item.title == "Eureka Moment"));
+    }
+
+    #[test]
+    fn test_build_file_tree_empty() {
+        let entries = vec![];
+        let tree = build_file_tree(&entries);
+        assert!(tree.is_empty());
+    }
+
+    #[test]
+    fn test_build_file_tree_hierarchy_and_sorting() {
+        use nodera_core::{NoteId, NoteSummary};
+
+        let entries = vec![
+            VaultEntry::Note(NoteSummary {
+                id: NoteId::new(),
+                relative_path: PathBuf::from("zebra.md"),
+                title: "zebra".to_string(),
+                size_bytes: 10,
+                modified_at_millis: 100,
+            }),
+            VaultEntry::Folder {
+                name: "Projects".to_string(),
+                relative_path: PathBuf::from("Projects"),
+            },
+            VaultEntry::Note(NoteSummary {
+                id: NoteId::new(),
+                relative_path: PathBuf::from("apple.md"),
+                title: "apple".to_string(),
+                size_bytes: 10,
+                modified_at_millis: 100,
+            }),
+            VaultEntry::Folder {
+                name: "Archives".to_string(),
+                relative_path: PathBuf::from("Archives"),
+            },
+            VaultEntry::Folder {
+                name: "SubFolder".to_string(),
+                relative_path: PathBuf::from("Projects/SubFolder"),
+            },
+            VaultEntry::Note(NoteSummary {
+                id: NoteId::new(),
+                relative_path: PathBuf::from("Projects/nested.md"),
+                title: "nested".to_string(),
+                size_bytes: 10,
+                modified_at_millis: 100,
+            }),
+            VaultEntry::Note(NoteSummary {
+                id: NoteId::new(),
+                relative_path: PathBuf::from("Projects/SubFolder/deep.md"),
+                title: "deep".to_string(),
+                size_bytes: 10,
+                modified_at_millis: 100,
+            }),
+        ];
+
+        let tree = build_file_tree(&entries);
+
+        // At root level: Folders first sorted alphabetically ("Archives", "Projects"),
+        // then files sorted alphabetically ("apple", "zebra").
+        assert_eq!(tree.len(), 4);
+        assert_eq!(tree[0].name(), "Archives");
+        assert!(tree[0].is_folder());
+        assert_eq!(tree[1].name(), "Projects");
+        assert!(tree[1].is_folder());
+        assert_eq!(tree[2].name(), "apple");
+        assert!(!tree[2].is_folder());
+        assert_eq!(tree[3].name(), "zebra");
+        assert!(!tree[3].is_folder());
+
+        // Under "Projects": "SubFolder" (folder) first, then "nested" (file)
+        if let FileTreeNode::Folder { children, .. } = &tree[1] {
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].name(), "SubFolder");
+            assert!(children[0].is_folder());
+            assert_eq!(children[1].name(), "nested");
+            assert!(!children[1].is_folder());
+
+            // Under "SubFolder": "deep" (file)
+            if let FileTreeNode::Folder {
+                children: sub_children,
+                ..
+            } = &children[0]
+            {
+                assert_eq!(sub_children.len(), 1);
+                assert_eq!(sub_children[0].name(), "deep");
+                assert!(!sub_children[0].is_folder());
+            } else {
+                panic!("Expected SubFolder to be a folder");
+            }
+        } else {
+            panic!("Expected Projects to be a folder");
+        }
+    }
+
+    #[test]
+    fn test_desktop_folder_state_and_vault_isolation() {
+        let tmp = tempdir().unwrap();
+        let vault_a = tmp.path().join("VaultA");
+        let vault_b = tmp.path().join("VaultB");
+        let _ = Vault::create(&vault_a, None).unwrap();
+        let _ = Vault::create(&vault_b, None).unwrap();
+
+        let mut state = AppState::default();
+        state.open_vault(&vault_a).unwrap();
+
+        // 1. Create a folder in Vault A
+        let folder = state.create_folder(None, "Research").unwrap();
+        assert_eq!(folder, PathBuf::from("Research"));
+        assert!(state.is_folder_expanded(&folder));
+
+        // 2. Create a note inside that folder
+        state
+            .create_note_in_folder("Quantum Computing", Some(Path::new("Research")))
+            .unwrap();
+        assert!(state.is_folder_expanded(Path::new("Research")));
+        assert_eq!(
+            state.active_note.as_ref().unwrap().title,
+            "Quantum Computing"
+        );
+
+        // 3. Rename folder
+        let renamed = state.rename_folder("Research", "DeepResearch").unwrap();
+        assert_eq!(renamed, PathBuf::from("DeepResearch"));
+        assert!(state.is_folder_expanded(Path::new("DeepResearch")));
+        assert!(!state.is_folder_expanded(Path::new("Research")));
+        assert_eq!(
+            state.active_note.as_ref().unwrap().relative_path,
+            PathBuf::from("DeepResearch/Quantum Computing.md")
+        );
+
+        // 4. Switch to Vault B: expanded_folders must be cleared and never leak
+        state.open_vault(&vault_b).unwrap();
+        assert!(state.expanded_folders.is_empty());
+        assert_eq!(state.vault_name, "VaultB");
+        assert!(state.active_note.is_none());
+
+        // 5. Switch back to Vault A
+        state.open_vault(&vault_a).unwrap();
+        assert!(state.expanded_folders.is_empty()); // Fresh open resets expansion
+        let tree = build_file_tree(&state.entries);
+        assert!(tree
+            .iter()
+            .any(|node| node.name() == "DeepResearch" && node.is_folder()));
     }
 }

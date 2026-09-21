@@ -28,4 +28,4 @@ pub use uri::{
     is_windows_protocol_registered, parse_query_string, percent_decode, percent_encode,
     register_windows_protocol, unregister_windows_protocol, NoderaUri,
 };
-pub use vault::{Vault, VaultConfig, CURRENT_VAULT_VERSION, DEFAULT_FOLDERS};
+pub use vault::{StarterVaultPreset, Vault, VaultConfig, CURRENT_VAULT_VERSION, DEFAULT_FOLDERS};

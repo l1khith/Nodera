@@ -57,6 +57,14 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
             s.show_vault_health_modal = false;
             return true;
         }
+        if s.show_quick_capture {
+            s.close_quick_capture();
+            return true;
+        }
+        if s.show_go_to_date_dialog {
+            s.show_go_to_date_dialog = false;
+            return true;
+        }
         return false;
     }
 
@@ -90,6 +98,26 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
         Key::Character(ref c) if (c == "f" || c == "F") && modifiers.shift() => {
             let mut s = state.write();
             s.show_command_palette = true;
+            true
+        }
+
+        // Ctrl+Shift+Q or Ctrl+Q: Quick Capture Modal
+        Key::Character(ref c) if c.eq_ignore_ascii_case("q") => {
+            let mut s = state.write();
+            if s.show_quick_capture {
+                s.close_quick_capture();
+            } else {
+                s.open_quick_capture();
+            }
+            true
+        }
+
+        // Ctrl+K: Insert Wikilink [[Note]]
+        Key::Character(ref c) if (c == "k" || c == "K") && !modifiers.shift() => {
+            let mut s = state.write();
+            if s.active_note.is_some() {
+                s.insert_wikilink_snippet("Note");
+            }
             true
         }
 

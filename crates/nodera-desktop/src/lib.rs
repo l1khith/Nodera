@@ -1,4 +1,5 @@
 pub mod app;
+pub mod calendar;
 pub mod components;
 pub mod icons;
 pub mod logo_data;

@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
-use crate::icons::{IconActivity, IconClose, IconFile, IconLink, IconPlus, IconTrash};
-use crate::state::AppState;
+use crate::icons::{
+    IconActivity, IconClose, IconFile, IconLink, IconPlus, IconReviewQueue, IconTrash,
+};
+use crate::state::{ActiveView, AppState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HealthTab {
@@ -19,6 +21,7 @@ pub fn VaultHealthModal(state: Signal<AppState>) -> Element {
     let mut active_tab = use_signal(|| HealthTab::BrokenLinks);
 
     let audit_report = app_state.audit_vault().unwrap_or_default();
+    let knowledge_stats = app_state.get_knowledge_stats();
 
     let total_broken = audit_report.broken_links.len();
     let total_orphans = audit_report.orphan_notes.len();
@@ -102,6 +105,37 @@ pub fn VaultHealthModal(state: Signal<AppState>) -> Element {
                             style: format!("font-size: 20px; font-weight: 700; color: {}; margin-top: 2px;", if total_orphans > 0 { "#F59E0B" } else { "#10B981" }),
                             "{total_orphans}"
                         }
+                    }
+                }
+
+                // Knowledge Workflow Health Card
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; gap: 16px;",
+                    div { style: "display: flex; flex-direction: column; gap: 4px;",
+                        div { style: "font-size: 11px; text-transform: uppercase; font-weight: 700; color: var(--text-secondary); letter-spacing: 0.5px;", "Knowledge Workflow Breakdown" }
+                        div { style: "display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-muted);",
+                            span { strong { style: "color: var(--text-primary);", "{knowledge_stats.rough_count}" } " rough" }
+                            span { "·" }
+                            span { strong { style: "color: #10B981;", "{knowledge_stats.permanent_count}" } " permanent" }
+                            span { "·" }
+                            span { strong { style: "color: var(--accent);", "{knowledge_stats.source_count}" } " sources" }
+                            span { "·" }
+                            span { strong { style: "color: var(--text-primary);", "{knowledge_stats.index_count}" } " index" }
+                            span { "·" }
+                            span { strong { style: "color: #F59E0B;", "{knowledge_stats.unlinked_count}" } " unlinked thoughts" }
+                        }
+                    }
+                    button {
+                        class: "btn-action btn-primary",
+                        style: "padding: 6px 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;",
+                        title: "Open Review Queue to process rough notes and unlinked thoughts",
+                        onclick: move |_| {
+                            let mut s = state.write();
+                            s.show_vault_health_modal = false;
+                            s.active_view = ActiveView::ReviewQueue;
+                        },
+                        IconReviewQueue { size: 14 }
+                        span { "Review Queue" }
                     }
                 }
 
