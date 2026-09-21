@@ -96,13 +96,15 @@ impl VaultWatcher {
         tx: &UnboundedSender<WatcherEvent>,
     ) {
         for path in event.paths {
-            // Only care about markdown files
-            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            // Skip internal .nodera metadata folder
+            if path.components().any(|c| c.as_os_str() == ".nodera") {
                 continue;
             }
 
-            // Skip internal .nodera metadata folder
-            if path.components().any(|c| c.as_os_str() == ".nodera") {
+            // Accept markdown files or directories (including newly created/deleted folder paths without extension)
+            let is_md = path.extension().and_then(|ext| ext.to_str()) == Some("md");
+            let is_dir = path.is_dir() || (path.extension().is_none() && !path.is_file());
+            if !is_md && !is_dir {
                 continue;
             }
 
@@ -169,6 +171,26 @@ mod tests {
         // Expect to receive Created or Modified event
         let event = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
         assert!(event.is_ok(), "Timed out waiting for watcher event");
+        let received = event.unwrap();
+        assert!(received.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_watcher_detects_external_directory() {
+        let dir = tempdir().unwrap();
+        let vault_path = dir.path().to_path_buf();
+
+        let (_watcher, mut rx, _suppressor) = VaultWatcher::start(vault_path.clone()).unwrap();
+
+        // Create a new directory externally
+        let folder_path = vault_path.join("SubFolder");
+        fs::create_dir(&folder_path).unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
+        assert!(
+            event.is_ok(),
+            "Timed out waiting for watcher directory event"
+        );
         let received = event.unwrap();
         assert!(received.is_some());
     }
