@@ -85,6 +85,9 @@ pub const BASE_CSS: &str = r#"
     --bg-secondary: var(--bg-surface);
     --bg-tertiary: var(--bg-surface-elevated);
     --accent-color: var(--accent);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.09);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+    --scrollbar-thumb-active: rgba(255, 255, 255, 0.36);
 }
 
 .theme-light {
@@ -146,6 +149,9 @@ pub const BASE_CSS: &str = r#"
     --bg-secondary: var(--bg-surface);
     --bg-tertiary: var(--bg-surface-elevated);
     --accent-color: var(--accent);
+    --scrollbar-thumb: rgba(0, 0, 0, 0.11);
+    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.24);
+    --scrollbar-thumb-active: rgba(0, 0, 0, 0.38);
 }
 
 * {
@@ -364,6 +370,92 @@ input, textarea {
 .breadcrumb-active {
     color: var(--text-primary);
     font-weight: 600;
+}
+
+/* ==========================================================================
+   Editor & Document Scrollbar Styling (Minimal, native-feel document scrollbar)
+   ========================================================================== */
+
+textarea.editor-textarea,
+.editor-textarea,
+.reading-view,
+.reading-toc {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-gutter: stable;
+    overflow-x: hidden !important;
+}
+
+textarea.editor-textarea,
+.editor-textarea {
+    overflow-y: auto;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+textarea.editor-textarea:hover,
+.editor-textarea:hover,
+.reading-view:hover,
+.reading-toc:hover {
+    scrollbar-color: var(--scrollbar-thumb-hover) transparent;
+}
+
+/* WebKit / Chromium (Edge WebView2) Custom Scrollbar */
+textarea.editor-textarea::-webkit-scrollbar,
+.editor-textarea::-webkit-scrollbar,
+.reading-view::-webkit-scrollbar,
+.reading-toc::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+textarea.editor-textarea::-webkit-scrollbar-track,
+.editor-textarea::-webkit-scrollbar-track,
+.reading-view::-webkit-scrollbar-track,
+.reading-toc::-webkit-scrollbar-track {
+    background: transparent !important;
+    border: none !important;
+}
+
+textarea.editor-textarea::-webkit-scrollbar-thumb,
+.editor-textarea::-webkit-scrollbar-thumb,
+.reading-view::-webkit-scrollbar-thumb,
+.reading-toc::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+}
+
+textarea.editor-textarea:hover::-webkit-scrollbar-thumb,
+.editor-textarea:hover::-webkit-scrollbar-thumb,
+.reading-view:hover::-webkit-scrollbar-thumb,
+.reading-toc:hover::-webkit-scrollbar-thumb,
+textarea.editor-textarea:focus::-webkit-scrollbar-thumb,
+.editor-textarea:focus::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-hover);
+}
+
+textarea.editor-textarea::-webkit-scrollbar-thumb:hover,
+.editor-textarea::-webkit-scrollbar-thumb:hover,
+.reading-view::-webkit-scrollbar-thumb:hover,
+.reading-toc::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-active);
+}
+
+textarea.editor-textarea::-webkit-scrollbar-button,
+.editor-textarea::-webkit-scrollbar-button,
+.reading-view::-webkit-scrollbar-button,
+.reading-toc::-webkit-scrollbar-button {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+
+textarea.editor-textarea::-webkit-scrollbar-corner,
+.editor-textarea::-webkit-scrollbar-corner,
+.reading-view::-webkit-scrollbar-corner,
+.reading-toc::-webkit-scrollbar-corner {
+    background: transparent !important;
 }
 
 .pane-context {
@@ -1627,5 +1719,19 @@ input:checked + .graph-switch-slider:before {
 .context-menu-item.danger:hover {
     background-color: rgba(239, 68, 68, 0.1);
     color: var(--danger-hover);
+}
+
+/* Calendar / Today Workspace */
+.calendar-day-cell {
+    user-select: none;
+}
+
+.calendar-day-cell:hover {
+    background-color: var(--bg-hover) !important;
+}
+
+.calendar-day-cell:focus-visible {
+    outline: 2px solid var(--focus) !important;
+    outline-offset: 1px;
 }
 "#;

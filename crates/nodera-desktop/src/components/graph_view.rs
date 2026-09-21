@@ -9,18 +9,8 @@ use crate::strings::{actions, empty_states, graph as graph_strings, placeholders
 use nodera_markdown::GraphData;
 
 pub const COMMUNITY_COLORS: [&str; 12] = [
-    "#5C6FE6",
-    "#7081F0",
-    "#8492F6",
-    "#4F61C9",
-    "#3F4D9E",
-    "#6B7DF2",
-    "#7E8DF4",
-    "#4555B8",
-    "#364391",
-    "#5466DB",
-    "#6475E8",
-    "#4A5CC5",
+    "#5C6FE6", "#7081F0", "#8492F6", "#4F61C9", "#3F4D9E", "#6B7DF2", "#7E8DF4", "#4555B8",
+    "#364391", "#5466DB", "#6475E8", "#4A5CC5",
 ];
 
 /// Node in the 2D physics simulation canvas

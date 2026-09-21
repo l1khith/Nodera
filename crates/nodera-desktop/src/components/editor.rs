@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 
 use crate::icons::{
     IconBook, IconBookmark, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconColumns,
-    IconEdit, IconFile, IconLink, IconList, IconNotes, IconPanelRight, IconPin, IconPlus, IconQuote,
-    IconTemplate,
+    IconEdit, IconFile, IconLink, IconList, IconNotes, IconPanelRight, IconPin, IconPlus,
+    IconQuote, IconTemplate,
 };
 use crate::state::{AppState, SplitDirection};
 use crate::strings::{actions, app as app_strings, empty_states, placeholders, tooltips};

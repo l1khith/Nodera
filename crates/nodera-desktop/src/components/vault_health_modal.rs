@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 
-use crate::icons::{IconActivity, IconClose, IconFile, IconLink, IconPlus, IconReviewQueue, IconTrash};
+use crate::icons::{
+    IconActivity, IconClose, IconFile, IconLink, IconPlus, IconReviewQueue, IconTrash,
+};
 use crate::state::{ActiveView, AppState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -50,7 +50,10 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
     let mut new_prop_type = use_signal(|| "text".to_string());
     let mut new_prop_val = use_signal(String::new);
 
-    let active_note_path = app_state.active_note.as_ref().map(|n| n.relative_path.clone());
+    let active_note_path = app_state
+        .active_note
+        .as_ref()
+        .map(|n| n.relative_path.clone());
     let has_active_note = active_note_path.is_some();
 
     // Backlinks & Outgoing links
@@ -77,8 +80,13 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
         .as_ref()
         .map(|f| f.extra.clone())
         .unwrap_or_default();
-    let note_type = frontmatter.as_ref().and_then(|f| f.note_type().map(|s| s.to_string()));
-    let is_permanent = frontmatter.as_ref().map(|f| f.is_permanent()).unwrap_or(false);
+    let note_type = frontmatter
+        .as_ref()
+        .and_then(|f| f.note_type().map(|s| s.to_string()));
+    let is_permanent = frontmatter
+        .as_ref()
+        .map(|f| f.is_permanent())
+        .unwrap_or(false);
 
     let properties_count = (if !frontmatter_title.is_empty() { 1 } else { 0 })
         + frontmatter_tags.len()
