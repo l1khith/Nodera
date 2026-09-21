@@ -12,6 +12,85 @@ pub const CONFIG_FILE_NAME: &str = "config.json";
 /// Standard directory layout for a Nodera vault.
 pub const DEFAULT_FOLDERS: &[&str] = &["Notes", "Projects", "Books", "Attachments"];
 
+/// Starter vault template presets for different knowledge workflow paradigms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum StarterVaultPreset {
+    #[default]
+    Empty,
+    Zettelkasten,
+    PersonalKnowledge,
+    Research,
+    Student,
+}
+
+impl StarterVaultPreset {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            StarterVaultPreset::Empty => "Empty Vault",
+            StarterVaultPreset::Zettelkasten => "Zettelkasten Knowledge Vault",
+            StarterVaultPreset::PersonalKnowledge => "Personal Knowledge (PARA)",
+            StarterVaultPreset::Research => "Academic Research Vault",
+            StarterVaultPreset::Student => "Student & Learning Vault",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            StarterVaultPreset::Empty => "Clean vault with standard Notes and Projects folders.",
+            StarterVaultPreset::Zettelkasten => "Slip-box system with 00 Inbox, 01 Fleeting, 02 Literature, 03 Permanent, and 04 Index.",
+            StarterVaultPreset::PersonalKnowledge => "Projects, Areas, Resources, and Archives system.",
+            StarterVaultPreset::Research => "Literature review, raw source notes, synthesized manuscripts, and citations.",
+            StarterVaultPreset::Student => "Courses, readings, lecture notes, and study guides.",
+        }
+    }
+
+    pub fn folder_structure(&self) -> &'static [&'static str] {
+        match self {
+            StarterVaultPreset::Empty => DEFAULT_FOLDERS,
+            StarterVaultPreset::Zettelkasten => &[
+                "00 Inbox",
+                "01 Fleeting",
+                "02 Literature",
+                "03 Permanent",
+                "04 Index",
+                "Templates",
+                "Attachments",
+            ],
+            StarterVaultPreset::PersonalKnowledge => &[
+                "00 Inbox",
+                "01 Projects",
+                "02 Areas",
+                "03 Resources",
+                "04 Archives",
+                "Attachments",
+            ],
+            StarterVaultPreset::Research => &[
+                "00 Inbox",
+                "01 Sources",
+                "02 Notes",
+                "03 Manuscripts",
+                "Templates",
+                "Attachments",
+            ],
+            StarterVaultPreset::Student => &[
+                "00 Inbox",
+                "01 Courses",
+                "02 Readings",
+                "03 Lectures",
+                "04 Exams",
+                "Attachments",
+            ],
+        }
+    }
+
+    pub fn default_folder(&self) -> &'static str {
+        match self {
+            StarterVaultPreset::Empty => "Notes",
+            _ => "00 Inbox",
+        }
+    }
+}
+
 /// Persistent configuration stored inside `<vault>/.nodera/config.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VaultConfig {
@@ -38,13 +117,19 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// Creates a new vault at the specified root path.
-    ///
-    /// Initializes standard directories (`Notes`, `Projects`, `Books`, `Attachments`, `.nodera`)
-    /// and writes the vault configuration.
+    /// Creates a new vault with default empty layout.
     pub fn create(path: impl AsRef<Path>, name: Option<String>) -> Result<Self> {
+        Self::create_with_preset(path, name, StarterVaultPreset::Empty)
+    }
+
+    /// Creates a new vault initialized according to the chosen starter preset.
+    pub fn create_with_preset(
+        path: impl AsRef<Path>,
+        name: Option<String>,
+        preset: StarterVaultPreset,
+    ) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
-        info!(path = %root.display(), "Creating new vault");
+        info!(path = %root.display(), preset = ?preset, "Creating new vault");
 
         if root.exists() {
             if !root.is_dir() {
@@ -70,8 +155,8 @@ impl Vault {
                 reason: format!("Failed to canonicalize root: {source}"),
             })?;
 
-        // Create standard subdirectories
-        for folder in DEFAULT_FOLDERS {
+        // Create preset subdirectories
+        for folder in preset.folder_structure() {
             let folder_path = canonical_root.join(folder);
             if !folder_path.exists() {
                 fs::create_dir_all(&folder_path).map_err(|source| {
@@ -103,7 +188,7 @@ impl Vault {
         let config = VaultConfig {
             version: CURRENT_VAULT_VERSION,
             name: vault_name,
-            default_folder: "Notes".to_string(),
+            default_folder: preset.default_folder().to_string(),
         };
 
         let config_path = nodera_dir.join(CONFIG_FILE_NAME);
@@ -115,6 +200,33 @@ impl Vault {
         fs::write(&config_path, config_json).map_err(|source| VaultError::ConfigError {
             reason: format!("Failed to write config file: {source}"),
         })?;
+
+        // Write starter files based on chosen preset
+        match preset {
+            StarterVaultPreset::Zettelkasten => {
+                let welcome = "---\ntitle: \"Welcome to Zettelkasten\"\ntype: rough\ntags:\n  - welcome\n  - inbox\n---\n# Welcome to your Zettelkasten Vault\n\nThis vault is configured for the Luhmann Zettelkasten method:\n- **00 Inbox**: Capture fleeting ideas, quick thoughts, and raw notes.\n- **01 Fleeting**: Thoughts awaiting elaboration.\n- **02 Literature**: Notes taken while consuming books, papers, articles, and videos.\n- **03 Permanent**: Atomic, synthesized notes in your own words, connected via `[[wikilinks]]`.\n- **04 Index**: High-level maps of content (MOC).\n";
+                let _ = fs::write(canonical_root.join("00 Inbox").join("Welcome.md"), welcome);
+
+                let index = "---\ntitle: \"Zettelkasten Master Index\"\ntype: index\ntags:\n  - index\n  - moc\n---\n# Zettelkasten Master Index\n\n> Central Map of Content (MOC) and topic index for this vault.\n\n## Core Concepts & Permanent Notes\n- [[Welcome]]\n\n## Literature & Sources\n- \n\n## Fleeting Thoughts in Progress\n- \n";
+                let _ = fs::write(canonical_root.join("04 Index").join("Index.md"), index);
+
+                let template = "---\ntitle: \"{{title}}\"\ntype: permanent\ncreated: \"{{date}}\"\ntags:\n  - permanent\n---\n# {{title}}\n\n## Core Idea\n\n## Context & Explanation\n\n## Connections & References\n- \n";
+                let _ = fs::write(canonical_root.join("Templates").join("Permanent Note.md"), template);
+            }
+            StarterVaultPreset::PersonalKnowledge => {
+                let welcome = "---\ntitle: \"Welcome to Personal Knowledge\"\ntype: rough\ntags:\n  - welcome\n  - inbox\n---\n# Welcome to your Personal Knowledge Vault (PARA)\n\nOrganized using the PARA methodology:\n- **00 Inbox**: Quick thoughts and unsorted notes.\n- **01 Projects**: Active efforts with clear deadlines and outcomes.\n- **02 Areas**: Ongoing spheres of responsibility (Health, Career, Finance).\n- **03 Resources**: Topics of interest, references, and useful materials.\n- **04 Archives**: Inactive or completed projects.\n";
+                let _ = fs::write(canonical_root.join("00 Inbox").join("Welcome.md"), welcome);
+            }
+            StarterVaultPreset::Research => {
+                let welcome = "---\ntitle: \"Welcome to Academic Research\"\ntype: rough\ntags:\n  - research\n  - welcome\n---\n# Welcome to your Research Vault\n\n- **00 Inbox**: Raw literature queries and quick observations.\n- **01 Sources**: Summaries of papers, books, datasets, and citation notes.\n- **02 Notes**: Atomic synthesized conceptual notes.\n- **03 Manuscripts**: Drafts, papers, and presentations.\n";
+                let _ = fs::write(canonical_root.join("00 Inbox").join("Welcome.md"), welcome);
+            }
+            StarterVaultPreset::Student => {
+                let welcome = "---\ntitle: \"Welcome to Student Vault\"\ntype: rough\ntags:\n  - learning\n  - student\n---\n# Welcome to your Student Vault\n\n- **00 Inbox**: Quick capture during lectures and reading sessions.\n- **01 Courses**: Course syllabi and semester overviews.\n- **02 Readings**: Assigned textbook and paper notes.\n- **03 Lectures**: Dated lecture notes and discussions.\n- **04 Exams**: Study guides, flashcard concepts, and practice problems.\n";
+                let _ = fs::write(canonical_root.join("00 Inbox").join("Welcome.md"), welcome);
+            }
+            StarterVaultPreset::Empty => {}
+        }
 
         debug!(path = %canonical_root.display(), "Vault created successfully");
         Ok(Self {
@@ -282,6 +394,25 @@ mod tests {
         assert!(vault.root().join("Attachments").is_dir());
         assert!(vault.nodera_dir().is_dir());
         assert!(vault.nodera_dir().join(CONFIG_FILE_NAME).is_file());
+    }
+
+    #[test]
+    fn test_create_with_preset_zettelkasten() {
+        let tmp = tempdir().unwrap();
+        let vault_path = tmp.path().join("ZettelVault");
+
+        let vault = Vault::create_with_preset(&vault_path, Some("Zettel".to_string()), StarterVaultPreset::Zettelkasten).unwrap();
+        assert_eq!(vault.config().name, "Zettel");
+        assert_eq!(vault.config().default_folder, "00 Inbox");
+
+        assert!(vault.root().join("00 Inbox").is_dir());
+        assert!(vault.root().join("01 Fleeting").is_dir());
+        assert!(vault.root().join("02 Literature").is_dir());
+        assert!(vault.root().join("03 Permanent").is_dir());
+        assert!(vault.root().join("04 Index").is_dir());
+        assert!(vault.root().join("04 Index").join("Index.md").is_file());
+        assert!(vault.root().join("00 Inbox").join("Welcome.md").is_file());
+        assert!(vault.root().join("Templates").join("Permanent Note.md").is_file());
     }
 
     #[test]

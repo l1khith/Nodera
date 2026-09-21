@@ -51,3 +51,36 @@ pub struct RelatedNote {
     pub shared_tags: Vec<String>,
     pub snippet: String,
 }
+
+/// Category of items in the Review Queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewCategory {
+    RoughNote,
+    Unlinked,
+    StaleSource,
+    Orphan,
+}
+
+/// Item surfaced in the Review Queue needing user attention or synthesis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewQueueItem {
+    pub path: String,
+    pub title: String,
+    pub category: ReviewCategory,
+    pub reason: String,
+    pub modified_ns: u64,
+}
+
+/// High-level knowledge health metrics across the vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct KnowledgeStats {
+    pub total_notes: usize,
+    pub rough_count: usize,
+    pub permanent_count: usize,
+    pub source_count: usize,
+    pub index_count: usize,
+    pub unlinked_count: usize,
+    pub orphan_count: usize,
+    pub type_counts: std::collections::HashMap<String, usize>,
+}
+

@@ -8,7 +8,9 @@ use tracing::info;
 use nodera_core::{IndexingPhase, IndexingProgress, Note, Result, VaultEntry, VaultService};
 use nodera_markdown::{parse_document, ParsedDocument};
 
-use crate::models::{IndexedTask, RelatedNote, SearchResult, TagCount, TaskFilter};
+use crate::models::{
+    IndexedTask, KnowledgeStats, RelatedNote, ReviewQueueItem, SearchResult, TagCount, TaskFilter,
+};
 use crate::sqlite::{NoteMetadataRecord, SqliteIndex};
 use crate::tantivy_index::TantivyIndex;
 
@@ -170,6 +172,31 @@ impl VaultIndex {
     /// Queries backlinks pointing to a note target.
     pub fn query_backlinks(&self, target: &str) -> Result<Vec<String>> {
         self.sqlite.query_backlinks(target)
+    }
+
+    /// Queries rough / fleeting notes waiting for synthesis.
+    pub fn query_rough_notes(&self) -> Result<Vec<ReviewQueueItem>> {
+        self.sqlite.query_rough_notes()
+    }
+
+    /// Queries unlinked notes (knowledge islands).
+    pub fn query_unlinked_notes(&self) -> Result<Vec<ReviewQueueItem>> {
+        self.sqlite.query_unlinked_notes()
+    }
+
+    /// Queries stale source notes with no synthesis links.
+    pub fn query_stale_sources(&self, cutoff_ns: u64) -> Result<Vec<ReviewQueueItem>> {
+        self.sqlite.query_stale_sources(cutoff_ns)
+    }
+
+    /// Queries orphan notes (0 incoming backlinks).
+    pub fn query_orphan_notes(&self) -> Result<Vec<ReviewQueueItem>> {
+        self.sqlite.query_orphan_notes()
+    }
+
+    /// Queries high-level knowledge metrics across the vault.
+    pub fn query_knowledge_stats(&self) -> Result<KnowledgeStats> {
+        self.sqlite.query_knowledge_stats()
     }
 
     /// Returns scored related note recommendations combining BM25 lexical similarity (70%) and tag Jaccard overlap (30%).

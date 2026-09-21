@@ -18,10 +18,10 @@ fn default_context_width() -> u32 {
     280
 }
 fn default_editor_font_size() -> u32 {
-    14
+    15
 }
 fn default_reading_font_size() -> u32 {
-    16
+    15
 }
 fn default_true() -> bool {
     true
@@ -218,8 +218,8 @@ impl Default for AppPreferences {
             sidebar_width: 260,
             context_panel_width: 280,
             reading_progress: HashMap::new(),
-            editor_font_size: 14,
-            reading_font_size: 16,
+            editor_font_size: 15,
+            reading_font_size: 15,
             show_line_numbers: true,
             auto_save_seconds: 2,
             graph_settings: GraphSettings::default(),
@@ -277,7 +277,16 @@ impl AppPreferences {
     }
 }
 
-use nodera_index::{IndexedTask, RelatedNote, SearchResult, TaskFilter, VaultIndex};
+use nodera_index::{
+    IndexedTask, KnowledgeStats, RelatedNote, ReviewCategory, ReviewQueueItem, SearchResult,
+    TaskFilter, VaultIndex,
+};
+use nodera_markdown::{
+    index_note_template, inject_or_update_frontmatter, meeting_note_template, parse_frontmatter,
+    permanent_note_template, project_note_template, rough_note_template, source_note_template,
+    video_source_template, NOTE_TYPE_INDEX, NOTE_TYPE_MEETING, NOTE_TYPE_PERMANENT,
+    NOTE_TYPE_PROJECT, NOTE_TYPE_ROUGH, NOTE_TYPE_SOURCE, SOURCE_TYPE_BOOK, SOURCE_TYPE_VIDEO,
+};
 use nodera_pdf::{CancellationToken, ConversionOptions, ConversionProgress, ImportResult};
 use std::sync::{Arc, Mutex};
 
@@ -287,6 +296,7 @@ pub enum ActiveView {
     #[default]
     Editor,
     Tasks,
+    ReviewQueue,
     Library,
     Graph,
 }
@@ -305,6 +315,12 @@ pub enum PaletteAction {
     OpenNote(PathBuf),
     OpenDailyNote,
     CreateNote,
+    CreateTypedNote {
+        note_type: String,
+        sub_type: Option<String>,
+    },
+    OpenQuickCapture,
+    PromoteActiveNoteToPermanent,
     ImportPdf,
     SwitchView(ActiveView),
     ToggleTheme,
@@ -450,6 +466,13 @@ pub struct AppState {
 
     // Extensible Plugins (V0.5)
     pub plugin_manager: nodera_core::PluginManager,
+
+    // Quick Capture & Review Queue (V0.6)
+    pub show_quick_capture: bool,
+    pub quick_capture_title: String,
+    pub quick_capture_body: String,
+    pub quick_capture_tags: String,
+    pub review_queue_filter: ReviewCategory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -564,6 +587,12 @@ impl Default for AppState {
             show_pdf_annotation_modal: false,
             indexing_progress: None,
             plugin_manager: nodera_core::PluginManager::default(),
+
+            show_quick_capture: false,
+            quick_capture_title: String::new(),
+            quick_capture_body: String::new(),
+            quick_capture_tags: String::new(),
+            review_queue_filter: ReviewCategory::RoughNote,
         }
     }
 }
@@ -737,6 +766,12 @@ impl AppState {
         self.bib_library = BibLibrary::default();
         self.indexing_progress = None;
         self.plugin_manager = nodera_core::PluginManager::default();
+
+        self.show_quick_capture = false;
+        self.quick_capture_title.clear();
+        self.quick_capture_body.clear();
+        self.quick_capture_tags.clear();
+        self.review_queue_filter = ReviewCategory::RoughNote;
 
         self.status_message = "Vault closed".to_string();
         Ok(())
@@ -2119,6 +2154,61 @@ impl AppState {
                 palette::REBUILD_INDEX.1,
                 PaletteAction::RebuildIndex,
             ),
+            (
+                "Quick Capture (Rough Note)",
+                "Capture fleeting thoughts directly to Inbox (Ctrl+Shift+Q)",
+                PaletteAction::OpenQuickCapture,
+            ),
+            (
+                "New Permanent Note",
+                "Create an atomic permanent note with tags and links",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_PERMANENT.to_string(),
+                    sub_type: None,
+                },
+            ),
+            (
+                "New Rough Note",
+                "Create a rough capture note for later review",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_ROUGH.to_string(),
+                    sub_type: None,
+                },
+            ),
+            (
+                "New Source Note (Book)",
+                "Create a literature source note for a book",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_SOURCE.to_string(),
+                    sub_type: Some(SOURCE_TYPE_BOOK.to_string()),
+                },
+            ),
+            (
+                "New Source Note (Video)",
+                "Create a source note with key takeaways and timestamps",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_SOURCE.to_string(),
+                    sub_type: Some(SOURCE_TYPE_VIDEO.to_string()),
+                },
+            ),
+            (
+                "New Index / MOC Note",
+                "Create a Map of Content note to curate and connect ideas",
+                PaletteAction::CreateTypedNote {
+                    note_type: NOTE_TYPE_INDEX.to_string(),
+                    sub_type: None,
+                },
+            ),
+            (
+                "Promote Active Note to Permanent",
+                "Promote current rough note to permanent without moving files or breaking links",
+                PaletteAction::PromoteActiveNoteToPermanent,
+            ),
+            (
+                "Open Review Queue",
+                "Triage rough notes, unlinked thoughts, and stale sources",
+                PaletteAction::SwitchView(ActiveView::ReviewQueue),
+            ),
         ];
 
         for (title, desc, action) in system_commands {
@@ -2207,6 +2297,18 @@ impl AppState {
                 } else {
                     self.status_message = format!("Plugin: executed '{}'", cmd_id);
                 }
+            }
+            PaletteAction::CreateTypedNote {
+                note_type,
+                sub_type,
+            } => {
+                self.create_typed_note(&note_type, "", sub_type.as_deref())?;
+            }
+            PaletteAction::OpenQuickCapture => {
+                self.open_quick_capture();
+            }
+            PaletteAction::PromoteActiveNoteToPermanent => {
+                self.promote_active_note_to_permanent()?;
             }
         }
         Ok(())
@@ -2411,8 +2513,13 @@ impl AppState {
         }
     }
 
-    /// Creates a new note, saves it to disk, and opens it in the editor.
-    pub fn create_note(&mut self, title: &str, folder: Option<&str>) -> Result<()> {
+    /// Creates a new note with specified initial content, saves it to disk, and opens it in the editor.
+    pub fn create_note_with_content(
+        &mut self,
+        title: &str,
+        folder: Option<&str>,
+        content: &str,
+    ) -> Result<()> {
         let resolved_title = if title.trim().is_empty() {
             self.next_available_note_title()
         } else {
@@ -2420,11 +2527,11 @@ impl AppState {
         };
 
         if let Some(service) = &self.vault_service {
-            let note = service.create_note(folder, &resolved_title, Some(""))?;
-            self.editor_content.clear();
+            let note = service.create_note(folder, &resolved_title, Some(content))?;
+            self.editor_content = content.to_string();
             let rel = note.relative_path.clone();
             let title_str = note.title.clone();
-            self.active_note = Some(note);
+            self.active_note = Some(note.clone());
             self.active_view = ActiveView::Editor;
             self.is_reading_mode = false;
             self.is_dirty = false;
@@ -2455,9 +2562,273 @@ impl AppState {
 
             self.record_recent_note(&rel);
             self.refresh_entries()?;
+
+            // Index new note
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(content) {
+                        let _ = idx.index_note(&note, &parsed);
+                    }
+                }
+            }
+
             debug!(path = %rel.display(), "Created and opened note in state");
         }
         Ok(())
+    }
+
+    /// Creates a new note, saves it to disk, and opens it in the editor.
+    pub fn create_note(&mut self, title: &str, folder: Option<&str>) -> Result<()> {
+        self.create_note_with_content(title, folder, "")
+    }
+
+    /// Creates a note of a specific workflow type with standard frontmatter and structure.
+    pub fn create_typed_note(
+        &mut self,
+        note_type: &str,
+        title: &str,
+        sub_type: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let resolved_title = if title.trim().is_empty() {
+            match note_type {
+                NOTE_TYPE_ROUGH => format!("Rough Note {}", now.format("%Y-%m-%d %H%M")),
+                NOTE_TYPE_PERMANENT => format!("Permanent {}", now.format("%Y-%m-%d")),
+                NOTE_TYPE_SOURCE => format!("Source {}", now.format("%Y-%m-%d")),
+                NOTE_TYPE_INDEX => "Master Index".to_string(),
+                NOTE_TYPE_PROJECT => format!("Project {}", now.format("%Y-%m-%d")),
+                NOTE_TYPE_MEETING => format!("Meeting {}", now.format("%Y-%m-%d")),
+                _ => self.next_available_note_title(),
+            }
+        } else {
+            title.trim().to_string()
+        };
+
+        // Determine target folder if present in vault
+        let mut target_folder: Option<&str> = None;
+        let folder_candidates: &[&str] = match note_type {
+            NOTE_TYPE_ROUGH => &["00 Inbox", "Inbox"],
+            NOTE_TYPE_SOURCE => &["02 Literature", "01 Sources", "Literature", "Sources", "Books"],
+            NOTE_TYPE_PERMANENT => &["03 Permanent", "02 Notes", "Notes", "Permanent"],
+            NOTE_TYPE_INDEX => &["04 Index", "Index", "Notes"],
+            NOTE_TYPE_PROJECT => &["01 Projects", "Projects"],
+            _ => &[],
+        };
+
+        for candidate in folder_candidates {
+            if self.entries.iter().any(|e| match e {
+                VaultEntry::Folder { name, .. } => name.eq_ignore_ascii_case(candidate),
+                _ => false,
+            }) {
+                target_folder = Some(*candidate);
+                break;
+            }
+        }
+
+        let content = match note_type {
+            NOTE_TYPE_ROUGH => rough_note_template(&resolved_title, "", &date_str),
+            NOTE_TYPE_PERMANENT => permanent_note_template(&resolved_title, "", &date_str),
+            NOTE_TYPE_SOURCE => {
+                let st = sub_type.unwrap_or(SOURCE_TYPE_BOOK);
+                if st == SOURCE_TYPE_VIDEO {
+                    video_source_template(
+                        &resolved_title,
+                        "YouTube Channel",
+                        "https://...",
+                        &date_str,
+                    )
+                } else {
+                    source_note_template(
+                        &resolved_title,
+                        st,
+                        "Author Name",
+                        "https://...",
+                        &date_str,
+                    )
+                }
+            }
+            NOTE_TYPE_INDEX => index_note_template(&resolved_title, &resolved_title),
+            NOTE_TYPE_PROJECT => project_note_template(&resolved_title, &date_str),
+            NOTE_TYPE_MEETING => meeting_note_template(&resolved_title, &date_str),
+            _ => format!(
+                "---\ntitle: \"{resolved_title}\"\ntype: {note_type}\ncreated: \"{date_str}\"\n---\n# {resolved_title}\n\n"
+            ),
+        };
+
+        self.create_note_with_content(&resolved_title, target_folder, &content)
+    }
+
+    /// Opens the Quick Capture modal dialog.
+    pub fn open_quick_capture(&mut self) {
+        self.show_quick_capture = true;
+        self.quick_capture_title.clear();
+        self.quick_capture_body.clear();
+        self.quick_capture_tags.clear();
+    }
+
+    /// Closes the Quick Capture modal dialog.
+    pub fn close_quick_capture(&mut self) {
+        self.show_quick_capture = false;
+        self.quick_capture_title.clear();
+        self.quick_capture_body.clear();
+        self.quick_capture_tags.clear();
+    }
+
+    /// Executes saving the captured rough note with optional open in editor.
+    pub fn execute_quick_capture(&mut self, open_after: bool) -> Result<()> {
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let title = if self.quick_capture_title.trim().is_empty() {
+            format!("Thought {}", now.format("%Y-%m-%d %H%M%S"))
+        } else {
+            self.quick_capture_title.trim().to_string()
+        };
+
+        let body = self.quick_capture_body.trim().to_string();
+
+        let mut target_folder: Option<&str> = None;
+        for candidate in &["00 Inbox", "Inbox"] {
+            if self.entries.iter().any(|e| match e {
+                VaultEntry::Folder { name, .. } => name.eq_ignore_ascii_case(candidate),
+                _ => false,
+            }) {
+                target_folder = Some(*candidate);
+                break;
+            }
+        }
+
+        let mut content = rough_note_template(&title, &body, &date_str);
+
+        // Inject custom tags if provided
+        if !self.quick_capture_tags.trim().is_empty() {
+            if let Ok((Some(mut fm), body_part)) = parse_frontmatter(&content) {
+                for t in self.quick_capture_tags.split(',').map(str::trim) {
+                    let clean = t.trim_start_matches('#');
+                    if !clean.is_empty() && !fm.tags.contains(&clean.to_string()) {
+                        fm.tags.push(clean.to_string());
+                    }
+                }
+                content = inject_or_update_frontmatter(body_part, &fm);
+            }
+        }
+
+        self.close_quick_capture();
+
+        if open_after {
+            self.create_note_with_content(&title, target_folder, &content)?;
+        } else if let Some(service) = &self.vault_service {
+            let note = service.create_note(target_folder, &title, Some(&content))?;
+            self.entries = service.list_entries()?;
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(&content) {
+                        let _ = idx.index_note(&note, &parsed);
+                    }
+                }
+            }
+            self.status_message = format!("Captured rough note '{title}' to Inbox");
+        }
+        Ok(())
+    }
+
+    /// Safely promotes the active note from a rough/untyped note to a permanent note.
+    /// Invariant: NEVER renames or moves the file, strictly preserving 100% of vault wikilinks.
+    pub fn promote_active_note_to_permanent(&mut self) -> Result<()> {
+        let (existing_fm, body) =
+            parse_frontmatter(&self.editor_content).unwrap_or((None, &self.editor_content));
+        let mut fm = existing_fm.unwrap_or_default();
+
+        if fm.title.is_none() {
+            if let Some(note) = &self.active_note {
+                fm.title = Some(note.title.clone());
+            }
+        }
+
+        fm.set_note_type(NOTE_TYPE_PERMANENT);
+        if !fm.tags.contains(&"permanent".to_string()) {
+            fm.tags.push("permanent".to_string());
+        }
+        // Remove rough/inbox tags if present
+        fm.tags.retain(|t| t != "rough" && t != "inbox");
+
+        let updated = inject_or_update_frontmatter(body, &fm);
+        self.editor_content = updated;
+        self.is_dirty = true;
+        self.save_active_note()?;
+        self.status_message = "Promoted note to Permanent (links & path preserved)".to_string();
+        Ok(())
+    }
+
+    /// Marks a note as reviewed by adding `reviewed: YYYY-MM-DD` to its frontmatter.
+    pub fn mark_note_reviewed(&mut self, rel_path: &Path) -> Result<()> {
+        let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+        if let Some(service) = &self.vault_service {
+            let note = service.read_note(rel_path)?;
+            let (existing_fm, body) =
+                parse_frontmatter(&note.content).unwrap_or((None, &note.content));
+            let mut fm = existing_fm.unwrap_or_default();
+            fm.mark_reviewed(&date_str);
+            let updated = inject_or_update_frontmatter(body, &fm);
+            let updated_note = service.write_note(rel_path, &updated)?;
+
+            // If active note is the one being marked, update editor content too
+            if let Some(active) = &self.active_note {
+                if active.relative_path == rel_path {
+                    self.editor_content = updated.clone();
+                    self.is_dirty = false;
+                }
+            }
+
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    if let Ok(parsed) = parse_document(&updated) {
+                        let _ = idx.index_note(&updated_note, &parsed);
+                    }
+                }
+            }
+            self.status_message = format!("Marked '{}' as reviewed", note.title);
+        }
+        Ok(())
+    }
+
+    /// Queries the review queue items for the current filter category.
+    pub fn get_review_queue_items(&self) -> Vec<ReviewQueueItem> {
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(idx) = index_arc.lock() {
+                match self.review_queue_filter {
+                    ReviewCategory::RoughNote => idx.query_rough_notes().unwrap_or_default(),
+                    ReviewCategory::Unlinked => idx.query_unlinked_notes().unwrap_or_default(),
+                    ReviewCategory::StaleSource => {
+                        let now_ns = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos() as u64)
+                            .unwrap_or(0);
+                        let fourteen_days_ns = 14 * 24 * 3600 * 1_000_000_000u64;
+                        let cutoff_ns = now_ns.saturating_sub(fourteen_days_ns);
+                        idx.query_stale_sources(cutoff_ns).unwrap_or_default()
+                    }
+                    ReviewCategory::Orphan => idx.query_orphan_notes().unwrap_or_default(),
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Queries vault-wide knowledge health metrics.
+    pub fn get_knowledge_stats(&self) -> KnowledgeStats {
+        if let Some(index_arc) = &self.vault_index {
+            if let Ok(idx) = index_arc.lock() {
+                idx.query_knowledge_stats().unwrap_or_default()
+            } else {
+                KnowledgeStats::default()
+            }
+        } else {
+            KnowledgeStats::default()
+        }
     }
 
     /// Renames a note on disk and updates active note if open.
@@ -2513,6 +2884,30 @@ impl AppState {
             self.editor_content = content;
             self.is_dirty = true;
         }
+    }
+
+    /// Appends or inserts a Wikilink snippet into the active editor note.
+    pub fn insert_wikilink_snippet(&mut self, target: &str) {
+        let snippet = format!("[[{target}]]");
+        if self.editor_content.ends_with('\n') || self.editor_content.is_empty() {
+            self.editor_content.push_str(&snippet);
+        } else {
+            self.editor_content.push(' ');
+            self.editor_content.push_str(&snippet);
+        }
+        self.is_dirty = true;
+    }
+
+    /// Appends or inserts an embed snippet into the active editor note.
+    pub fn insert_embed_snippet(&mut self, target: &str) {
+        let snippet = format!("![[{target}]]");
+        if self.editor_content.ends_with('\n') || self.editor_content.is_empty() {
+            self.editor_content.push_str(&snippet);
+        } else {
+            self.editor_content.push(' ');
+            self.editor_content.push_str(&snippet);
+        }
+        self.is_dirty = true;
     }
 
     /// Toggles light/dark theme and persists the choice.
@@ -2630,11 +3025,12 @@ impl AppState {
         self.status_message = "Layout reset to default".to_string();
     }
 
-    /// Cycles through active view modes: Editor -> Tasks -> Library -> Graph -> Editor.
+    /// Cycles through active view modes: Editor -> Tasks -> ReviewQueue -> Library -> Graph -> Editor.
     pub fn cycle_view(&mut self) {
         self.active_view = match self.active_view {
             ActiveView::Editor => ActiveView::Tasks,
-            ActiveView::Tasks => ActiveView::Library,
+            ActiveView::Tasks => ActiveView::ReviewQueue,
+            ActiveView::ReviewQueue => ActiveView::Library,
             ActiveView::Library => ActiveView::Graph,
             ActiveView::Graph => ActiveView::Editor,
         };
@@ -3529,5 +3925,78 @@ mod tests {
         assert!(state.split_pane.is_none());
         assert!(state.nav_history.is_empty());
     }
+
+    #[test]
+    fn test_safe_note_promotion_preserves_path_and_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("PromotionVault");
+        let mut state = AppState::default();
+        state.create_vault(&vault_path, Some("PromotionVault".to_string())).unwrap();
+
+        // 1. Create a rough note
+        state.create_typed_note(NOTE_TYPE_ROUGH, "Raw Insight", None).unwrap();
+        let initial_path = state.active_note.as_ref().unwrap().relative_path.clone();
+
+        // 2. Create another note linking to this rough note
+        state.create_note("Synthesis Hub", None).unwrap();
+        state.update_editor_content("# Hub\nSee [[Raw Insight]] for details.".to_string());
+        state.save_active_note().unwrap();
+
+        // 3. Switch back to rough note
+        state.select_note(&initial_path).unwrap();
+        assert!(state.editor_content.contains("type: rough"));
+
+        // 4. Promote note to permanent
+        state.promote_active_note_to_permanent().unwrap();
+
+        // 5. Invariant checks:
+        // - Path MUST be identical (no silent renames or moves!)
+        let promoted_path = state.active_note.as_ref().unwrap().relative_path.clone();
+        assert_eq!(initial_path, promoted_path, "Path must not change during promotion");
+
+        // - Frontmatter type must now be permanent
+        let (fm, _) = parse_frontmatter(&state.editor_content).unwrap();
+        let fm = fm.unwrap();
+        assert_eq!(fm.note_type(), Some("permanent"));
+        assert!(fm.is_permanent());
+        assert!(!fm.is_rough());
+
+        // - Links to the note remain 100% valid in the index
+        state.select_note(&promoted_path).unwrap();
+        let backlinks_after = state.get_current_backlinks();
+        assert!(backlinks_after.iter().any(|p| p.file_stem().and_then(|s| s.to_str()) == Some("Synthesis Hub")));
+    }
+
+    #[test]
+    fn test_quick_capture_and_review_queue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_path = tmp.path().join("CaptureVault");
+        let mut state = AppState::default();
+        state.create_vault(&vault_path, Some("CaptureVault".to_string())).unwrap();
+
+        // 1. Trigger Quick Capture
+        state.open_quick_capture();
+        assert!(state.show_quick_capture);
+        state.quick_capture_title = "Eureka Moment".to_string();
+        state.quick_capture_body = "The key to architecture is simplicity.".to_string();
+        state.quick_capture_tags = "spark, insight".to_string();
+
+        state.execute_quick_capture(false).unwrap();
+        assert!(!state.show_quick_capture);
+
+        // 2. Query Review Queue
+        state.review_queue_filter = ReviewCategory::RoughNote;
+        let items = state.get_review_queue_items();
+        assert!(items.iter().any(|item| item.title == "Eureka Moment"));
+
+        // 3. Mark as reviewed
+        let note_path = items.iter().find(|i| i.title == "Eureka Moment").unwrap().path.clone();
+        state.mark_note_reviewed(Path::new(&note_path)).unwrap();
+
+        // 4. Verify it no longer appears in unprocessed rough notes
+        let items_after = state.get_review_queue_items();
+        assert!(!items_after.iter().any(|item| item.title == "Eureka Moment"));
+    }
 }
+
 

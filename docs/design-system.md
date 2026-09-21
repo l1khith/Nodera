@@ -1,1088 +1,983 @@
-# Nodera Design System
-
-> Canonical UI design language for the Nodera desktop application.
-
-This document defines the visual system for Nodera so that every UI surface uses the same colors, typography, spacing, components, states, and interaction patterns.
-
-## 1. Design Principles
-
-Nodera should feel:
-
-- calm
-- focused
-- technical without being sterile
-- dense but readable
-- keyboard-first
-- local-first
-- professional
-- consistent
-
-Nodera takes interaction inspiration from knowledge-management applications such as Obsidian, but its visual identity is original.
-
-### Core rules
-
-1. Use semantic design tokens rather than component-specific colors.
-2. Prefer neutral surfaces and restrained accents.
-3. Use the Nodera blue/indigo family as the dominant brand language.
-4. Use violet sparingly as a secondary accent.
-5. Do not use gradients throughout the UI. Gradients are primarily a branding/logo treatment.
-6. Do not communicate state using color alone.
-7. Preserve strong focus and selection states.
-8. Components should look related even when used in different application areas.
-
+---
+description: Canonical UI design language and token specification for
+  the Nodera desktop application.
+title: Technical Precision Workspace
 ---
 
-## 2. Brand Identity
+# Technical Precision Workspace Design System
 
-### Primary brand
+> Canonical UI design language and token specification for the Nodera
+> desktop application.
 
-```text
-Brand Primary      #5B6CFF
-Brand Hover        #7182FF
-Brand Pressed      #4A55E8
-```
+## 1. Purpose
 
-### Secondary brand
+This design system defines a high-precision, technical, native-feeling
+desktop environment tailored for knowledge workers, software engineers,
+and researchers.
 
-```text
-Brand Secondary    #9A4BFF
-Brand Secondary    #7E3FE0
-```
+The visual language draws from brutalist-adjacent minimalism and modern
+technical desktop tools such as Obsidian, Linear, and VS Code. It
+prioritizes:
 
-### Brand palette
+-   Structural clarity
+-   Operational speed
+-   Keyboard-first ergonomics
+-   Content density without visual noise
+-   Clear surface hierarchy
+-   Precise interaction states
+-   Consistent typography and spacing
 
-| Token | Hex | Usage |
+The visual tone is restrained, cerebral, and quiet.
+
+### Non-negotiable principles
+
+-   **Zero Decorative Fluff:** Broad gradients, blurred translucent
+    backdrops, skeuomorphic gloss, and vibrant rainbow accent clusters
+    are forbidden.
+-   **Architectural Separation:** Layout structure is established
+    through deep matte surfaces and crisp 1px hairline strokes rather
+    than diffuse blur or exaggerated elevation.
+-   **Content Primacy:** Screen real estate favors the editor canvas,
+    markdown content, and relational graphs. Desktop chrome remains
+    compact and unobtrusive.
+-   **Deliberate Accents:** Primary interactions use authoritative
+    cobalt blue. Relational knowledge vectors and active focus anchors
+    use controlled violet.
+-   **Technical Precision:** Dimensions, radii, typography, borders, and
+    interaction states should be implemented from tokens rather than
+    ad-hoc values.
+
+------------------------------------------------------------------------
+
+# 2. Theme Tokens --- `theme.rs`
+
+## 2.1 Calibrated 70/20/8/2 Balance
+
+The workspace follows a calibrated visual distribution:
+
+| Ratio | Role |
+|---|---|
+| **70%** | Deep matte slate-black background and surface layers |
+| **20%** | Structural lines and high-contrast technical typography |
+| **8%** | Cobalt interactive focal points |
+| **2%** | Purposeful relational violet |
+
+This ratio is a visual discipline, not a literal pixel-area requirement.
+
+## 2.2 Primary Foundations
+
+| Token | Dark Value | Purpose |
 |---|---|---|
-| `brand-50` | `#F2F5FF` | subtle tint |
-| `brand-100` | `#E3E9FF` | selected backgrounds |
-| `brand-200` | `#C7D2FF` | soft borders/highlights |
-| `brand-300` | `#9AA9FF` | secondary accent |
-| `brand-400` | `#7182FF` | interactive accent |
-| `brand-500` | `#5B6CFF` | primary brand |
-| `brand-600` | `#4A55E8` | hover/active |
-| `brand-700` | `#3C43C5` | pressed/strong |
-| `violet-500` | `#9A4BFF` | secondary brand |
-| `violet-600` | `#7E3FE0` | secondary emphasis |
+| `--bg-app` | `#0B0F14` | Root application backdrop / recessed void canvas |
+| `--bg-sidebar` | `#11161D` | Sidebars, navigation, top chrome |
+| `--bg-surface` | `#141720` | Work surface, editor panes, cards, dialogs |
+| `--bg-surface-elevated` | `#161D26` | Toolbars, tabs, code headers, flyouts |
+| `--bg-hover` | `#202533` | Hover state |
+| `--bg-active` | `#252A3A` | Active rows, tabs, selections |
 
----
+## 2.3 Borders
 
-## 3. Dark Theme
+| Token | Value | Usage |
+|---|---|---|
+| `--border` | `#28313C` | Default 1px hairline borders |
+| `--border-strong` | `#383F4F` | Focused elements, modal perimeters |
+| `--border-subtle` | `#1E232F` | Ultra-subtle dividers and table rules |
 
-Dark mode is the primary visual reference for Nodera.
+## 2.4 Text & Foreground
 
-### Surfaces
+| Token | Dark Value | Light Value | Usage |
+|---|---|---|---|
+| `--text-primary` | `#DEE2ED` | `#171C23` | Primary prose, active titles |
+| `--text-secondary` | `#C5C5D6` | `#475060` | Secondary labels and descriptions |
+| `--text-muted` | `#8E90A0` | `#6B7687` | Metadata, shortcuts, captions |
+| `--text-disabled` | `#444654` | `#98A2B3` | Disabled icons and controls |
 
-```text
-Background           #0D0F14
-Surface              #141720
-Surface Elevated     #1A1E29
-Surface Hover        #202533
-Surface Active       #282D40
+## 2.5 Primary Cobalt Accent
+
+| Token | Dark Value | Light Value | Usage |
+|---|---|---|---|
+| `--accent` | `#6680FF` | `#4A63E8` | Primary interactive cobalt |
+| `--accent-hover` | `#7182FF` | `#3B53D8` | Hover state |
+| `--accent-pressed` | `#4A55E8` | `#2D41B8` | Pressed state |
+| `--accent-focus` | `rgba(102, 128, 255, 0.25)` | `rgba(74, 99, 232, 0.2)` | 2px keyboard focus halo |
+
+## 2.6 Relational Violet
+
+| Token | Dark Value | Light Value | Usage |
+|---|---|---|---|
+| `--accent-secondary` | `#9A4BFF` | `#7E3FE0` | Wikilinks, transclusions, active graph node |
+| `--accent-secondary-hover` | `#AC68FF` | `#9253F0` | Relational hover state |
+
+## 2.7 Knowledge Graph Roles
+
+| Role | Value |
+|---|---|
+| Graph nodes | `#6680FF` |
+| Graph edges | `#444A5B` |
+| Illuminated graph edges | `#7182FF` |
+| Dot grid | `rgba(255, 255, 255, 0.08)` |
+
+## 2.8 Semantic Tones
+
+| Semantic | Foreground | Container | Usage |
+|---|---|---|---|
+| Success | `#35B875` | `#163527` | Completed indexing, positive feedback |
+| Warning | `#E3A93B` | `#392C16` | Unsaved buffers, unlinked mentions |
+| Error | `#E45B63` | `#391A1D` | Parse errors, broken links, destructive actions |
+| Info | `#4FA3E3` | `#172E40` | Citation updates, sync advisories |
+
+------------------------------------------------------------------------
+
+# 3. Canonical Light Theme
+
+The light theme mirrors the same structural hierarchy while preserving
+contrast and semantic relationships.
+
+| Token | Dark | Light |
+|---|---|---|
+| `--bg-app` | `#0B0F14` | `#F4F6F9` |
+| `--bg-sidebar` | `#11161D` | `#ECEFF3` |
+| `--bg-surface` | `#141720` | `#FFFFFF` |
+| `--bg-surface-elevated` | `#161D26` | `#F8FAFC` |
+| `--bg-hover` | `#202533` | `#EEF2F6` |
+| `--bg-active` | `#252A3A` | `#E4E9F2` |
+| `--border` | `#28313C` | `#D1D7E0` |
+| `--border-strong` | `#383F4F` | `#A8B2C0` |
+| `--border-subtle` | `#1E232F` | `#E6EAF0` |
+| `--text-primary` | `#DEE2ED` | `#171C23` |
+| `--text-secondary` | `#C5C5D6` | `#475060` |
+| `--text-muted` | `#8E90A0` | `#6B7687` |
+| `--text-disabled` | `#444654` | `#98A2B3` |
+| `--accent` | `#6680FF` | `#4A63E8` |
+| `--accent-hover` | `#7182FF` | `#3B53D8` |
+| `--accent-pressed` | `#4A55E8` | `#2D41B8` |
+| `--accent-secondary` | `#9A4BFF` | `#7E3FE0` |
+| `--accent-secondary-hover` | `#AC68FF` | `#9253F0` |
+| `--accent-focus` | `rgba(102, 128, 255, 0.25)` | `rgba(74, 99, 232, 0.2)` |
+
+------------------------------------------------------------------------
+
+# 4. Typography --- `editor.rs` / `state.rs`
+
+## 4.1 Font Families
+
+### UI
+
+Primary UI font:
+
+``` text
+Geist
 ```
 
-### Borders
+Fallback stack:
 
-```text
-Border               #292E3A
-Border Strong        #383F4F
+``` text
+-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
 ```
 
-### Text
+### Code and editor metadata
 
-```text
-Text Primary         #F1F3F8
-Text Secondary       #A7ADBC
-Text Muted           #747B8C
-Text Disabled        #525866
+Primary monospace:
+
+``` text
+JetBrains Mono
 ```
 
-### Interaction
+Fallback stack:
 
-```text
-Primary              #5B6CFF
-Primary Hover        #7182FF
-Primary Pressed      #4A55E8
-Secondary            #9A4BFF
-Secondary Hover      #AC68FF
-Focus                #7182FF
-Selection            #3540A8
+``` text
+"Cascadia Code", "Fira Code", Consolas, monospace
 ```
 
-### Sidebar
+## 4.2 Typography Scale
 
-```text
-Sidebar Background   #11141B
-Sidebar Hover        #191D27
-Sidebar Active       #252A3A
+| Style | Font | Size | Weight | Line Height | Tracking |
+|---|---|---|---|---|---|
+| Display | Geist | 28px | 700 | 34px | -0.01em |
+| H1 | Geist | 24px | 700 | 30px | -0.01em |
+| H2 | Geist | 20px | 600 | 26px | -0.005em |
+| H3 | Geist | 17px | 600 | 23px | 0 |
+| Body | Geist | 14px | 400 | 22px | 0 |
+| Body Small | Geist | 12px | 400 | 18px | 0 |
+| Editor Body | Geist | 15px | 400 | 26px | 0 |
+| Caption | Geist | 11px | 500 | 16px | 0.02em |
+| Code Label | JetBrains Mono | 13px | 400 | 20px | 0 |
+| Property Label | JetBrains Mono | 11px | 500 | 16px | 0.01em |
+
+## 4.3 Editor Reading Defaults
+
+The editor default is:
+
+-   **Font size:** `15px`
+-   **Line height:** `26px`
+-   **Ratio:** approximately `1.73`
+-   **Font family:** `Geist`
+-   Applies consistently to single-pane and split-view editors.
+
+Long-form editor buffers use this generous line height to support
+sustained reading while retaining desktop density.
+
+------------------------------------------------------------------------
+
+# 5. Layout & Spacing
+
+The workspace follows a strict 4px incremental baseline grid.
+
+## 5.1 Spacing Tokens
+
+| Token | Value |
+|---|---|
+| `gutter` | `1px` |
+| `gutter-panel` | `0.5rem` / 8px |
+| `margin` | `1rem` / 16px |
+| `margin-editor` | `1.75rem` / 28px |
+| `space-xs` | `0.25rem` / 4px |
+| `space-sm` | `0.5rem` / 8px |
+| `space-md` | `0.75rem` / 12px |
+| `space-lg` | `1rem` / 16px |
+| `space-xl` | `1.5rem` / 24px |
+
+## 5.2 Desktop Chrome
+
+| Region | Height |
+|---|---|
+| Top Header Utility Bar | 40px |
+| Document Tab Bar | 38px |
+| Status Bar | 24px |
+
+### Top Header Utility Bar
+
+Fixed at `40px`, spanning the full window width.
+
+Contains:
+
+-   Application controls
+-   Vault status indicator
+-   Global command triggers
+
+### Document Tab Bar
+
+Fixed at `38px`.
+
+Tabs use approximately `4px` element gaps.
+
+### Status Bar
+
+Fixed to the bottom edge at `24px`.
+
+Uses the `11px` caption typography.
+
+------------------------------------------------------------------------
+
+# 6. Three-Pane Workspace Model
+
+## Left Navigation Pane
+
+Default width:
+
+``` text
+240px–300px
 ```
-
----
-
-## 4. Light Theme
-
-### Surfaces
-
-```text
-Background           #F7F8FC
-Surface              #FFFFFF
-Surface Elevated     #FFFFFF
-Surface Hover        #F0F2F8
-Surface Active       #E8EBF5
-```
-
-### Borders
-
-```text
-Border               #DEE2EC
-Border Strong        #C8CDD9
-```
-
-### Text
-
-```text
-Text Primary         #171A23
-Text Secondary       #565D6D
-Text Muted           #7A8190
-Text Disabled        #A7ACB7
-```
-
-### Interaction
-
-```text
-Primary              #4F5FEF
-Primary Hover        #4050D8
-Primary Pressed      #3544B8
-Secondary            #8744E8
-Secondary Hover      #7837D4
-Focus                #4F5FEF
-Selection            #DDE2FF
-```
-
-### Sidebar
-
-```text
-Sidebar Background   #F1F3F8
-Sidebar Hover        #E8EBF3
-Sidebar Active       #DFE3F0
-```
-
----
-
-## 5. Semantic Status Colors
-
-Do not use the brand accent for semantic status.
-
-```text
-Success              #35B875
-Warning              #E3A93B
-Error                #E45B63
-Info                 #4FA3E3
-```
-
-Dark supporting backgrounds:
-
-```text
-Success Background   #163527
-Warning Background   #392C16
-Error Background     #391A1D
-Info Background      #172E40
-```
-
-Status must be communicated with at least one non-color cue such as:
-
-- icon
-- text
-- shape
-- progress indicator
-
----
-
-## 6. Editor Syntax Colors
-
-Keep syntax highlighting restrained.
-
-```text
-Heading              #8090FF
-Link                 #71B7FF
-Wikilink             #A477FF
-Tag                  #67C7B0
-Code                 #D5A6FF
-Quote                #8D95A6
-Comment              #62697A
-```
-
-The editor must remain primarily text-focused.
-
-Do not turn the editor into a rainbow syntax display.
-
----
-
-## 7. Graph Colors
-
-```text
-Normal Node          #5B6CFF
-Current Note         #9A4BFF
-Hovered Node         #7182FF
-Connected Node       #7E8CFF
-Edge                 #444A5B
-Highlighted Edge     #7182FF
-Label                #D7DBE6
-```
-
-Graph meaning must not rely exclusively on color.
-
----
-
-## 8. PDF Import Colors
-
-Reuse application semantics.
-
-```text
-Selected             #5B6CFF
-Converting           #7182FF
-Completed            #35B875
-Warning              #E3A93B
-Failed               #E45B63
-```
-
-Do not create a separate PDF-specific visual language.
-
----
-
-## 9. Typography
-
-Use the platform's high-quality UI/system font by default unless a project-wide font is explicitly selected later.
-
-### Type scale
-
-```text
-Display      28 px / 34 px
-H1           24 px / 30 px
-H2           20 px / 26 px
-H3           17 px / 23 px
-Body         14 px / 22 px
-Small        12 px / 18 px
-Caption      11 px / 16 px
-Code         13 px / 20 px
-```
-
-### Weights
-
-```text
-Regular      400
-Medium       500
-Semibold     600
-Bold         700
-```
-
-Use bold sparingly.
-
-The interface should not look heavy.
-
-### Editor typography
-
-The editor should support a slightly larger reading size than utility UI:
-
-```text
-Editor Body       15–16 px
-Editor Line Height 1.55–1.7
-```
-
----
-
-## 10. Spacing Scale
-
-Use a 4 px base grid.
-
-```text
-4     xs
-8     sm
-12    md
-16    lg
-20    xl
-24    2xl
-32    3xl
-40    4xl
-48    5xl
-64    6xl
-```
-
-Do not introduce arbitrary spacing values unless necessary.
-
-Common usage:
-
-```text
-icon-to-label       8 px
-small control gap   8 px
-control groups      12 px
-panel padding       16 px
-dialog padding      24 px
-section spacing     24–32 px
-```
-
----
-
-## 11. Corner Radius
-
-Use modest radii.
-
-```text
-Radius XS            4 px
-Radius SM            6 px
-Radius MD            8 px
-Radius LG            12 px
-Radius XL            16 px
-```
-
-Guideline:
-
-```text
-Inputs/buttons       6–8 px
-Panels               8–12 px
-Dialogs              12–16 px
-Cards                8–12 px
-```
-
-Avoid excessive pill-shaped UI.
-
-Use full pills only for tags, compact status chips, or similar semantic elements.
-
----
-
-## 12. Shadows
-
-Nodera should rely more on surface contrast than heavy shadows.
-
-### Dark theme
-
-Use subtle elevation:
-
-```text
-small:
-0 2px 8px rgba(0,0,0,0.20)
-
-medium:
-0 8px 24px rgba(0,0,0,0.28)
-
-large:
-0 16px 40px rgba(0,0,0,0.35)
-```
-
-### Light theme
-
-Use softer shadows:
-
-```text
-small:
-0 2px 8px rgba(16,24,40,0.08)
-
-medium:
-0 8px 24px rgba(16,24,40,0.12)
-
-large:
-0 16px 40px rgba(16,24,40,0.14)
-```
-
-Do not apply shadows to every component.
-
----
-
-## 13. Icons
-
-Use one consistent icon family throughout the application.
-
-Rules:
-
-- 16 px for dense navigation
-- 18 px for standard controls
-- 20–24 px for prominent actions
-- same stroke weight throughout
-- avoid mixing filled and outlined icon styles without reason
-
-Icons must support the label rather than replace it when the action is ambiguous.
-
-Examples:
-
-```text
-Notes          document icon
-Tasks          checkbox/check icon
-Library        book icon
-Search         magnifier
-Settings       gear
-Import         download/file icon
-Graph          nodes icon
-Backlinks      link/arrow icon
-```
-
-Avoid emoji as permanent UI icons.
-
-Emoji may appear in user-created content or optional decorative surfaces, but application chrome should use the chosen icon system.
-
----
-
-## 14. Buttons
-
-### Primary
-
-Used for the main action of a surface.
-
-```text
-Background     Primary
-Text           #FFFFFF
-Radius         8 px
-Height         34–38 px
-Horizontal     12–16 px
-```
-
-### Secondary
-
-```text
-Background     Surface
-Border         Border
-Text           Text Primary
-```
-
-### Ghost
-
-```text
-Background     transparent
-Hover          Surface Hover
-Text           Text Secondary
-```
-
-### Destructive
-
-Use the error semantic token.
-
-Do not use red for ordinary secondary actions.
-
----
-
-## 15. Inputs
-
-Inputs should have:
-
-```text
-Background     Surface
-Border         Border
-Text           Text Primary
-Placeholder    Text Muted
-Radius         8 px
-Focus          Focus ring
-```
-
-Focus must be visible without relying only on subtle color changes.
-
----
-
-## 16. Panels
-
-Panels provide spatial structure, not visual decoration.
-
-Preferred:
-
-```text
-surface
-+
-subtle border
-+
-spacing
-```
-
-Avoid heavy borders around every nested element.
-
----
-
-## 17. Navigation
-
-### Sidebar
-
-The sidebar should remain visually subordinate to the editor.
-
-Hierarchy:
-
-```text
-Section label
-  folder
-    note
-    note
-```
-
-Active item:
-
-```text
-subtle active background
-+
-primary accent/icon
-+
-primary text
-```
-
-Do not use a huge bright filled pill for the active note.
-
----
-
-## 18. Tabs
-
-Tabs should be compact.
-
-States:
-
-```text
-Inactive
-Hover
-Active
-Modified
-Close-hover
-```
-
-An unsaved/modified state must use a non-color indicator such as a dot.
-
----
-
-## 19. Dialogs
-
-Dialog structure:
-
-```text
-Title
-Description
-Content
-Actions
-```
-
-Primary action should be visually obvious.
-
-Destructive dialogs must explicitly identify the destructive consequence.
-
-Dialogs should trap focus appropriately.
-
-Escape should close cancellable dialogs.
-
----
-
-## 20. Toasts / Notifications
-
-Use for short-lived feedback:
-
-```text
-Saved
-Imported successfully
-Index rebuilt
-Copied
-```
-
-Do not use to display errors that require user decisions.
-
-Errors that require action belong in an error surface/dialog.
-
----
-
-## 21. Empty States
-
-Structure:
-
-```text
-icon
-title
-short explanation
-primary action
-optional secondary action
-```
-
-Keep empty states compact.
-
-Example:
-
-```text
-No notes yet
-
-Create your first Markdown note or import an existing document.
-
-[New Note] [Import]
-```
-
----
-
-## 22. Error States
-
-Every user-facing error must answer:
-
-```text
-What happened?
-What can I do?
-```
-
-Example:
-
-```text
-PDF could not be imported
-
-The file appears to be encrypted with a password.
-
-Choose another PDF or provide an accessible file.
-```
-
-Technical diagnostics should be available separately.
-
----
-
-## 23. Editor UX
-
-The editor is the primary application surface.
-
-Requirements:
-
-- minimal chrome
-- strong text readability
-- reliable cursor behavior
-- clear selection
-- visible active link
-- predictable keyboard shortcuts
-- no UI jitter while typing
-- autosave status should be subtle
-
-Preferred editor states:
-
-```text
-Editing
-Saving
-Saved
-Error
-Read-only
-```
-
----
-
-## 24. Live Preview / Reading Mode
-
-Reading mode should prioritize content.
-
-Remove unnecessary controls.
-
-Use:
-
-```text
-comfortable reading width
-large enough line height
-clear heading hierarchy
-consistent code blocks
-visible links
-```
-
-Do not force a full-width document when reading.
-
----
-
-## 25. Context Panel
-
-The right panel is contextual rather than permanently dedicated to one feature.
-
-It may contain:
-
-```text
-Outline
-Backlinks
-Outgoing Links
-Properties
-Tasks
-```
-
-The panel can be hidden.
-
----
-
-## 26. Graph UI
-
-Graph is a knowledge visualization surface, not decoration.
-
-Support eventually:
-
-```text
-Global graph
-Local graph
-Node selection
-Open note
-Focus
-Search/filter
-Depth
-```
-
-Use subtle motion.
-
-Disable/reduce animation when requested by the system/user.
-
----
-
-## 27. Workspace Layout
-
-Default layout:
-
-```text
-┌───────────────┬───────────────────────────┬─────────────────┐
-│ Navigation    │ Editor / Reader           │ Context         │
-│               │                           │                 │
-│ 240–300 px    │ Flexible                  │ 260–320 px      │
-└───────────────┴───────────────────────────┴─────────────────┘
-```
-
-These are defaults, not hard limits.
-
-Users can resize/hide side panels.
-
-The center editor is always the dominant surface.
-
----
-
-## 28. Responsive Desktop Behavior
-
-Below a narrower desktop window:
-
-```text
-1. hide context panel
-2. collapse navigation
-3. preserve editor
-4. keep primary commands accessible through keyboard/command palette
-```
-
-Never let narrow windows make the application unusable.
-
----
-
-## 29. Motion
-
-Motion should communicate state, not entertain.
-
-Preferred duration:
-
-```text
-Micro interaction     100–150 ms
-Panel transition      150–220 ms
-Modal transition      180–240 ms
-```
-
-Avoid bouncing and elastic effects.
-
-Respect reduced-motion settings.
-
----
-
-## 30. Color Usage Ratio
-
-Approximate visual balance:
-
-```text
-70% neutral surfaces
-20% text / secondary UI
-8% primary blue/indigo
-2% violet
-```
-
-This is a guideline, not a pixel-level constraint.
-
-The goal is for the application to feel calm and blue-led, with violet used as an accent.
-
----
-
-## 31. Logo Usage
-
-Primary asset:
-
-```text
-assets/branding/nodera-logo.svg
-```
-
-Monochrome asset:
-
-```text
-assets/branding/nodera-logo-mono.svg
-```
-
-The SVG is the master asset.
-
-Generate raster derivatives only for platform-specific requirements.
-
-Do not repeatedly redraw or approximate the logo inside UI components.
-
-### Logo rules
-
-- keep clear space around the mark
-- never distort proportions
-- never rotate
-- do not add random shadows
-- do not place on backgrounds where contrast is insufficient
-- use monochrome variant where gradients are inappropriate
-
----
-
-## 32. Semantic Design Tokens
-
-Implement the theme through semantic tokens.
-
-```text
-background
-surface
-surface-elevated
-surface-hover
-surface-active
-
-border
-border-strong
-
-text-primary
-text-secondary
-text-muted
-text-disabled
-
-brand-primary
-brand-primary-hover
-brand-primary-pressed
-
-brand-secondary
-brand-secondary-hover
-
-success
-warning
-error
-info
-
-focus
-selection
-```
-
-Components must consume semantic tokens.
-
-Do not scatter raw hexadecimal colors throughout the codebase.
-
----
-
-## 33. Component State Model
-
-Every reusable component should explicitly define:
-
-```text
-Default
-Hover
-Pressed
-Focused
-Disabled
-Selected
-Loading
-Error
-Success
-```
-
-Only implement states that actually apply to that component.
-
-Do not create fake visual states.
-
----
-
-## 34. UX Consistency Rules
-
-The same action must look and behave the same everywhere.
-
-Examples:
-
-```text
-Save
-Cancel
-Delete
-Search
-Open
-Import
-Create
-```
-
-If a button opens a dialog in one place, a semantically identical action should not silently perform a different interaction elsewhere.
-
----
-
-## 35. Accessibility Rules
 
 Minimum:
 
-```text
-visible focus
-keyboard navigation
-semantic labels
-sufficient contrast
-no color-only meaning
-text scaling
-reduced motion
-accessible dialogs
+``` text
+180px
 ```
 
-Do not remove focus indicators merely to make the UI look cleaner.
+Contains:
 
----
+-   Hierarchical file trees
+-   Vault bookmarks
+-   Navigation utilities
 
-## 36. Engineering Rules For UI
+## Center Canvas
 
-Dioxus components must not:
+Uses:
 
-```text
-query SQLite directly
-write arbitrary files directly
-contain business rules
-duplicate application commands
+``` text
+flex: 1
 ```
 
-Preferred:
+Markdown prose is constrained to an optimal reading width of
+approximately:
 
-```text
-UI event
-   ↓
-application command
-   ↓
-service/domain
-   ↓
-adapter
+``` text
+780px–840px
 ```
 
-The UI should primarily manage presentation state.
+Graph canvases may span full bleed.
 
----
+## Right Context Panel
 
-## 37. Definition of Visual Consistency
+Default width:
 
-A new feature is visually complete when:
-
-```text
-same typography system
-same spacing scale
-same radii
-same icon family
-same semantic colors
-same interaction states
-same accessibility rules
+``` text
+260px–320px
 ```
 
-are applied.
+Contains:
 
-A feature must not invent a private design system.
+-   Backlinks
+-   Metadata inspector
+-   Outgoing references
+-   Contextual knowledge information
 
----
+## Pane Dividers
 
-## 38. Design Review Checklist
+Visual divider:
 
-Before merging UI changes:
-
-```text
-[ ] Uses semantic tokens
-[ ] Uses existing spacing scale
-[ ] Uses existing type scale
-[ ] Uses existing icon system
-[ ] Has focus state
-[ ] Has disabled state where applicable
-[ ] Has error state where applicable
-[ ] Has empty state where applicable
-[ ] Works in light theme
-[ ] Works in dark theme
-[ ] Keyboard interaction verified
-[ ] No raw color duplication
-[ ] No unnecessary animation
-[ ] No unrelated visual refactor
+``` text
+1px
 ```
 
----
+Interactive hit area:
 
-## 39. Product Identity Summary
-
-Nodera should visually communicate:
-
-```text
-Markdown-native
-Local-first
-Technical
-Calm
-Connected
-Fast
-Focused
-Native
+``` text
+5px
 ```
 
-The visual identity is:
+This allows bidirectional split resizing without visually thickening the
+divider.
 
-```text
-Blue / Indigo
-        +
-Violet accent
-        +
-Cool neutral surfaces
-        +
-High readability
-        +
-Minimal chrome
+------------------------------------------------------------------------
+
+# 7. Responsive Breakpoints
+
+## Compact Desktop --- `< 1100px`
+
+The right context panel collapses into:
+
+-   An off-canvas drawer, or
+-   A toggleable context tab
+
+## Narrow Desktop --- `< 800px`
+
+The left sidebar:
+
+-   Folds into an icon rail, or
+-   Collapses completely
+
+Document navigation should then remain accessible through
+keyboard-driven quick-open controls.
+
+------------------------------------------------------------------------
+
+# 8. Elevation & Depth
+
+Visual hierarchy uses tiered matte surfaces and crisp hairline borders
+rather than blurred translucency or ambient atmospheric glow.
+
+## 8.1 Surface Hierarchy
+
+| Level | Surface | Value | Typical Usage |
+|---|---|---|---|
+| Level 0 | Recessed Void | `#0B0F14` | Canvas backdrop, graph background, editor empty space |
+| Level 1 | Docked Structural | `#11161D` | Tree panels, sidebar chrome, window headers |
+| Level 2 | Active Work Surface | `#141720` | Editor panes, inputs, document cards |
+| Level 3 | Elevated Technical | `#161D26` | Tab bars, code headers, context dropdowns |
+| Level 4 | Floating Overlay | `#141720` / `#161D26` | Command palettes, menus, setting panels |
+
+## 8.2 Shadows
+
+Shadows are restricted to floating overlays.
+
+### Overlay
+
+``` css
+box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
 ```
 
-That combination should remain consistent across Notes, Tasks, Library, Graph, Search, Settings, and PDF Import.
+### Floating Card
 
----
-
-## 40. First-Principles UI Consolidation & Visual Rules
-
-### 40.1 The 12 First-Principles Rules
-
-1. **ONE CANONICAL VISIBLE ENTRY POINT**: Every action has one primary visible location. The Command Palette (`Ctrl+P`) is a universal secondary invocation mechanism and does not count as a duplicate visual control. Context-specific actions appear only where directly relevant.
-2. **NAVIGATION ≠ ACTION**: "Notes / Tasks / Library / Graph" are destinations. "Delete / Rename / Import / Rebuild" are actions.
-3. **GLOBAL ACTIONS LIVE IN GLOBAL CHROME; CONTEXTUAL ACTIONS LIVE IN SURFACES**: Specialist tools (PDF annotations, citation insertion, note properties, graph controls) live in their contextual panels or Command Palette.
-4. **ONE PRIMARY ACTION PER SURFACE**: Avoid multiple competing primary-weight buttons on a single card or toolbar.
-5. **ICON-ONLY IS RESERVED FOR**: universally understood primitives, compact window controls, and actions with strong tooltip labels.
-6. **GENERIC ICONS MUST NOT REPRESENT UNRELATED CONCEPTS**: Separate note properties (`IconProperties`) from tags (`IconTag`).
-7. **COLOR COMMUNICATES MEANING**: Neutral by default. Cobalt accent for focus/selection. Green = success. Amber = warning. Red = danger. Blue = information/action.
-8. **NO DECORATION WITHOUT FUNCTION**: No gradients, glass, glow, or decorative radial orbs just to fill space.
-9. **NO DUPLICATE TOOLBARS**: A contextual operation must not simultaneously appear in top bar + sidebar + panel + card unless there is a deliberate workflow reason.
-10. **THE CONTENT SURFACE GETS MOST OF THE VISUAL WEIGHT**: Minimize chrome thickness and borders.
-11. **SECONDARY ACTIONS COLLAPSE INTO OVERFLOW, CONTEXT MENU, OR PALETTE**: Avoid multi-button row clutter.
-12. **EVERY ICON MUST ANSWER**: icon → meaning → action → scope.
-
-### 40.2 Visual No-Go List
-
-```text
-❌ UI gradients (linear or radial)
-❌ Gradient text
-❌ Neon borders
-❌ Glowing buttons
-❌ Liquid / frosted glass (backdrop-filter: blur)
-❌ Decorative radial orbs
-❌ Sparkle icons / decorative arrows
-❌ Rainbow UI or graph color systems
-❌ Pastel-accent overload
-❌ Giant card drop-shadows
-❌ Hover card lift (translateY)
-❌ Emoji as application chrome
-❌ Duplicate action clusters in table/list rows
-❌ Oversized empty-state illustrations
+``` css
+box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
 ```
 
-### 40.3 Semantic Elevation Tokens
+### Library Card Hover
 
-```css
---shadow-none: none;
---shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
---shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
---shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+``` css
+box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 ```
 
-Shadows are permitted only on floating surfaces:
-- Editor/Sidebar/Library surface: `--shadow-none`
-- Dropdown menus & popovers: `--shadow-sm`
-- Modal dialogs & Command Palette: `--shadow-lg`
+------------------------------------------------------------------------
 
-### 40.4 Contextual Inspector Architecture
+# 9. Focus & Interaction States
 
-The right-side rail is a single, contextual Inspector surface:
-- **Editor / Note Mode**:
-  - Outline (headings with jump-to-section)
-  - Properties (frontmatter title, tags, custom key-values)
-  - Links (Backlinks, Outgoing, Unlinked mentions)
-  - Related Notes (Lexical BM25 + Tag Overlap)
-  - Local Graph (Depth 1, 2, 3)
-- **Graph Mode**:
-  - Filters (Tags, Attachments, Existing, Orphans)
-  - Groups (Color by Community)
-  - Display (Size by Centrality, Arrows, Text fade, Node size)
-  - Forces (Center, Repel, Link distance)
+Keyboard-focused elements use a crisp two-layer focus treatment:
 
-Never render note-inspector sections and graph-control sections together. The active view determines the inspector mode.
+``` text
+2px perimeter ring
+rgba(102, 128, 255, 0.35)
+```
+
+with:
+
+``` text
+1px solid #6680FF
+```
+
+The focus treatment must not cause layout reflow.
+
+------------------------------------------------------------------------
+
+# 10. Shapes & Radius System
+
+| Token | Value | Usage |
+|---|---|---|
+| `sm` | `0.125rem` / 2px | Small technical elements |
+| `DEFAULT` | `0.25rem` / 4px | Standard compact controls |
+| `md` | `0.375rem` / 6px | Buttons and inputs |
+| `lg` | `0.5rem` / 8px | Larger controls and shells |
+| `xl` | `0.75rem` / 12px | Cards and major dialogs |
+| `full` | `9999px` | Pills and counters |
+
+### Shape rules
+
+-   Tree selections, status chips, icon utility buttons, tag pills and
+    inline code tags: **4px**
+-   Primary buttons, input fields, callouts, tabs and command shells:
+    **6–8px**
+-   Library cards and major setup dialogs: **12px**
+-   Graph zoom indicators and notification counters: **9999px**
+
+------------------------------------------------------------------------
+
+# 11. Component Specifications
+
+## 11.1 Primary Button
+
+``` text
+Height:        34px
+Padding:       6px 14px
+Radius:        6px
+Background:    #6680FF
+Border:        1px solid #6680FF
+Text:          #FFFFFF
+Weight:        600
+```
+
+States:
+
+| State | Background |
+|---|---|
+| Default | `#6680FF` |
+| Hover | `#7182FF` |
+| Pressed | `#4A55E8` |
+
+## 11.2 Secondary / Action Button
+
+``` text
+Background: #141720
+Text:       #ECF0F4
+Border:     1px solid #28313C
+```
+
+Hover:
+
+``` text
+Background: #202533
+Border:     #6680FF
+```
+
+## 11.3 Icon Utility Button
+
+``` text
+Size:       28px × 28px
+Radius:     4px
+Background: transparent
+Icon:       #A7ADBC
+```
+
+Hover:
+
+``` text
+Background: #202533
+Icon:       #ECF0F4
+```
+
+## 11.4 Destructive Button
+
+Default:
+
+``` text
+Background: transparent
+Text:       #E45B63
+```
+
+Hover:
+
+``` text
+Background: #391A1D
+Text:       #F06A72
+```
+
+------------------------------------------------------------------------
+
+# 12. Inputs & Property Rows
+
+## Search / Text Input
+
+``` text
+Background: #161D26
+Border:     1px solid #28313C
+Radius:     6px
+Padding:    6px 10px
+Typography: body-sm
+```
+
+Inside property drawers, the background may use:
+
+``` text
+#0B0F14
+```
+
+Focused state:
+
+``` text
+Border: #6680FF
+Halo:   2px rgba(102, 128, 255, 0.25)
+```
+
+## Frontmatter Property Row
+
+``` text
+Key column: 110px fixed
+Font:       JetBrains Mono
+Label:      #747B8C
+Input:      26px field height
+```
+
+An inline delete action should remain available without changing the
+row's overall geometry.
+
+------------------------------------------------------------------------
+
+# 13. Knowledge Tags & Metadata
+
+## Knowledge Tag
+
+``` text
+Background: #191D27
+Border:     1px solid #28313C
+Text:       #7182FF
+Radius:     4px
+Font:       JetBrains Mono
+Size:       11px
+```
+
+## Status Indicator
+
+Use a compact `4px` vertical pill paired with an `11px` medium label.
+
+Semantic containers:
+
+``` text
+Success: #163527
+Warning: #392C16
+Error:   #391A1D
+```
+
+------------------------------------------------------------------------
+
+# 14. Lists & Tree Views
+
+## Tree Node Item
+
+``` text
+Height:      28px
+Horizontal:  6px
+Radius:      4px
+```
+
+Inactive:
+
+``` text
+Text: #A7ADBC
+```
+
+Active:
+
+``` text
+Background: #252A3A
+Text:       #ECF0F4
+Marker:     #6680FF
+```
+
+## List Dividers
+
+``` text
+1px solid #1E232F
+```
+
+------------------------------------------------------------------------
+
+# 15. Multi-Tab Bar
+
+## Container
+
+``` text
+Height: 38px
+```
+
+## Tab
+
+``` text
+Maximum width: 180px
+Padding:      6px 12px
+Top radius:   6px
+```
+
+## Active Tab
+
+``` text
+Background: #141720
+Border:     1px solid #28313C
+Bottom:     transparent
+Text:       #ECF0F4
+```
+
+The transparent bottom border visually merges the active tab with the
+content pane.
+
+## Dirty Buffer Indicator
+
+``` text
+Size: 6px circular dot
+Color: #6680FF
+Position: left of close glyph
+```
+
+------------------------------------------------------------------------
+
+# 16. Cards & Transclusions
+
+## Library Document Card
+
+``` text
+Background: #141720
+Border:     1px solid #28313C
+Radius:     12px
+Shadow:     0 4px 16px rgba(0, 0, 0, 0.28)
+```
+
+Hover:
+
+``` text
+Transform: translateY(-2px)
+Border:    #6680FF
+Shadow:    0 8px 28px rgba(0, 0, 0, 0.45)
+```
+
+## Transcluded Note Embed
+
+``` text
+Background: #141720
+Border:     1px solid #28313C
+Left border: 4px solid #6680FF
+Radius:     8px
+```
+
+Header:
+
+``` text
+Background: #161D26
+Padding:    8px 14px
+```
+
+## Markdown Callout
+
+``` text
+Background: #141720
+Border:     1px solid #28313C
+Radius:     6px
+Left border: 4px
+```
+
+Semantic left-border colors:
+
+| Callout | Color |
+|---|---|
+| Note | `#4FA3E3` |
+| Tip | `#35B875` |
+| Warning | `#E3A93B` |
+| Danger | `#E45B63` |
+
+------------------------------------------------------------------------
+
+# 17. Command Palette
+
+## Overlay
+
+``` text
+Background: rgba(0, 0, 0, 0.60)
+Backdrop blur: none
+```
+
+The overlay is a matte scrim. Do not use backdrop blur.
+
+## Dialog
+
+``` text
+Width:       540px
+Background:  #141720
+Border:      1px solid #383F4F
+Radius:      8px
+Shadow:      0 16px 40px rgba(0, 0, 0, 0.45)
+```
+
+## Search Header
+
+``` text
+Height: 44px
+Border: none
+Autofocus: yes
+```
+
+Contains:
+
+-   Leading search glyph
+-   Search input
+-   Monospace `Esc` shortcut hint
+
+## Result Row
+
+``` text
+Height: 36px
+```
+
+Active row:
+
+``` text
+Background: #202533
+```
+
+Keyboard action badge uses:
+
+``` text
+JetBrains Mono
+```
+
+------------------------------------------------------------------------
+
+# 18. Knowledge Graph
+
+The graph is treated as a spatial information surface rather than a
+decorative visualization.
+
+## Nodes
+
+``` text
+Default: #6680FF
+```
+
+## Edges
+
+``` text
+Default:    #444A5B
+Illuminated: #7182FF
+```
+
+## Active Relational State
+
+Use:
+
+``` text
+#9A4BFF
+```
+
+for:
+
+-   Wikilinks
+-   Transclusions
+-   Active relational nodes
+-   Relationship-focused interactions
+
+## Dot Grid
+
+``` text
+rgba(255, 255, 255, 0.08)
+```
+
+The grid should remain subordinate to nodes, edges and document content.
+
+------------------------------------------------------------------------
+
+# 19. Editor Rules
+
+The editor is the primary content surface and therefore receives the
+strongest protection from unnecessary chrome.
+
+### Required defaults
+
+-   `15px` editor body font
+-   `26px` line height
+-   Geist as primary reading font
+-   JetBrains Mono for code/property metadata
+-   780–840px optimal prose line length
+-   Minimal visual borders inside the document
+-   No decorative gradients
+-   No excessive shadows
+-   No translucent editor backgrounds
+
+### Split View
+
+Single-pane and split-view editors must use the same editor typography
+tokens and vertical rhythm.
+
+------------------------------------------------------------------------
+
+# 20. Component Density Rules
+
+Desktop chrome must remain compact.
+
+Use:
+
+-   28px icon utility controls
+-   34px primary controls
+-   38px tab bar
+-   40px header
+-   24px status bar
+-   28px tree rows
+-   36px command result rows
+
+Avoid increasing component height merely to create visual emphasis.
+Emphasis should come from typography, contrast, state surfaces and
+accent treatment.
+
+------------------------------------------------------------------------
+
+# 21. Accessibility & Interaction Requirements
+
+-   Keyboard focus must always remain visually identifiable.
+-   Focus rings must not cause layout reflow.
+-   Disabled elements must use `--text-disabled`.
+-   Semantic states must not rely solely on color; pair them with text,
+    icons or structural indicators.
+-   Text hierarchy must remain legible against its assigned surface.
+-   Hover should never be the only way to discover an available action.
+-   Destructive actions must use the error semantic system consistently.
+-   Interactive hit areas may be larger than their visible borders when
+    precision resizing is required.
+
+------------------------------------------------------------------------
+
+# 22. Implementation Checklist
+
+## `theme.rs`
+
+Implement the canonical tokens for:
+
+-   Background surfaces
+-   Hover and active states
+-   Borders
+-   Text hierarchy
+-   Cobalt accent
+-   Violet relational accent
+-   Semantic states
+-   Focus ring
+-   Light-theme equivalents
+
+## `editor.rs`
+
+Implement:
+
+-   Geist editor typography
+-   15px editor default size
+-   26px line height
+-   Single-pane consistency
+-   Split-view consistency
+-   Markdown content density
+-   Code / metadata typography using JetBrains Mono
+
+## `state.rs`
+
+Ensure editor and UI state defaults reference the design-system values
+rather than introducing independent visual constants.
+
+## Component layer
+
+Implement the component dimensions and states in this document before
+introducing custom one-off values.
+
+------------------------------------------------------------------------
+
+# 23. Source Token Reference
+
+The original canonical token set includes the following foundational
+Material-style semantic values and should remain available where
+framework-level semantic mapping is required:
+
+``` yaml
+Technical Precision Workspace:
+  colors:
+    surface: '#0f141b'
+    surface-dim: '#0f141b'
+    surface-bright: '#353941'
+    surface-container-lowest: '#090e15'
+    surface-container-low: '#171c23'
+    surface-container: '#1b2027'
+    surface-container-high: '#252a32'
+    surface-container-highest: '#30353d'
+    on-surface: '#dee2ed'
+    on-surface-variant: '#c5c5d6'
+    inverse-surface: '#dee2ed'
+    inverse-on-surface: '#2c3138'
+    outline: '#8e90a0'
+    outline-variant: '#444654'
+    surface-tint: '#b9c3ff'
+    primary: '#b9c3ff'
+    on-primary: '#00218c'
+    primary-container: '#7088ff'
+    on-primary-container: '#001c7b'
+    inverse-primary: '#3551cf'
+    secondary: '#d8baff'
+    on-secondary: '#440087'
+    secondary-container: '#7107d6'
+    on-secondary-container: '#d7b9ff'
+    tertiary: '#9ccaff'
+    on-tertiary: '#003257'
+    tertiary-container: '#4c95db'
+    on-tertiary-container: '#002b4c'
+    error: '#ffb4ab'
+    on-error: '#690005'
+    error-container: '#93000a'
+    on-error-container: '#ffdad6'
+    background: '#0f141b'
+    on-background: '#dee2ed'
+    surface-variant: '#30353d'
+```
+
+------------------------------------------------------------------------
+
+# 24. Design-System Rules of Thumb
+
+1.  **Prefer structure over decoration.**
+2.  **Prefer hairlines over heavy borders.**
+3.  **Prefer matte surfaces over blur.**
+4.  **Prefer cobalt for direct interaction.**
+5.  **Prefer violet for relational knowledge semantics.**
+6.  **Keep editor chrome subordinate to content.**
+7.  **Use shadows only where an element actually floats.**
+8.  **Use monospace typography when alignment communicates structure.**
+9.  **Keep desktop controls compact.**
+10. **Use tokens before inventing a new value.**
+11. **Maintain the 70/20/8/2 visual balance.**
+12. **Do not introduce gradients, glassmorphism, decorative glow, or
+    unnecessary animation.**
+
+------------------------------------------------------------------------
+
+# 25. Canonical Status
+
+**Status:** Canonical
+
+**Applies to:** Nodera desktop application
+
+**Primary implementation files:** `theme.rs`, `editor.rs`, `state.rs`
+
+**Documentation:** `docs/design-system.md`
+
+Any component that conflicts with this specification should be treated
+as a design-system deviation and reviewed before being introduced into
+the application.

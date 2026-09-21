@@ -1013,7 +1013,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                 let community_color = if current_settings.display.color_by_community {
                                     COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
                                 } else {
-                                    "var(--graph-node, #5B6CFF)"
+                                    "var(--graph-node, #6680FF)"
                                 };
 
                                 let (node_color, stroke_color, stroke_width, node_opacity, stroke_dash) = if node.is_unresolved {
@@ -1021,13 +1021,13 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let stroke = if is_selected || is_hovered {
                                         "var(--graph-node-hover, #7182FF)"
                                     } else {
-                                        "var(--text-muted, #7E8CFF)"
+                                        "var(--text-muted, #8E90A0)"
                                     };
                                     let opacity = if focused_idx.is_some() && !is_connected { "0.20" } else { "0.85" };
                                     (fill, stroke, "1.5", opacity, "3 2")
                                 } else if node.is_tag {
                                     let fill = "#E5A158";
-                                    let stroke = if is_selected || is_hovered { "#FFFFFF" } else { "var(--border, #292E3A)" };
+                                    let stroke = if is_selected || is_hovered { "#FFFFFF" } else { "var(--border, #28313C)" };
                                     let opacity = if focused_idx.is_some() && !is_connected { "0.20" } else { "0.95" };
                                     (fill, stroke, "1.5", opacity, "")
                                 } else if focused_idx.is_some() {
@@ -1044,7 +1044,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     } else if is_connected {
                                         (community_color, "var(--border-strong, #383F4F)", "2.0", "1.0", "")
                                     } else {
-                                        (community_color, "var(--border, #292E3A)", "1.0", "0.18", "")
+                                        (community_color, "var(--border, #28313C)", "1.0", "0.18", "")
                                     }
                                 } else {
                                     let fill = if is_current {
@@ -1052,7 +1052,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     } else {
                                         community_color
                                     };
-                                    let stroke = if is_current { "#D5C7FF" } else { "var(--border, #292E3A)" };
+                                    let stroke = if is_current { "#D5C7FF" } else { "var(--border, #28313C)" };
                                     let opacity = if !matches_query { "0.20" } else { "1.0" };
                                     (fill, stroke, "1.5", opacity, "")
                                 };
@@ -1322,7 +1322,7 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                         } else if is_hovered {
                             "var(--graph-node-hover, #7182FF)"
                         } else {
-                            "var(--graph-node, #5B6CFF)"
+                            "var(--graph-node, #6680FF)"
                         };
                         let stroke_dash = if node.is_unresolved { "3 2" } else { "" };
                         let path_click = node.path.clone();
@@ -1353,7 +1353,7 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                                     cy: "{node.y}",
                                     r: if is_current { "8" } else { "6" },
                                     fill: "{fill_color}",
-                                    stroke: if is_current { "#D5C7FF" } else { "var(--border, #292E3A)" },
+                                    stroke: if is_current { "#D5C7FF" } else { "var(--border, #28313C)" },
                                     stroke_width: "1.5",
                                     stroke_dasharray: "{stroke_dash}",
                                 }
@@ -1361,7 +1361,7 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
                                     x: "{node.x}",
                                     y: format!("{}", node.y + if is_current { 18.0 } else { 15.0 }),
                                     text_anchor: "middle",
-                                    fill: "var(--graph-label, #D7DBE6)",
+                                    fill: "var(--graph-label, #DEE2ED)",
                                     font_size: "10",
                                     font_weight: if is_current { "600" } else { "400" },
                                     pointer_events: "none",

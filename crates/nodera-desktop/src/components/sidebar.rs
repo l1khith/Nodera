@@ -50,6 +50,15 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                     span { "{nav::TASKS}" }
                 }
                 button {
+                    style: if app_state.active_view == crate::state::ActiveView::ReviewQueue { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
+                    onclick: move |_| {
+                        let mut s = state.write();
+                        s.active_view = crate::state::ActiveView::ReviewQueue;
+                    },
+                    IconReviewQueue { size: 15 }
+                    span { "Review Queue" }
+                }
+                button {
                     style: if app_state.active_view == crate::state::ActiveView::Library { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
                     onclick: move |_| {
                         let mut s = state.write();

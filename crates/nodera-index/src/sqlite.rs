@@ -6,7 +6,9 @@ use tracing::{debug, info};
 use nodera_core::{IndexError, NoderaError, Result};
 use nodera_markdown::{ParsedTask, Wikilink};
 
-use crate::models::{IndexedTask, TagCount, TaskFilter};
+use crate::models::{
+    IndexedTask, KnowledgeStats, ReviewCategory, ReviewQueueItem, TagCount, TaskFilter,
+};
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -685,6 +687,228 @@ impl SqliteIndex {
         Ok(paths)
     }
 
+    /// Queries rough notes that are unprocessed or waiting for synthesis.
+    pub fn query_rough_notes(&self) -> Result<Vec<ReviewQueueItem>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT f.path, f.title, f.modified_ns
+                 FROM files f
+                 LEFT JOIN properties p ON f.id = p.note_id AND p.key = 'type'
+                 LEFT JOIN tags t ON f.id = t.note_id AND (t.tag = 'rough' OR t.tag = 'inbox')
+                 LEFT JOIN properties prev ON f.id = prev.note_id AND prev.key = 'reviewed'
+                 WHERE prev.note_id IS NULL
+                   AND (
+                     p.value_json LIKE '%\"rough\"%'
+                     OR p.value_json = '\"rough\"'
+                     OR t.note_id IS NOT NULL
+                     OR f.path LIKE '00 Inbox/%'
+                     OR f.path LIKE 'Inbox/%'
+                   )
+                 ORDER BY f.modified_ns DESC",
+            )
+            .map_err(db_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ReviewQueueItem {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    category: ReviewCategory::RoughNote,
+                    reason: "Unprocessed rough / fleeting thought".to_string(),
+                    modified_ns: row.get::<_, i64>(2)? as u64,
+                })
+            })
+            .map_err(db_err)?;
+
+        let mut items = Vec::new();
+        for item in rows {
+            items.push(item.map_err(db_err)?);
+        }
+        Ok(items)
+    }
+
+    /// Queries unlinked notes (0 outgoing links and 0 incoming backlinks).
+    pub fn query_unlinked_notes(&self) -> Result<Vec<ReviewQueueItem>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT f.path, f.title, f.modified_ns
+                 FROM files f
+                 LEFT JOIN properties prev ON f.id = prev.note_id AND prev.key = 'reviewed'
+                 WHERE prev.note_id IS NULL
+                   AND f.id NOT IN (SELECT source_id FROM links)
+                   AND f.path NOT IN (SELECT target_path FROM links)
+                   AND f.title NOT IN (SELECT target_path FROM links)
+                   AND (f.title || '.md') NOT IN (SELECT target_path FROM links)
+                 ORDER BY f.modified_ns DESC",
+            )
+            .map_err(db_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ReviewQueueItem {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    category: ReviewCategory::Unlinked,
+                    reason: "Isolated note with 0 connections".to_string(),
+                    modified_ns: row.get::<_, i64>(2)? as u64,
+                })
+            })
+            .map_err(db_err)?;
+
+        let mut items = Vec::new();
+        for item in rows {
+            items.push(item.map_err(db_err)?);
+        }
+        Ok(items)
+    }
+
+    /// Queries stale source notes older than `cutoff_ns` with 0 permanent notes linking to them.
+    pub fn query_stale_sources(&self, cutoff_ns: u64) -> Result<Vec<ReviewQueueItem>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT f.path, f.title, f.modified_ns
+                 FROM files f
+                 JOIN properties p ON f.id = p.note_id AND p.key = 'type' AND (p.value_json LIKE '%\"source\"%' OR p.value_json = '\"source\"')
+                 LEFT JOIN properties prev ON f.id = prev.note_id AND prev.key = 'reviewed'
+                 WHERE prev.note_id IS NULL
+                   AND f.modified_ns <= ?
+                 ORDER BY f.modified_ns ASC",
+            )
+            .map_err(db_err)?;
+
+        let rows = stmt
+            .query_map(params![cutoff_ns as i64], |row| {
+                Ok(ReviewQueueItem {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    category: ReviewCategory::StaleSource,
+                    reason: "Source note waiting for permanent synthesis".to_string(),
+                    modified_ns: row.get::<_, i64>(2)? as u64,
+                })
+            })
+            .map_err(db_err)?;
+
+        let mut items = Vec::new();
+        for item in rows {
+            items.push(item.map_err(db_err)?);
+        }
+        Ok(items)
+    }
+
+    /// Queries orphan notes (0 incoming backlinks).
+    pub fn query_orphan_notes(&self) -> Result<Vec<ReviewQueueItem>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT f.path, f.title, f.modified_ns
+                 FROM files f
+                 LEFT JOIN properties prev ON f.id = prev.note_id AND prev.key = 'reviewed'
+                 WHERE prev.note_id IS NULL
+                   AND f.path NOT IN (SELECT target_path FROM links)
+                   AND f.title NOT IN (SELECT target_path FROM links)
+                   AND (f.title || '.md') NOT IN (SELECT target_path FROM links)
+                 ORDER BY f.modified_ns DESC",
+            )
+            .map_err(db_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ReviewQueueItem {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    category: ReviewCategory::Orphan,
+                    reason: "No other notes link to this note".to_string(),
+                    modified_ns: row.get::<_, i64>(2)? as u64,
+                })
+            })
+            .map_err(db_err)?;
+
+        let mut items = Vec::new();
+        for item in rows {
+            items.push(item.map_err(db_err)?);
+        }
+        Ok(items)
+    }
+
+    /// Queries high-level knowledge metrics and note type distributions across the vault.
+    pub fn query_knowledge_stats(&self) -> Result<KnowledgeStats> {
+        let total_notes: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        let unlinked_count: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM files f
+                 WHERE f.id NOT IN (SELECT source_id FROM links)
+                   AND f.path NOT IN (SELECT target_path FROM links)
+                   AND f.title NOT IN (SELECT target_path FROM links)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let orphan_count: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM files f
+                 WHERE f.path NOT IN (SELECT target_path FROM links)
+                   AND f.title NOT IN (SELECT target_path FROM links)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT p.value_json, COUNT(f.id)
+                 FROM properties p
+                 JOIN files f ON p.note_id = f.id
+                 WHERE p.key = 'type'
+                 GROUP BY p.value_json",
+            )
+            .map_err(db_err)?;
+
+        let mut type_counts = HashMap::new();
+        let mut rough_count = 0;
+        let mut permanent_count = 0;
+        let mut source_count = 0;
+        let mut index_count = 0;
+
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))
+            .map_err(db_err)?;
+
+        for row in rows {
+            let (raw_val, count) = row.map_err(db_err)?;
+            let clean_val = raw_val.trim_matches('"').to_lowercase();
+            match clean_val.as_str() {
+                "rough" => rough_count += count,
+                "permanent" => permanent_count += count,
+                "source" => source_count += count,
+                "index" | "moc" => index_count += count,
+                _ => {}
+            }
+            *type_counts.entry(clean_val).or_insert(0) += count;
+        }
+
+        Ok(KnowledgeStats {
+            total_notes,
+            rough_count,
+            permanent_count,
+            source_count,
+            index_count,
+            unlinked_count,
+            orphan_count,
+            type_counts,
+        })
+    }
+
     /// Clears all tables for full rebuild.
     pub fn clear_all(&mut self) -> Result<()> {
         self.conn
@@ -977,4 +1201,112 @@ mod tests {
         );
         assert_eq!(tags_1, tags_2, "Repeat rebuild must produce identical tags");
     }
+
+    #[test]
+    fn test_review_queue_and_knowledge_queries() {
+        let mut idx = SqliteIndex::in_memory().unwrap();
+
+        // 1. Rough note in Inbox
+        let mut props_rough = HashMap::new();
+        props_rough.insert("type".to_string(), serde_json::json!("rough"));
+        let empty_links = vec![];
+        let empty_tasks = vec![];
+        let tags_rough = vec!["inbox".to_string()];
+
+        idx.index_note_metadata(
+            "note-rough",
+            "00 Inbox/Quick Idea.md",
+            "Quick Idea",
+            "hash-1",
+            100,
+            2000,
+            &empty_links,
+            &empty_tasks,
+            &tags_rough,
+            &props_rough,
+        ).unwrap();
+
+        // 2. Permanent note with link to source
+        let mut props_perm = HashMap::new();
+        props_perm.insert("type".to_string(), serde_json::json!("permanent"));
+        let link_to_source = vec![Wikilink {
+            raw: "[[Clean Code]]".to_string(),
+            target: "Clean Code".to_string(),
+            display_text: None,
+            start: 10,
+            end: 24,
+        }];
+        let tags_perm = vec!["permanent".to_string()];
+
+        idx.index_note_metadata(
+            "note-perm",
+            "03 Permanent/Single Responsibility.md",
+            "Single Responsibility",
+            "hash-2",
+            500,
+            3000,
+            &link_to_source,
+            &empty_tasks,
+            &tags_perm,
+            &props_perm,
+        ).unwrap();
+
+        // 3. Stale source note (old timestamp)
+        let mut props_src = HashMap::new();
+        props_src.insert("type".to_string(), serde_json::json!("source"));
+        props_src.insert("source_type".to_string(), serde_json::json!("book"));
+        let tags_src = vec!["source".to_string(), "book".to_string()];
+
+        idx.index_note_metadata(
+            "note-src",
+            "02 Literature/Old Article.md",
+            "Old Article",
+            "hash-3",
+            400,
+            1000, // old timestamp
+            &empty_links,
+            &empty_tasks,
+            &tags_src,
+            &props_src,
+        ).unwrap();
+
+        // 4. Isolated/unlinked note
+        let props_orphan = HashMap::new();
+        let tags_orphan = vec![];
+
+        idx.index_note_metadata(
+            "note-orphan",
+            "Random Unlinked.md",
+            "Random Unlinked",
+            "hash-4",
+            200,
+            4000,
+            &empty_links,
+            &empty_tasks,
+            &tags_orphan,
+            &props_orphan,
+        ).unwrap();
+
+        // Query rough notes
+        let rough = idx.query_rough_notes().unwrap();
+        assert_eq!(rough.len(), 1);
+        assert_eq!(rough[0].title, "Quick Idea");
+
+        // Query unlinked notes
+        let unlinked = idx.query_unlinked_notes().unwrap();
+        assert!(unlinked.iter().any(|u| u.title == "Random Unlinked"));
+
+        // Query stale sources
+        let stale = idx.query_stale_sources(1500).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].title, "Old Article");
+
+        // Query knowledge stats
+        let stats = idx.query_knowledge_stats().unwrap();
+        assert_eq!(stats.total_notes, 4);
+        assert_eq!(stats.rough_count, 1);
+        assert_eq!(stats.permanent_count, 1);
+        assert_eq!(stats.source_count, 1);
+    }
 }
+

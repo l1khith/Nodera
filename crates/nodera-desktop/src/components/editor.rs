@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 
 use crate::icons::{
     IconBook, IconBookmark, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconColumns,
-    IconEdit, IconFile, IconList, IconNotes, IconPanelRight, IconPin, IconPlus, IconTemplate,
+    IconEdit, IconFile, IconLink, IconList, IconNotes, IconPanelRight, IconPin, IconPlus, IconQuote,
+    IconTemplate,
 };
 use crate::state::{AppState, SplitDirection};
 use crate::strings::{actions, app as app_strings, empty_states, placeholders, tooltips};
@@ -256,6 +257,33 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                             }
                         }
                         button {
+                            class: "btn-action",
+                            title: "Insert Wikilink (Ctrl+K)",
+                            onclick: move |_| {
+                                state.write().insert_wikilink_snippet("Note");
+                            },
+                            IconLink { size: 13 }
+                            span { "Link" }
+                        }
+                        button {
+                            class: "btn-action",
+                            title: "Insert Section / Note Embed (![[Note#Heading]])",
+                            onclick: move |_| {
+                                state.write().insert_embed_snippet("Note#Heading");
+                            },
+                            span { style: "font-family: monospace; font-size: 11px; font-weight: 700;", "![]" }
+                            span { "Embed" }
+                        }
+                        button {
+                            class: "btn-action",
+                            title: "Insert BibTeX / Zotero Citation (Ctrl+Shift+C)",
+                            onclick: move |_| {
+                                state.write().show_citation_picker_modal = true;
+                            },
+                            IconQuote { size: 13 }
+                            span { "Cite" }
+                        }
+                        button {
                             class: if app_state.split_pane.is_some() { "btn-action active-toggle" } else { "btn-action" },
                             style: if app_state.split_pane.is_some() { "color: var(--accent); border-color: var(--accent);" } else { "" },
                             title: "Toggle Split View (Ctrl+\\)",
@@ -324,7 +352,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                             }
                             textarea {
                                 class: "editor-textarea",
-                                style: format!("flex: 1; width: 100%; border: none; padding: 20px 24px; font-family: var(--font-editor); font-size: {}px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
+                                style: format!("flex: 1; width: 100%; border: none; padding: 20px 24px; font-family: var(--font-editor); font-size: {}px; line-height: 26px; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
                                 value: "{content}",
                                 placeholder: placeholders::TYPE_MARKDOWN,
                                 oninput: move |evt| {
@@ -369,7 +397,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                             }
                             div {
                                 class: "reading-view markdown-body",
-                                style: format!("flex: 1; padding: 24px 32px; overflow-y: auto; line-height: 1.8; font-size: {}px; color: var(--text-primary);", app_state.preferences.reading_font_size),
+                                style: format!("flex: 1; padding: 24px 32px; overflow-y: auto; line-height: 26px; font-size: {}px; color: var(--text-primary); font-family: var(--font-editor);", app_state.preferences.reading_font_size),
                                 dangerous_inner_html: "{rendered_html}"
                             }
                         }
@@ -382,7 +410,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                         if !is_reading_mode {
                             textarea {
                                 class: "editor-textarea",
-                                style: format!("flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: {}px; line-height: 1.6; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
+                                style: format!("flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: {}px; line-height: 26px; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
                                 value: "{content}",
                                 placeholder: placeholders::TYPE_MARKDOWN,
                                 oninput: move |evt| {
@@ -424,7 +452,7 @@ pub fn Editor(state: Signal<AppState>) -> Element {
 
                                     div {
                                         class: "reading-view markdown-body",
-                                        style: format!("flex: 1; padding: 40px 60px; overflow-y: auto; line-height: 1.8; font-size: {}px; color: var(--text-primary); max-width: 780px; margin: 0 auto; width: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;", app_state.preferences.reading_font_size),
+                                        style: format!("flex: 1; padding: 40px 60px; overflow-y: auto; line-height: 26px; font-size: {}px; color: var(--text-primary); max-width: 800px; margin: 0 auto; width: 100%; font-family: var(--font-editor);", app_state.preferences.reading_font_size),
                                         dangerous_inner_html: "{rendered_html}"
                                     }
 

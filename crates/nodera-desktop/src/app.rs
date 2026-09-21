@@ -3,8 +3,8 @@ use tracing::info;
 
 use crate::components::{
     CitationPickerModal, CommandPalette, Dialogs, Editor, ErrorDialog, GraphView, Inspector,
-    LibraryView, PdfAnnotationModal, PdfImportModal, SettingsModal, Sidebar, StatusBar,
-    TaskView, VaultHealthModal,
+    LibraryView, PdfAnnotationModal, PdfImportModal, QuickCaptureModal, ReviewQueueView,
+    SettingsModal, Sidebar, StatusBar, TaskView, VaultHealthModal,
 };
 use crate::icons::*;
 use crate::state::{ActiveView, AppState};
@@ -30,6 +30,7 @@ pub fn App() -> Element {
 
     let mut show_vault_dropdown = use_signal(|| false);
     let mut show_more_dropdown = use_signal(|| false);
+    let mut show_new_dropdown = use_signal(|| false);
 
     let app_state = state.read();
     let theme_class = app_state.theme.css_class();
@@ -74,6 +75,7 @@ pub fn App() -> Element {
                             onclick: move |_| {
                                 show_vault_dropdown.toggle();
                                 show_more_dropdown.set(false);
+                                show_new_dropdown.set(false);
                             },
                             IconVault { size: 13 }
                             span { "{app_state.vault_name}" }
@@ -185,15 +187,112 @@ pub fn App() -> Element {
                 // Right: Primary Actions + ⋯ More + Inspector Toggle
                 div { class: "top-bar-right",
                     if has_vault {
-                        button {
-                            class: "btn-action",
-                            title: tooltips::NEW_NOTE,
-                            onclick: move |_| {
-                                let mut s = state.write();
-                                s.show_new_note_dialog = true;
-                            },
-                            IconPlus { size: 13 }
-                            span { "New" }
+                        // [ + New ▾ ] Note Creation & Quick Capture Dropdown
+                        div { style: "position: relative; display: inline-flex;",
+                            button {
+                                class: "btn-action",
+                                title: "Create note or capture thought",
+                                onclick: move |_| {
+                                    show_new_dropdown.toggle();
+                                    show_vault_dropdown.set(false);
+                                    show_more_dropdown.set(false);
+                                },
+                                IconPlus { size: 13 }
+                                span { "New" }
+                                IconChevronDown { size: 11, class: "opacity-60" }
+                            }
+
+                            if *show_new_dropdown.read() {
+                                div {
+                                    class: "dropdown-menu",
+                                    style: "left: 0; min-width: 240px;",
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            state.write().open_quick_capture();
+                                        },
+                                        IconRough { size: 14 }
+                                        span { "Quick Capture" }
+                                        span { class: "kbd-badge", style: "margin-left: auto;", "Ctrl+Shift+Q" }
+                                    }
+                                    div { class: "dropdown-divider" }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_PERMANENT, "", None);
+                                        },
+                                        IconPermanent { size: 14 }
+                                        span { "Permanent Note" }
+                                    }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_ROUGH, "", None);
+                                        },
+                                        IconRough { size: 14 }
+                                        span { "Rough Note" }
+                                    }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_SOURCE, "", Some("book"));
+                                        },
+                                        IconSource { size: 14 }
+                                        span { "Source Note (Book)" }
+                                    }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_SOURCE, "", Some("video"));
+                                        },
+                                        IconSource { size: 14 }
+                                        span { "Source Note (Video)" }
+                                    }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_INDEX, "", None);
+                                        },
+                                        IconIndex { size: 14 }
+                                        span { "Index / MOC Note" }
+                                    }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_PROJECT, "", None);
+                                        },
+                                        IconFolderPlus { size: 14 }
+                                        span { "Project Note" }
+                                    }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let _ = state.write().create_typed_note(nodera_markdown::NOTE_TYPE_MEETING, "", None);
+                                        },
+                                        IconCalendar { size: 14 }
+                                        span { "Meeting Note" }
+                                    }
+                                    div { class: "dropdown-divider" }
+                                    button {
+                                        class: "dropdown-item",
+                                        onclick: move |_| {
+                                            show_new_dropdown.set(false);
+                                            let mut s = state.write();
+                                            s.show_new_note_dialog = true;
+                                        },
+                                        IconFile { size: 14 }
+                                        span { "Blank Note…" }
+                                    }
+                                }
+                            }
                         }
                         button {
                             class: "btn-action",
@@ -224,6 +323,7 @@ pub fn App() -> Element {
                                 onclick: move |_| {
                                     show_more_dropdown.toggle();
                                     show_vault_dropdown.set(false);
+                                    show_new_dropdown.set(false);
                                 },
                                 IconMore { size: 16 }
                             }
@@ -329,10 +429,11 @@ pub fn App() -> Element {
                     }
                 }
 
-                // Center pane: Markdown Editor, Global Tasks View, Library View, or Graph View
+                // Center pane: Markdown Editor, Global Tasks View, Review Queue, Library View, or Graph View
                 match app_state.active_view {
                     ActiveView::Editor => rsx! { Editor { state } },
                     ActiveView::Tasks => rsx! { TaskView { state } },
+                    ActiveView::ReviewQueue => rsx! { ReviewQueueView { state } },
                     ActiveView::Library => rsx! { LibraryView { state } },
                     ActiveView::Graph => rsx! { GraphView { state } },
                 }
@@ -356,6 +457,7 @@ pub fn App() -> Element {
             // Modals
             Dialogs { state }
             CommandPalette { state }
+            QuickCaptureModal { state }
             PdfImportModal { state }
             SettingsModal { state }
             ErrorDialog { state }

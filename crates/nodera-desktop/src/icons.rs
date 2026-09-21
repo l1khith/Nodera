@@ -1149,3 +1149,105 @@ pub fn IconProperties(props: IconProps) -> Element {
     }
 }
 
+/// Review Queue / Inbox triage icon
+#[component]
+pub fn IconReviewQueue(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M22 12h-6l-2 3h-4l-2-3H2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-7z" }
+            path { d: "M5.45 5.11L2 12v0" }
+            path { d: "M18.55 5.11L22 12v0" }
+            path { d: "M6 5h12l3 7H3l3-7z" }
+        }
+    }
+}
+
+/// Rough Note / Quick thought icon (lightning bolt)
+#[component]
+pub fn IconRough(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polygon { points: "13 2 3 14 12 14 11 22 21 10 12 10 13 2" }
+        }
+    }
+}
+
+/// Permanent Note icon (diamond / atomic core)
+#[component]
+pub fn IconPermanent(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            polygon { points: "6 3 18 3 22 9 12 22 2 9 6 3" }
+            line { x1: "12", y1: "22", x2: "12", y2: "9" }
+            line { x1: "2", y1: "9", x2: "22", y2: "9" }
+        }
+    }
+}
+
+/// Source Note icon (bookmark / reference)
+#[component]
+pub fn IconSource(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" }
+        }
+    }
+}
+
+/// Index / Map of Content icon (compass / network hub)
+#[component]
+pub fn IconIndex(props: IconProps) -> Element {
+    rsx! {
+        svg {
+            class: "icon {props.class}",
+            width: "{props.size}",
+            height: "{props.size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "12", r: "10" }
+            polygon { points: "16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" }
+        }
+    }
+}
+
+

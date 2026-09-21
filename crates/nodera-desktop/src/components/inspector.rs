@@ -77,6 +77,8 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
         .as_ref()
         .map(|f| f.extra.clone())
         .unwrap_or_default();
+    let note_type = frontmatter.as_ref().and_then(|f| f.note_type().map(|s| s.to_string()));
+    let is_permanent = frontmatter.as_ref().map(|f| f.is_permanent()).unwrap_or(false);
 
     let properties_count = (if !frontmatter_title.is_empty() { 1 } else { 0 })
         + frontmatter_tags.len()
@@ -164,6 +166,38 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
                     }
                     if *show_properties.read() {
                         div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
+                            // Workflow Note Type & Safe Promotion Banner
+                            if is_permanent {
+                                div {
+                                    style: "display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px;",
+                                    IconPermanent { size: 14 }
+                                    span { style: "font-size: 11px; font-weight: 600; color: #10B981;", "Permanent Note" }
+                                }
+                            } else {
+                                {
+                                    let type_label = note_type.clone().unwrap_or_else(|| "Rough / Draft".to_string());
+                                    rsx! {
+                                        div {
+                                            style: "display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: var(--bg-surface-elevated); border: 1px solid var(--border); border-radius: 6px;",
+                                            div { style: "display: flex; flex-direction: column; gap: 1px;",
+                                                span { style: "font-size: 11px; font-weight: 600; color: var(--text-primary); text-transform: capitalize;", "{type_label}" }
+                                                span { style: "font-size: 10px; color: var(--text-muted);", "Draft knowledge" }
+                                            }
+                                            button {
+                                                class: "btn-action btn-primary",
+                                                style: "font-size: 11px; padding: 3px 8px; display: inline-flex; align-items: center; gap: 4px;",
+                                                title: "Promote note to permanent atomic knowledge (updates frontmatter in-place, preserves links and path)",
+                                                onclick: move |_| {
+                                                    let _ = state.write().promote_active_note_to_permanent();
+                                                },
+                                                IconPermanent { size: 12 }
+                                                span { "Promote" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // Title property
                             div { style: "display: flex; flex-direction: column; gap: 3px;",
                                 span { style: "font-size: 10px; font-weight: 500; color: var(--text-muted); text-transform: uppercase;", "title" }
@@ -570,8 +604,13 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
                                     let rel_path_click = rel_path.clone();
                                     let rel_title = rel.title.clone();
                                     let rel_title_link = rel.title.clone();
-                                    let match_pct = rel.match_percentage;
                                     let shared_tags = rel.shared_tags.clone();
+                                    let tag_count = shared_tags.len();
+                                    let tag_chip_label = if tag_count > 1 {
+                                        format!("{tag_count} tags")
+                                    } else {
+                                        format!("{tag_count} tag")
+                                    };
 
                                     rsx! {
                                         div {
@@ -589,8 +628,14 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
                                                     "{rel_title}"
                                                 }
                                                 div { style: "display: flex; align-items: center; gap: 6px;",
-                                                    span { style: "font-size: 10px; font-weight: 600; background: rgba(16, 185, 129, 0.15); color: #10B981; padding: 1px 5px; border-radius: 6px;",
-                                                        "{match_pct}%"
+                                                    if !shared_tags.is_empty() {
+                                                        span { style: "font-size: 10px; font-weight: 600; background: var(--accent-focus); color: var(--accent-hover); padding: 1px 5px; border-radius: 4px;",
+                                                            "{tag_chip_label}"
+                                                        }
+                                                    } else {
+                                                        span { style: "font-size: 10px; font-weight: 500; background: var(--bg-surface-elevated); color: var(--text-muted); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border-subtle);",
+                                                            "lexical"
+                                                        }
                                                     }
                                                     button {
                                                         class: "btn-action btn-primary",
@@ -605,7 +650,7 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
                                                 }
                                             }
                                             if !shared_tags.is_empty() {
-                                                div { style: "display: flex; flex-wrap: wrap; gap: 3px;",
+                                                div { style: "display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px;",
                                                     for t in shared_tags.iter() {
                                                         span {
                                                             key: "rel_tag_{t}",
@@ -613,6 +658,10 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
                                                             "#{t}"
                                                         }
                                                     }
+                                                }
+                                            } else {
+                                                div { style: "margin-top: 1px;",
+                                                    span { style: "font-size: 10px; color: var(--text-muted); font-style: italic;", "Lexical BM25 match" }
                                                 }
                                             }
                                         }
