@@ -61,6 +61,10 @@ pub fn handle_global_shortcut(evt: &KeyboardEvent, state: &mut Signal<AppState>)
             s.close_quick_capture();
             return true;
         }
+        if s.show_go_to_date_dialog {
+            s.show_go_to_date_dialog = false;
+            return true;
+        }
         return false;
     }
 

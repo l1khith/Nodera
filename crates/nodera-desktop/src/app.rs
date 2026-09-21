@@ -4,7 +4,7 @@ use tracing::info;
 use crate::components::{
     CitationPickerModal, CommandPalette, Dialogs, Editor, ErrorDialog, GraphView, Inspector,
     LibraryView, PdfAnnotationModal, PdfImportModal, QuickCaptureModal, ReviewQueueView,
-    SettingsModal, Sidebar, StatusBar, TaskView, VaultHealthModal,
+    SettingsModal, Sidebar, StatusBar, TaskView, TodayView, VaultHealthModal,
 };
 use crate::icons::*;
 use crate::state::{ActiveView, AppState};
@@ -429,9 +429,10 @@ pub fn App() -> Element {
                     }
                 }
 
-                // Center pane: Markdown Editor, Global Tasks View, Review Queue, Library View, or Graph View
+                // Center pane: Markdown Editor, Today View, Global Tasks View, Review Queue, Library View, or Graph View
                 match app_state.active_view {
                     ActiveView::Editor => rsx! { Editor { state } },
+                    ActiveView::Today => rsx! { TodayView { state } },
                     ActiveView::Tasks => rsx! { TaskView { state } },
                     ActiveView::ReviewQueue => rsx! { ReviewQueueView { state } },
                     ActiveView::Library => rsx! { LibraryView { state } },

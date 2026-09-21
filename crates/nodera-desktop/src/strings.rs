@@ -14,6 +14,8 @@ pub mod app {
 
 pub mod nav {
     pub const NOTES: &str = "Notes";
+    pub const TODAY: &str = "Today";
+    pub const CALENDAR: &str = "Calendar";
     pub const TASKS: &str = "Tasks";
     pub const LIBRARY: &str = "Library";
     pub const GRAPH: &str = "Graph";
@@ -191,6 +193,15 @@ pub mod settings {
 pub mod palette {
     pub const SWITCH_TO_EDITOR: (&str, &str) =
         ("Switch to Notes Editor", "View and edit markdown notes");
+    pub const SWITCH_TO_TODAY: (&str, &str) = ("Open Today", "Switch to Today calendar workspace");
+    pub const SWITCH_TO_CALENDAR: (&str, &str) = (
+        "Open Calendar",
+        "Monthly calendar date and daily note navigation",
+    );
+    pub const GO_TO_DATE: (&str, &str) = (
+        "Go to Daily Note for Date...",
+        "Jump to or create daily note for a specific date",
+    );
     pub const SWITCH_TO_TASKS: (&str, &str) = (
         "Switch to Tasks View",
         "Global task list across all vault notes",

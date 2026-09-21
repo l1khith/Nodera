@@ -14,6 +14,7 @@ pub mod settings_modal;
 pub mod sidebar;
 pub mod statusbar;
 pub mod task_view;
+pub mod today_view;
 pub mod vault_health_modal;
 
 pub use citation_picker_modal::CitationPickerModal;
@@ -32,5 +33,5 @@ pub use settings_modal::SettingsModal;
 pub use sidebar::Sidebar;
 pub use statusbar::StatusBar;
 pub use task_view::TaskView;
+pub use today_view::TodayView;
 pub use vault_health_modal::VaultHealthModal;
-
