@@ -211,7 +211,10 @@ impl Vault {
                 let _ = fs::write(canonical_root.join("04 Index").join("Index.md"), index);
 
                 let template = "---\ntitle: \"{{title}}\"\ntype: permanent\ncreated: \"{{date}}\"\ntags:\n  - permanent\n---\n# {{title}}\n\n## Core Idea\n\n## Context & Explanation\n\n## Connections & References\n- \n";
-                let _ = fs::write(canonical_root.join("Templates").join("Permanent Note.md"), template);
+                let _ = fs::write(
+                    canonical_root.join("Templates").join("Permanent Note.md"),
+                    template,
+                );
             }
             StarterVaultPreset::PersonalKnowledge => {
                 let welcome = "---\ntitle: \"Welcome to Personal Knowledge\"\ntype: rough\ntags:\n  - welcome\n  - inbox\n---\n# Welcome to your Personal Knowledge Vault (PARA)\n\nOrganized using the PARA methodology:\n- **00 Inbox**: Quick thoughts and unsorted notes.\n- **01 Projects**: Active efforts with clear deadlines and outcomes.\n- **02 Areas**: Ongoing spheres of responsibility (Health, Career, Finance).\n- **03 Resources**: Topics of interest, references, and useful materials.\n- **04 Archives**: Inactive or completed projects.\n";
@@ -401,7 +404,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         let vault_path = tmp.path().join("ZettelVault");
 
-        let vault = Vault::create_with_preset(&vault_path, Some("Zettel".to_string()), StarterVaultPreset::Zettelkasten).unwrap();
+        let vault = Vault::create_with_preset(
+            &vault_path,
+            Some("Zettel".to_string()),
+            StarterVaultPreset::Zettelkasten,
+        )
+        .unwrap();
         assert_eq!(vault.config().name, "Zettel");
         assert_eq!(vault.config().default_folder, "00 Inbox");
 
@@ -412,7 +420,11 @@ mod tests {
         assert!(vault.root().join("04 Index").is_dir());
         assert!(vault.root().join("04 Index").join("Index.md").is_file());
         assert!(vault.root().join("00 Inbox").join("Welcome.md").is_file());
-        assert!(vault.root().join("Templates").join("Permanent Note.md").is_file());
+        assert!(vault
+            .root()
+            .join("Templates")
+            .join("Permanent Note.md")
+            .is_file());
     }
 
     #[test]

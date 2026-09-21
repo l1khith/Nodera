@@ -35,7 +35,10 @@ impl Frontmatter {
 
     /// Sets or updates the note type in frontmatter.
     pub fn set_note_type(&mut self, note_type: impl Into<String>) {
-        self.extra.insert("type".to_string(), serde_yaml::Value::String(note_type.into()));
+        self.extra.insert(
+            "type".to_string(),
+            serde_yaml::Value::String(note_type.into()),
+        );
     }
 
     /// Returns the source type specified in frontmatter (`source_type` property), if present.
@@ -45,23 +48,34 @@ impl Frontmatter {
 
     /// Sets or updates the source type in frontmatter.
     pub fn set_source_type(&mut self, source_type: impl Into<String>) {
-        self.extra.insert("source_type".to_string(), serde_yaml::Value::String(source_type.into()));
+        self.extra.insert(
+            "source_type".to_string(),
+            serde_yaml::Value::String(source_type.into()),
+        );
     }
 
     pub fn is_rough(&self) -> bool {
-        self.note_type().map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_ROUGH)).unwrap_or(false)
+        self.note_type()
+            .map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_ROUGH))
+            .unwrap_or(false)
     }
 
     pub fn is_permanent(&self) -> bool {
-        self.note_type().map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_PERMANENT)).unwrap_or(false)
+        self.note_type()
+            .map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_PERMANENT))
+            .unwrap_or(false)
     }
 
     pub fn is_source(&self) -> bool {
-        self.note_type().map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_SOURCE)).unwrap_or(false)
+        self.note_type()
+            .map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_SOURCE))
+            .unwrap_or(false)
     }
 
     pub fn is_index(&self) -> bool {
-        self.note_type().map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_INDEX) || t.eq_ignore_ascii_case("moc")).unwrap_or(false)
+        self.note_type()
+            .map(|t| t.eq_ignore_ascii_case(NOTE_TYPE_INDEX) || t.eq_ignore_ascii_case("moc"))
+            .unwrap_or(false)
     }
 
     pub fn is_reviewed(&self) -> bool {
@@ -69,7 +83,10 @@ impl Frontmatter {
     }
 
     pub fn mark_reviewed(&mut self, date_str: &str) {
-        self.extra.insert("reviewed".to_string(), serde_yaml::Value::String(date_str.to_string()));
+        self.extra.insert(
+            "reviewed".to_string(),
+            serde_yaml::Value::String(date_str.to_string()),
+        );
     }
 }
 
@@ -352,7 +369,11 @@ mod tests {
     #[test]
     fn test_note_type_helpers_and_templates() {
         // 1. Rough note template
-        let rough = rough_note_template("Fleeting Thought", "Capture this idea quickly", "2026-09-20");
+        let rough = rough_note_template(
+            "Fleeting Thought",
+            "Capture this idea quickly",
+            "2026-09-20",
+        );
         let (fm, body) = parse_frontmatter(&rough).unwrap();
         let fm = fm.unwrap();
         assert_eq!(fm.note_type(), Some("rough"));
@@ -375,20 +396,35 @@ mod tests {
         assert_eq!(reparsed_body, body); // body is preserved intact!
 
         // 3. Permanent note template
-        let perm = permanent_note_template("Atomic Principle", "One clear thought per note.", "2026-09-20");
+        let perm = permanent_note_template(
+            "Atomic Principle",
+            "One clear thought per note.",
+            "2026-09-20",
+        );
         let (fm_p, _) = parse_frontmatter(&perm).unwrap();
         let fm_p = fm_p.unwrap();
         assert!(fm_p.is_permanent());
 
         // 4. Source note template
-        let src = source_note_template("Designing Data-Intensive Apps", SOURCE_TYPE_BOOK, "Martin Kleppmann", "https://dataintensive.net", "2026-09-20");
+        let src = source_note_template(
+            "Designing Data-Intensive Apps",
+            SOURCE_TYPE_BOOK,
+            "Martin Kleppmann",
+            "https://dataintensive.net",
+            "2026-09-20",
+        );
         let (fm_s, _) = parse_frontmatter(&src).unwrap();
         let fm_s = fm_s.unwrap();
         assert!(fm_s.is_source());
         assert_eq!(fm_s.source_type(), Some("book"));
 
         // 5. Video template
-        let vid = video_source_template("Deep Dive into Rust Memory", "Jon Gjengset", "https://youtube.com/watch?v=123", "2026-09-20");
+        let vid = video_source_template(
+            "Deep Dive into Rust Memory",
+            "Jon Gjengset",
+            "https://youtube.com/watch?v=123",
+            "2026-09-20",
+        );
         let (fm_v, body_v) = parse_frontmatter(&vid).unwrap();
         let fm_v = fm_v.unwrap();
         assert!(fm_v.is_source());
@@ -408,4 +444,3 @@ mod tests {
         assert!(fm_review.is_reviewed());
     }
 }
-

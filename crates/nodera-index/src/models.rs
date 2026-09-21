@@ -83,4 +83,3 @@ pub struct KnowledgeStats {
     pub orphan_count: usize,
     pub type_counts: std::collections::HashMap<String, usize>,
 }
-

@@ -881,7 +881,9 @@ impl SqliteIndex {
         let mut index_count = 0;
 
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+            })
             .map_err(db_err)?;
 
         for row in rows {
@@ -1224,7 +1226,8 @@ mod tests {
             &empty_tasks,
             &tags_rough,
             &props_rough,
-        ).unwrap();
+        )
+        .unwrap();
 
         // 2. Permanent note with link to source
         let mut props_perm = HashMap::new();
@@ -1249,7 +1252,8 @@ mod tests {
             &empty_tasks,
             &tags_perm,
             &props_perm,
-        ).unwrap();
+        )
+        .unwrap();
 
         // 3. Stale source note (old timestamp)
         let mut props_src = HashMap::new();
@@ -1268,7 +1272,8 @@ mod tests {
             &empty_tasks,
             &tags_src,
             &props_src,
-        ).unwrap();
+        )
+        .unwrap();
 
         // 4. Isolated/unlinked note
         let props_orphan = HashMap::new();
@@ -1285,7 +1290,8 @@ mod tests {
             &empty_tasks,
             &tags_orphan,
             &props_orphan,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Query rough notes
         let rough = idx.query_rough_notes().unwrap();
@@ -1309,4 +1315,3 @@ mod tests {
         assert_eq!(stats.source_count, 1);
     }
 }
-
