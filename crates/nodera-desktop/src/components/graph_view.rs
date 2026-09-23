@@ -40,17 +40,37 @@ pub struct SimEdge {
     pub target: usize,
 }
 
+/// Simulation lifecycle states for CPU conservation and smooth convergence
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SimulationPhase {
+    Initializing,
+    Running { alpha: f32 },
+    Settling { alpha: f32, energy: f32 },
+    Idle,
+}
+
 /// Initializes simulation nodes with deterministic golden-spiral positions using default forces.
 pub fn init_simulation(graph: &GraphData, width: f32, height: f32) -> (Vec<SimNode>, Vec<SimEdge>) {
     init_simulation_with_forces(graph, width, height, &GraphForcesSettings::default())
 }
 
-/// Initializes simulation nodes with deterministic golden-spiral positions and runs multi-step pre-warm relaxation.
+/// Initializes simulation nodes with deterministic golden-spiral positions and runs multi-step relaxation.
 pub fn init_simulation_with_forces(
     graph: &GraphData,
     width: f32,
     height: f32,
     forces: &GraphForcesSettings,
+) -> (Vec<SimNode>, Vec<SimEdge>) {
+    init_or_update_simulation(graph, width, height, forces, &HashMap::new())
+}
+
+/// Initializes or updates simulation nodes, preserving existing coordinates when available.
+pub fn init_or_update_simulation(
+    graph: &GraphData,
+    width: f32,
+    height: f32,
+    forces: &GraphForcesSettings,
+    existing_positions: &HashMap<String, (f32, f32)>,
 ) -> (Vec<SimNode>, Vec<SimEdge>) {
     let n = graph.nodes.len();
     if n == 0 {
@@ -65,12 +85,19 @@ pub fn init_simulation_with_forces(
     let cy = height / 2.0;
 
     let mut nodes = Vec::with_capacity(n);
+    let mut preserved_count = 0usize;
+
     for (i, gn) in sorted_nodes.iter().enumerate() {
-        let angle = (i as f32) * 2.3999632;
-        let r = 32.0 * ((i + 1) as f32).sqrt();
-        let x = cx + r * angle.cos();
-        let y = cy + r * angle.sin();
         let radius = 6.0 + (gn.degree as f32).min(12.0) * 1.25;
+        let (x, y) = if let Some(&(px, py)) = existing_positions.get(&gn.id) {
+            preserved_count += 1;
+            (px, py)
+        } else {
+            let angle = (i as f32) * 2.3999632;
+            let r = 32.0 * ((i + 1) as f32).sqrt();
+            (cx + r * angle.cos(), cy + r * angle.sin())
+        };
+
         nodes.push(SimNode {
             id: gn.id.clone(),
             path: gn.path.clone(),
@@ -117,24 +144,37 @@ pub fn init_simulation_with_forces(
         }
     }
 
-    // Pre-warm relaxation with simulated cooling annealing using force settings
-    let total_steps = 120;
+    // Relaxation steps:
+    // If all or most nodes were already positioned, run only a small local relaxation (~8 steps)
+    // so spatial memory is preserved and positions don't drift.
+    // If nodes are mostly new, run pre-warm relaxation steps for clean layout.
+    let total_steps = if preserved_count > 0 && preserved_count * 2 >= n {
+        8
+    } else {
+        100
+    };
+
     for step in 0..total_steps {
         let alpha = (1.0 - (step as f32 / total_steps as f32)).max(0.03);
-        step_simulation_with_forces(&mut nodes, &edges, (cx, cy), None, alpha, forces);
+        let eff_alpha = if preserved_count > 0 && preserved_count * 2 >= n {
+            alpha * 0.15
+        } else {
+            alpha
+        };
+        step_simulation_with_forces(&mut nodes, &edges, (cx, cy), None, eff_alpha, forces);
     }
 
     (nodes, edges)
 }
 
-/// Executes one physics tick with default force settings.
+/// Executes one physics tick with default force settings, returning the mean kinetic energy.
 pub fn step_simulation(
     nodes: &mut [SimNode],
     edges: &[SimEdge],
     center: (f32, f32),
     dragged_idx: Option<usize>,
     alpha: f32,
-) {
+) -> f32 {
     step_simulation_with_forces(
         nodes,
         edges,
@@ -142,7 +182,7 @@ pub fn step_simulation(
         dragged_idx,
         alpha,
         &GraphForcesSettings::default(),
-    );
+    )
 }
 
 /// Compact QuadTree node for Barnes-Hut spatial force approximation.
@@ -169,9 +209,9 @@ struct QuadTree {
 }
 
 impl QuadTree {
-    fn new(cx: f32, cy: f32, size: f32) -> Self {
+    fn with_capacity(capacity: usize, cx: f32, cy: f32, size: f32) -> Self {
         let mut tree = Self {
-            nodes: Vec::with_capacity(128),
+            nodes: Vec::with_capacity(capacity),
         };
         tree.nodes.push(QuadTreeNode {
             cx,
@@ -353,10 +393,11 @@ impl QuadTree {
                     let mut force =
                         (k_rep * b_mass * other_mass) / (dist * (dist + 20.0)).max(300.0);
 
-                    let min_dist = b_radius + other.radius + 14.0;
+                    let min_dist = b_radius + other.radius + 12.0;
                     if dist < min_dist {
                         let overlap = min_dist - dist;
-                        force += overlap * overlap * 0.25;
+                        // Soft-linear repulsion with cap to prevent violent ping-pong jitter
+                        force += (overlap * 0.85).min(12.0);
                     }
 
                     *fx += nx * force;
@@ -400,6 +441,7 @@ impl QuadTreeNode {
 }
 
 /// Executes one physics tick with Coulomb repulsion, Hooke spring attraction, center gravity, and collision clearance.
+/// Returns the mean kinetic energy of all moving nodes.
 pub fn step_simulation_with_forces(
     nodes: &mut [SimNode],
     edges: &[SimEdge],
@@ -407,10 +449,10 @@ pub fn step_simulation_with_forces(
     dragged_idx: Option<usize>,
     alpha: f32,
     forces: &GraphForcesSettings,
-) {
+) -> f32 {
     let n = nodes.len();
     if n == 0 {
-        return;
+        return 0.0;
     }
 
     let k_rep = 475.0 * forces.repel_force.max(0.1);
@@ -442,10 +484,11 @@ pub fn step_simulation_with_forces(
                 let mut force = (k_rep * mass_i * mass_j) / (dist * (dist + 20.0)).max(300.0);
 
                 let r_j = nodes[j].radius;
-                let min_dist = r_i + r_j + 14.0;
+                let min_dist = r_i + r_j + 12.0;
                 if dist < min_dist {
                     let overlap = min_dist - dist;
-                    force += overlap * overlap * 0.25;
+                    // Soft-linear repulsion with cap to prevent oscillation
+                    force += (overlap * 0.85).min(12.0);
                 }
 
                 let f_x = nx * force;
@@ -475,7 +518,7 @@ pub fn step_simulation_with_forces(
         let cy = (min_y + max_y) * 0.5;
         let size = ((max_x - min_x).max(max_y - min_y) + 20.0).max(100.0);
 
-        let mut tree = QuadTree::new(cx, cy, size);
+        let mut tree = QuadTree::with_capacity((n * 4).max(128), cx, cy, size);
         for (i, node) in nodes.iter().enumerate() {
             let mass = 1.0 + (node.degree as f32) * 0.15;
             tree.insert(0, i, node.x, node.y, mass, 16);
@@ -529,18 +572,28 @@ pub fn step_simulation_with_forces(
         fy[i] += dy * k_center;
     }
 
-    // 4. Update velocity and position with cooling alpha
+    // 4. Update velocity and position with cooling alpha and kinetic energy tracking
+    let max_force = (20.0 * alpha + 2.0).min(30.0);
+    let max_v = (15.0 * alpha + 1.2).min(24.0);
+
+    let mut total_kinetic_energy = 0.0f32;
     for i in 0..n {
         if Some(i) == dragged_idx {
             nodes[i].vx = 0.0;
             nodes[i].vy = 0.0;
             continue;
         }
-        nodes[i].vx = (nodes[i].vx + fx[i].clamp(-35.0, 35.0) * alpha) * damping;
-        nodes[i].vy = (nodes[i].vy + fy[i].clamp(-35.0, 35.0) * alpha) * damping;
-        nodes[i].x += nodes[i].vx.clamp(-30.0, 30.0);
-        nodes[i].y += nodes[i].vy.clamp(-30.0, 30.0);
+        nodes[i].vx = (nodes[i].vx + fx[i].clamp(-max_force, max_force) * alpha) * damping;
+        nodes[i].vy = (nodes[i].vy + fy[i].clamp(-max_force, max_force) * alpha) * damping;
+
+        let speed_sq = nodes[i].vx * nodes[i].vx + nodes[i].vy * nodes[i].vy;
+        total_kinetic_energy += speed_sq;
+
+        nodes[i].x += nodes[i].vx.clamp(-max_v, max_v);
+        nodes[i].y += nodes[i].vy.clamp(-max_v, max_v);
     }
+
+    total_kinetic_energy / (n as f32)
 }
 
 /// Global 2D Knowledge Graph View with Interactive Controls Panel
@@ -552,30 +605,156 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     let total_notes = graph_data.nodes.len();
     let total_edges = graph_data.edges.len();
 
-    let (init_nodes, init_edges) =
-        init_simulation_with_forces(&graph_data, 1000.0, 700.0, &current_settings.forces);
+    // Retrieve preserved positions and viewport from AppState (spatial memory)
+    let saved_positions = app_state.graph_view_state.positions.clone();
+    let is_init = app_state.graph_view_state.initialized;
+    let initial_pan_x = if is_init {
+        app_state.graph_view_state.pan_x
+    } else {
+        0.0
+    };
+    let initial_pan_y = if is_init {
+        app_state.graph_view_state.pan_y
+    } else {
+        0.0
+    };
+    let initial_zoom = if is_init {
+        app_state.graph_view_state.zoom
+    } else {
+        1.0
+    };
+    let saved_selected_id = app_state.graph_view_state.selected_node_id.clone();
+
+    let (init_nodes, init_edges) = init_or_update_simulation(
+        &graph_data,
+        1000.0,
+        700.0,
+        &current_settings.forces,
+        &saved_positions,
+    );
+
+    let initial_selected_idx = saved_selected_id
+        .as_ref()
+        .and_then(|id| init_nodes.iter().position(|n| &n.id == id));
+
     let mut nodes_state = use_signal(|| init_nodes);
     let mut edges_state = use_signal(|| init_edges);
 
-    let mut pan_x = use_signal(|| 0.0f32);
-    let mut pan_y = use_signal(|| 0.0f32);
-    let mut zoom = use_signal(|| 1.0f32);
+    let mut pan_x = use_signal(|| initial_pan_x);
+    let mut pan_y = use_signal(|| initial_pan_y);
+    let mut zoom = use_signal(|| initial_zoom);
     let mut is_panning = use_signal(|| false);
     let mut pan_start = use_signal(|| (0.0f64, 0.0f64));
     let mut pan_distance = use_signal(|| 0.0f64);
     let mut dragged_node = use_signal(|| None::<usize>);
     let mut hovered_node = use_signal(|| None::<usize>);
-    let mut selected_node = use_signal(|| None::<usize>);
+    let mut selected_node = use_signal(|| initial_selected_idx);
     let mut last_click = use_signal(|| None::<(usize, Instant)>);
     let mut search_query = use_signal(|| current_settings.filters.search_query.clone());
+    let sim_generation = use_signal(|| 0u64);
+    let sim_phase = use_signal(|| SimulationPhase::Idle);
+
+    /// Smooth settling coroutine that runs at 60fps and transitions to Idle (0% CPU)
+    fn start_settling_simulation(
+        mut state: Signal<AppState>,
+        mut nodes_state: Signal<Vec<SimNode>>,
+        edges_state: Signal<Vec<SimEdge>>,
+        dragged_node: Signal<Option<usize>>,
+        mut sim_generation: Signal<u64>,
+        mut sim_phase: Signal<SimulationPhase>,
+        start_alpha: f32,
+    ) {
+        let forces = state.read().preferences.graph_settings.forces.clone();
+        let animate = state.read().preferences.graph_settings.display.animate;
+        if !animate {
+            *sim_phase.write() = SimulationPhase::Idle;
+            let pos_list = nodes_state
+                .read()
+                .iter()
+                .map(|n| (n.id.clone(), n.x, n.y))
+                .collect::<Vec<_>>();
+            state.write().preserve_graph_positions(pos_list);
+            return;
+        }
+
+        let gen = *sim_generation.read() + 1;
+        *sim_generation.write() = gen;
+        *sim_phase.write() = SimulationPhase::Settling {
+            alpha: start_alpha,
+            energy: 0.05,
+        };
+
+        spawn(async move {
+            let mut alpha = start_alpha;
+            for _frame in 0..50 {
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+                if *sim_generation.read() != gen {
+                    return;
+                }
+                if dragged_node.read().is_some() {
+                    continue;
+                }
+                let (energy, is_done) = {
+                    let mut ns = nodes_state.write();
+                    let es = edges_state.read();
+                    let energy = step_simulation_with_forces(
+                        &mut ns,
+                        &es,
+                        (500.0, 350.0),
+                        None,
+                        alpha,
+                        &forces,
+                    );
+                    alpha *= 0.92;
+                    (energy, alpha < 0.008 || energy < 0.005)
+                };
+                *sim_phase.write() = SimulationPhase::Settling { alpha, energy };
+
+                if is_done {
+                    break;
+                }
+            }
+            if *sim_generation.read() == gen {
+                *sim_phase.write() = SimulationPhase::Idle;
+                let pos_list = nodes_state
+                    .read()
+                    .iter()
+                    .map(|n| (n.id.clone(), n.x, n.y))
+                    .collect::<Vec<_>>();
+                state.write().preserve_graph_positions(pos_list);
+            }
+        });
+    }
+
+    // Mark as initialized in AppState on first mount
+    use_effect(move || {
+        let mut s = state.write();
+        if !s.graph_view_state.initialized {
+            s.graph_view_state.initialized = true;
+            s.graph_view_state.pan_x = *pan_x.read();
+            s.graph_view_state.pan_y = *pan_y.read();
+            s.graph_view_state.zoom = *zoom.read();
+        }
+    });
 
     // When filters or vault entries change, recompute simulation
     use_effect(move || {
         let s = state.read().preferences.graph_settings.clone();
         let current_graph = state.read().get_full_graph_data_with_settings(&s);
-        let (n, e) = init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces);
+        let saved_pos = state.read().graph_view_state.positions.clone();
+        let (n, e) =
+            init_or_update_simulation(&current_graph, 1000.0, 700.0, &s.forces, &saved_pos);
         nodes_state.set(n);
         edges_state.set(e);
+        start_settling_simulation(
+            state,
+            nodes_state,
+            edges_state,
+            dragged_node,
+            sim_generation,
+            sim_phase,
+            0.15,
+        );
     });
 
     if total_notes == 0 {
@@ -618,6 +797,22 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     let zoom_val = *zoom.read();
     let zoom_pct = (zoom_val * 100.0).round() as u32;
     let dot_radius = (0.85 / zoom_val).clamp(0.35, 1.3);
+
+    let cur_pan_x = *pan_x.read();
+    let cur_pan_y = *pan_y.read();
+
+    // Viewport bounds for culling when node count is large
+    let view_w = 1000.0f32;
+    let view_h = 700.0f32;
+    let margin = 120.0f32 / zoom_val;
+    let min_vis_x = (-cur_pan_x / zoom_val) - margin;
+    let max_vis_x = ((view_w - cur_pan_x) / zoom_val) + margin;
+    let min_vis_y = (-cur_pan_y / zoom_val) - margin;
+    let max_vis_y = ((view_h - cur_pan_y) / zoom_val) + margin;
+
+    let is_in_viewport = |x: f32, y: f32| -> bool {
+        total_notes < 150 || (x >= min_vis_x && x <= max_vis_x && y >= min_vis_y && y <= max_vis_y)
+    };
 
     // Connected indices for highlighting neighborhood of focused node
     let mut connected_indices = HashSet::new();
@@ -677,21 +872,33 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             if current_settings.display.animate {
                                 let es = edges_state.read();
                                 let forces = current_settings.forces.clone();
-                                // Reheat connected neighbors during drag
-                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.25, &forces);
-                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.20, &forces);
+                                // Reheat connected neighbors during drag with soft linear force
+                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.16, &forces);
                             }
                         }
                     }
                 },
                 onmouseup: move |_| {
                     is_panning.set(false);
-                    dragged_node.set(None);
+                    let had_drag = dragged_node.write().take().is_some();
+                    if had_drag {
+                        start_settling_simulation(
+                            state,
+                            nodes_state,
+                            edges_state,
+                            dragged_node,
+                            sim_generation,
+                            sim_phase,
+                            0.12,
+                        );
+                    }
+                    state.write().set_graph_viewport(*pan_x.read(), *pan_y.read(), *zoom.read());
                 },
                 onclick: move |_| {
                     // Deselect if user clicked empty background without dragging
                     if *pan_distance.read() < 5.0 {
                         selected_node.set(None);
+                        state.write().graph_view_state.selected_node_id = None;
                     }
                 },
                 onwheel: move |evt: WheelEvent| {
@@ -699,7 +906,24 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     let factor = if delta > 0.0 { 0.90f32 } else { 1.10f32 };
                     let current_zoom = *zoom.read();
                     let next_zoom = (current_zoom * factor).clamp(0.20, 3.5);
+
+                    let mouse_x = evt.client_coordinates().x as f32;
+                    let mouse_y = evt.client_coordinates().y as f32;
+                    let cur_pan_x = *pan_x.read();
+                    let cur_pan_y = *pan_y.read();
+
+                    // World coordinate invariant: (mouse - pan) / zoom = world
+                    let world_x = (mouse_x - cur_pan_x) / current_zoom;
+                    let world_y = (mouse_y - cur_pan_y) / current_zoom;
+
+                    let new_pan_x = mouse_x - world_x * next_zoom;
+                    let new_pan_y = mouse_y - world_y * next_zoom;
+
                     zoom.set(next_zoom);
+                    pan_x.set(new_pan_x);
+                    pan_y.set(new_pan_y);
+
+                    state.write().set_graph_viewport(new_pan_x, new_pan_y, next_zoom);
                 },
 
                 // Top-left Search / Filter Bar
@@ -743,7 +967,9 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         title: actions::ZOOM_IN,
                         onclick: move |_| {
                             let z = *zoom.read();
-                            zoom.set((z * 1.15).min(3.5));
+                            let next_z = (z * 1.15).min(3.5);
+                            zoom.set(next_z);
+                            state.write().set_graph_viewport(*pan_x.read(), *pan_y.read(), next_z);
                         },
                         IconPlus { size: 13 }
                     }
@@ -756,7 +982,9 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         title: actions::ZOOM_OUT,
                         onclick: move |_| {
                             let z = *zoom.read();
-                            zoom.set((z * 0.85).max(0.20));
+                            let next_z = (z * 0.85).max(0.20);
+                            zoom.set(next_z);
+                            state.write().set_graph_viewport(*pan_x.read(), *pan_y.read(), next_z);
                         },
                         IconMinus { size: 13 }
                     }
@@ -770,6 +998,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                 pan_x.set(0.0);
                                 pan_y.set(0.0);
                                 zoom.set(1.0);
+                                state.write().set_graph_viewport(0.0, 0.0, 1.0);
                                 return;
                             }
                             let mut min_x = f32::MAX;
@@ -798,6 +1027,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             zoom.set(target_zoom);
                             pan_x.set(target_pan_x);
                             pan_y.set(target_pan_y);
+                            state.write().set_graph_viewport(target_pan_x, target_pan_y, target_zoom);
                         },
                         IconMaximize { size: 13 }
                     }
@@ -808,6 +1038,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             pan_x.set(0.0);
                             pan_y.set(0.0);
                             zoom.set(1.0);
+                            state.write().set_graph_viewport(0.0, 0.0, 1.0);
                         },
                         IconCrosshair { size: 13 }
                     }
@@ -817,13 +1048,19 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         onclick: move |_| {
                             let s = state.read().preferences.graph_settings.clone();
                             let current_graph = state.read().get_full_graph_data_with_settings(&s);
-                            spawn(async move {
-                                let (n, e) = tokio::task::spawn_blocking(move || {
-                                    init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces)
-                                }).await.unwrap_or_default();
-                                nodes_state.set(n);
-                                edges_state.set(e);
-                            });
+                            state.write().graph_view_state.positions.clear();
+                            let (n, e) = init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces);
+                            nodes_state.set(n);
+                            edges_state.set(e);
+                            start_settling_simulation(
+                                state,
+                                nodes_state,
+                                edges_state,
+                                dragged_node,
+                                sim_generation,
+                                sim_phase,
+                                0.25,
+                            );
                         },
                         IconRefresh { size: 13 }
                     }
@@ -949,36 +1186,42 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                         false
                                     };
 
-                                    let edge_color = if is_highlighted {
-                                        "var(--graph-edge-highlight, #7182FF)"
+                                    // Viewport culling for edges
+                                    if !is_highlighted && !is_in_viewport(n1.x, n1.y) && !is_in_viewport(n2.x, n2.y) {
+                                        rsx! {}
                                     } else {
-                                        "var(--graph-edge, #444A5B)"
-                                    };
+                                        let edge_color = if is_highlighted {
+                                            "var(--graph-edge-highlight, #7182FF)"
+                                        } else {
+                                            "var(--graph-edge, #444A5B)"
+                                        };
 
-                                    let edge_opacity = if focused_idx.is_some() {
-                                        if is_highlighted { "1.0" } else { "0.08" }
-                                    } else {
-                                        "0.35"
-                                    };
+                                        let edge_opacity = if focused_idx.is_some() {
+                                            if is_highlighted { "1.0" } else { "0.06" }
+                                        } else {
+                                            "0.35"
+                                        };
 
-                                    let edge_width = (if is_highlighted { 2.2 } else { 1.0 }) * current_settings.display.link_thickness;
-                                    let marker_attr = if current_settings.display.arrows {
-                                        if is_highlighted { "url(#graph-arrow-highlight)" } else { "url(#graph-arrow)" }
-                                    } else {
-                                        ""
-                                    };
+                                        let edge_width = (if is_highlighted { 2.0 } else { 1.0 }) * current_settings.display.link_thickness;
+                                        let marker_attr = if current_settings.display.arrows {
+                                            if is_highlighted { "url(#graph-arrow-highlight)" } else { "url(#graph-arrow)" }
+                                        } else {
+                                            ""
+                                        };
 
-                                    rsx! {
-                                        line {
-                                            key: "{s}-{t}",
-                                            x1: "{n1.x}",
-                                            y1: "{n1.y}",
-                                            x2: "{n2.x}",
-                                            y2: "{n2.y}",
-                                            stroke: "{edge_color}",
-                                            stroke_width: "{edge_width}",
-                                            opacity: "{edge_opacity}",
-                                            marker_end: "{marker_attr}",
+                                        rsx! {
+                                            line {
+                                                key: "{s}-{t}",
+                                                class: "graph-edge-line",
+                                                x1: "{n1.x}",
+                                                y1: "{n1.y}",
+                                                x2: "{n2.x}",
+                                                y2: "{n2.y}",
+                                                stroke: "{edge_color}",
+                                                stroke_width: "{edge_width}",
+                                                opacity: "{edge_opacity}",
+                                                marker_end: "{marker_attr}",
+                                            }
                                         }
                                     }
                                 } else {
@@ -994,164 +1237,185 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                 let is_selected = current_selected == Some(idx);
                                 let is_hovered = current_hovered == Some(idx);
                                 let is_connected = connected_indices.contains(&idx);
-                                let matches_query = if query.is_empty() {
-                                    true
-                                } else {
-                                    node.label.to_lowercase().contains(&query)
-                                };
 
-                                let community_color = if current_settings.display.color_by_community {
-                                    COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                // Viewport culling for nodes
+                                if !is_selected && !is_hovered && !is_connected && !is_in_viewport(node.x, node.y) {
+                                    rsx! {}
                                 } else {
-                                    "var(--graph-node, #6680FF)"
-                                };
-
-                                let (node_color, stroke_color, stroke_width, node_opacity, stroke_dash) = if node.is_unresolved {
-                                    let fill = "transparent";
-                                    let stroke = if is_selected || is_hovered {
-                                        "var(--graph-node-hover, #7182FF)"
+                                    let matches_query = if query.is_empty() {
+                                        true
                                     } else {
-                                        "var(--text-muted, #8E90A0)"
+                                        node.label.to_lowercase().contains(&query)
                                     };
-                                    let opacity = if focused_idx.is_some() && !is_connected { "0.20" } else { "0.85" };
-                                    (fill, stroke, "1.5", opacity, "3 2")
-                                } else if node.is_tag {
-                                    let fill = "#E5A158";
-                                    let stroke = if is_selected || is_hovered { "#FFFFFF" } else { "var(--border, #28313C)" };
-                                    let opacity = if focused_idx.is_some() && !is_connected { "0.20" } else { "0.95" };
-                                    (fill, stroke, "1.5", opacity, "")
-                                } else if focused_idx.is_some() {
-                                    if is_hovered || is_selected {
+
+                                    let community_color = if current_settings.display.color_by_community {
+                                        COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                    } else {
+                                        "var(--graph-node, #6680FF)"
+                                    };
+
+                                    let (node_color, stroke_color, stroke_width, node_opacity, stroke_dash) = if node.is_unresolved {
+                                        let fill = "transparent";
+                                        let stroke = if is_selected || is_hovered {
+                                            "var(--graph-node-hover, #7182FF)"
+                                        } else {
+                                            "var(--text-muted, #8E90A0)"
+                                        };
+                                        let opacity = if focused_idx.is_some() && !is_connected { "0.15" } else { "0.85" };
+                                        (fill, stroke, "1.5", opacity, "3 2")
+                                    } else if node.is_tag {
+                                        let fill = "#E5A158";
+                                        let stroke = if is_selected || is_hovered { "#FFFFFF" } else { "var(--border, #28313C)" };
+                                        let opacity = if focused_idx.is_some() && !is_connected { "0.15" } else { "0.95" };
+                                        (fill, stroke, "1.5", opacity, "")
+                                    } else if focused_idx.is_some() {
+                                        if is_hovered || is_selected {
+                                            let fill = if is_current {
+                                                "var(--graph-node-current, #9A4BFF)"
+                                            } else if is_hovered {
+                                                "var(--graph-node-hover, #7182FF)"
+                                            } else {
+                                                community_color
+                                            };
+                                            let stroke = if is_current { "#D5C7FF" } else { "#FFFFFF" };
+                                            (fill, stroke, "2.5", "1.0", "")
+                                        } else if is_connected {
+                                            (community_color, "var(--border-strong, #383F4F)", "2.0", "1.0", "")
+                                        } else {
+                                            (community_color, "var(--border, #28313C)", "1.0", "0.12", "")
+                                        }
+                                    } else {
                                         let fill = if is_current {
                                             "var(--graph-node-current, #9A4BFF)"
-                                        } else if is_hovered {
-                                            "var(--graph-node-hover, #7182FF)"
                                         } else {
                                             community_color
                                         };
-                                        let stroke = if is_current { "#D5C7FF" } else { "#FFFFFF" };
-                                        (fill, stroke, "2.5", "1.0", "")
-                                    } else if is_connected {
-                                        (community_color, "var(--border-strong, #383F4F)", "2.0", "1.0", "")
-                                    } else {
-                                        (community_color, "var(--border, #28313C)", "1.0", "0.18", "")
-                                    }
-                                } else {
-                                    let fill = if is_current {
-                                        "var(--graph-node-current, #9A4BFF)"
-                                    } else {
-                                        community_color
+                                        let stroke = if is_current { "#D5C7FF" } else { "var(--border, #28313C)" };
+                                        let opacity = if !matches_query { "0.15" } else { "1.0" };
+                                        (fill, stroke, "1.5", opacity, "")
                                     };
-                                    let stroke = if is_current { "#D5C7FF" } else { "var(--border, #28313C)" };
-                                    let opacity = if !matches_query { "0.20" } else { "1.0" };
-                                    (fill, stroke, "1.5", opacity, "")
-                                };
 
-                                let base_radius = if current_settings.display.centrality_sizing {
-                                    let centrality_ratio = (node.centrality as f32) / 10000.0;
-                                    5.0 + centrality_ratio * 16.0 + (node.degree as f32).min(8.0) * 0.75
-                                } else {
-                                    node.radius
-                                };
-                                let node_radius = base_radius * current_settings.display.node_size;
-                                let path_click = node.path.clone();
-                                let path_dbl = node.path.clone();
-                                let label_click = node.label.clone();
-                                let label_dbl = node.label.clone();
-                                let is_unresolved = node.is_unresolved;
+                                    let base_radius = if current_settings.display.centrality_sizing {
+                                        let centrality_ratio = (node.centrality as f32) / 10000.0;
+                                        5.0 + centrality_ratio * 16.0 + (node.degree as f32).min(8.0) * 0.75
+                                    } else {
+                                        node.radius
+                                    };
+                                    let node_radius = base_radius * current_settings.display.node_size;
+                                    let path_click = node.path.clone();
+                                    let path_dbl = node.path.clone();
+                                    let label_click = node.label.clone();
+                                    let label_dbl = node.label.clone();
+                                    let is_unresolved = node.is_unresolved;
+                                    let node_id_val = node.id.clone();
 
-                                let text_fade_threshold = 0.70 / current_settings.display.text_fade_threshold.max(0.1);
-                                let show_label = is_selected
-                                    || is_hovered
-                                    || (focused_idx.is_some() && is_connected)
-                                    || *zoom.read() >= text_fade_threshold
-                                    || total_notes <= 35
-                                    || (node.degree >= 3 && *zoom.read() >= (text_fade_threshold * 0.65));
+                                    // 4-Tier Adaptive Label LOD
+                                    let show_label = if is_selected
+                                        || is_hovered
+                                        || (focused_idx.is_some() && is_connected)
+                                        || total_notes <= 25
+                                    {
+                                        true
+                                    } else if zoom_val < 0.45 {
+                                        // Tier 1: Far zoom: only major hubs
+                                        node.degree >= 6 || node.centrality >= 500
+                                    } else if zoom_val < 0.75 {
+                                        // Tier 2: Mid-far zoom: nodes with multiple connections
+                                        node.degree >= 2
+                                    } else if zoom_val < 1.15 {
+                                        // Tier 3: Normal zoom: connected nodes
+                                        node.degree >= 1 || total_notes <= 80
+                                    } else {
+                                        // Tier 4: Close zoom: all nodes
+                                        true
+                                    };
 
-                                let font_weight = if is_selected || is_hovered || is_current { "600" } else { "400" };
+                                    let font_weight = if is_selected || is_hovered || is_current { "600" } else { "400" };
 
-                                rsx! {
-                                    g {
-                                        key: "{node.id}",
-                                        style: "cursor: pointer;",
-                                        opacity: "{node_opacity}",
-                                        onmousedown: move |evt: MouseEvent| {
-                                            evt.stop_propagation();
-                                            dragged_node.set(Some(idx));
-                                        },
-                                        onmouseenter: move |_| {
-                                            hovered_node.set(Some(idx));
-                                        },
-                                        onmouseleave: move |_| {
-                                            if *hovered_node.read() == Some(idx) {
-                                                hovered_node.set(None);
-                                            }
-                                        },
-                                        onclick: move |evt: MouseEvent| {
-                                            evt.stop_propagation();
-                                            let now = Instant::now();
-                                            let is_double_click = if let Some((last_idx, last_time)) = *last_click.read() {
-                                                last_idx == idx && now.duration_since(last_time).as_millis() < 400
-                                            } else {
-                                                false
-                                            };
+                                    rsx! {
+                                        g {
+                                            key: "{node.id}",
+                                            style: "cursor: pointer;",
+                                            opacity: "{node_opacity}",
+                                            onmousedown: move |evt: MouseEvent| {
+                                                evt.stop_propagation();
+                                                dragged_node.set(Some(idx));
+                                            },
+                                            onmouseenter: move |_| {
+                                                hovered_node.set(Some(idx));
+                                            },
+                                            onmouseleave: move |_| {
+                                                if *hovered_node.read() == Some(idx) {
+                                                    hovered_node.set(None);
+                                                }
+                                            },
+                                            onclick: move |evt: MouseEvent| {
+                                                evt.stop_propagation();
+                                                let now = Instant::now();
+                                                let is_double_click = if let Some((last_idx, last_time)) = *last_click.read() {
+                                                    last_idx == idx && now.duration_since(last_time).as_millis() < 400
+                                                } else {
+                                                    false
+                                                };
 
-                                            if is_double_click {
+                                                if is_double_click {
+                                                    let mut s = state.write();
+                                                    if is_unresolved {
+                                                        let _ = s.open_or_create_target(&label_click);
+                                                    } else {
+                                                        let _ = s.select_note(&path_click);
+                                                    }
+                                                    s.active_view = ActiveView::Editor;
+                                                    last_click.set(None);
+                                                } else {
+                                                    selected_node.set(Some(idx));
+                                                    state.write().graph_view_state.selected_node_id = Some(node_id_val.clone());
+                                                    last_click.set(Some((idx, now)));
+                                                }
+                                            },
+                                            ondoubleclick: move |evt: MouseEvent| {
+                                                evt.stop_propagation();
                                                 let mut s = state.write();
                                                 if is_unresolved {
-                                                    let _ = s.open_or_create_target(&label_click);
+                                                    let _ = s.open_or_create_target(&label_dbl);
                                                 } else {
-                                                    let _ = s.select_note(&path_click);
+                                                    let _ = s.select_note(&path_dbl);
                                                 }
                                                 s.active_view = ActiveView::Editor;
-                                                last_click.set(None);
-                                            } else {
-                                                selected_node.set(Some(idx));
-                                                last_click.set(Some((idx, now)));
+                                            },
+                                            // Selection halo ring
+                                            if is_selected {
+                                                circle {
+                                                    class: "graph-halo-ring",
+                                                    cx: "{node.x}",
+                                                    cy: "{node.y}",
+                                                    r: "{node_radius + 6.0}",
+                                                    fill: "none",
+                                                    stroke: "var(--graph-node-current, #9A4BFF)",
+                                                    stroke_width: "2",
+                                                    stroke_dasharray: "4 3",
+                                                    opacity: "0.85",
+                                                }
                                             }
-                                        },
-                                        ondoubleclick: move |evt: MouseEvent| {
-                                            evt.stop_propagation();
-                                            let mut s = state.write();
-                                            if is_unresolved {
-                                                let _ = s.open_or_create_target(&label_dbl);
-                                            } else {
-                                                let _ = s.select_note(&path_dbl);
-                                            }
-                                            s.active_view = ActiveView::Editor;
-                                        },
-                                        // Selection halo ring
-                                        if is_selected {
                                             circle {
+                                                class: "graph-node-circle",
                                                 cx: "{node.x}",
                                                 cy: "{node.y}",
-                                                r: "{node_radius + 6.0}",
-                                                fill: "none",
-                                                stroke: "var(--graph-node-current, #9A4BFF)",
-                                                stroke_width: "2",
-                                                stroke_dasharray: "4 3",
-                                                opacity: "0.85",
+                                                r: "{node_radius}",
+                                                fill: "{node_color}",
+                                                stroke: "{stroke_color}",
+                                                stroke_width: "{stroke_width}",
+                                                stroke_dasharray: "{stroke_dash}",
                                             }
-                                        }
-                                        circle {
-                                            cx: "{node.x}",
-                                            cy: "{node.y}",
-                                            r: "{node_radius}",
-                                            fill: "{node_color}",
-                                            stroke: "{stroke_color}",
-                                            stroke_width: "{stroke_width}",
-                                            stroke_dasharray: "{stroke_dash}",
-                                        }
-                                        if show_label {
-                                            text {
-                                                x: "{node.x}",
-                                                y: format!("{}", node.y + node_radius + 12.0),
-                                                text_anchor: "middle",
-                                                fill: "var(--graph-label, #D7DBE6)",
-                                                font_size: "11",
-                                                font_weight: "{font_weight}",
-                                                pointer_events: "none",
-                                                "{node.label}"
+                                            if show_label {
+                                                text {
+                                                    class: if is_selected || is_hovered || is_current { "graph-node-label active" } else { "graph-node-label" },
+                                                    x: "{node.x}",
+                                                    y: format!("{}", node.y + node_radius + 12.0),
+                                                    text_anchor: "middle",
+                                                    font_weight: "{font_weight}",
+                                                    "{node.label}"
+                                                }
                                             }
                                         }
                                     }

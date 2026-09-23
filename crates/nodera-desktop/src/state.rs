@@ -546,14 +546,14 @@ pub fn build_file_tree(entries: &[VaultEntry]) -> Vec<FileTreeNode> {
                 })
                 .collect();
 
-            folder_nodes.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
+            folder_nodes.sort_by_key(|a| a.name().to_lowercase());
 
             let mut file_nodes: Vec<FileTreeNode> = files
                 .iter()
                 .map(|summary| FileTreeNode::File(summary.clone()))
                 .collect();
 
-            file_nodes.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
+            file_nodes.sort_by_key(|a| a.name().to_lowercase());
 
             result.extend(folder_nodes);
             result.extend(file_nodes);
@@ -688,6 +688,33 @@ pub struct AppState {
     pub show_go_to_date_dialog: bool,
     pub go_to_date_input: String,
     pub go_to_date_error: Option<String>,
+
+    // Live Graph Viewport & Position Persistence
+    pub graph_view_state: GraphViewState,
+}
+
+/// Preserved live graph state across navigation and interactions
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphViewState {
+    pub positions: HashMap<String, (f32, f32)>,
+    pub pan_x: f32,
+    pub pan_y: f32,
+    pub zoom: f32,
+    pub selected_node_id: Option<String>,
+    pub initialized: bool,
+}
+
+impl Default for GraphViewState {
+    fn default() -> Self {
+        Self {
+            positions: HashMap::new(),
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+            selected_node_id: None,
+            initialized: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -822,6 +849,8 @@ impl Default for AppState {
             show_go_to_date_dialog: false,
             go_to_date_input: String::new(),
             go_to_date_error: None,
+
+            graph_view_state: GraphViewState::default(),
         }
     }
 }
@@ -899,6 +928,7 @@ impl AppState {
         self.status_message = format!("Vault '{}' opened", self.vault_name);
         self.indexing_progress = None;
         self.expanded_folders.clear();
+        self.graph_view_state = GraphViewState::default();
 
         self.refresh_bib_library();
 
@@ -955,6 +985,7 @@ impl AppState {
         self.toc_headings.clear();
         self.status_message = format!("Vault '{}' created", self.vault_name);
         self.expanded_folders.clear();
+        self.graph_view_state = GraphViewState::default();
 
         self.refresh_bib_library();
 
@@ -977,6 +1008,7 @@ impl AppState {
         self.vault_name = "No Vault Opened".to_string();
         self.entries.clear();
         self.expanded_folders.clear();
+        self.graph_view_state = GraphViewState::default();
 
         self.active_note = None;
         self.editor_content.clear();
@@ -3168,6 +3200,29 @@ impl AppState {
         self.get_local_graph_data_with_settings(depth, &self.preferences.graph_settings)
     }
 
+    /// Persists node coordinates into the graph view state cache.
+    pub fn preserve_graph_positions(
+        &mut self,
+        positions: impl IntoIterator<Item = (String, f32, f32)>,
+    ) {
+        for (id, x, y) in positions {
+            self.graph_view_state.positions.insert(id, (x, y));
+        }
+        self.graph_view_state.initialized = true;
+    }
+
+    /// Retrieves preserved (x, y) coordinates for a node ID if previously recorded.
+    pub fn get_preserved_graph_position(&self, id: &str) -> Option<(f32, f32)> {
+        self.graph_view_state.positions.get(id).copied()
+    }
+
+    /// Records current graph pan and zoom level for view restoration.
+    pub fn set_graph_viewport(&mut self, pan_x: f32, pan_y: f32, zoom: f32) {
+        self.graph_view_state.pan_x = pan_x;
+        self.graph_view_state.pan_y = pan_y;
+        self.graph_view_state.zoom = zoom;
+    }
+
     /// Opens an existing note or creates a new one for a Wikilink target.
     pub fn open_or_create_target(&mut self, target: &str) -> Result<()> {
         let note_paths = self.note_paths();
@@ -4991,5 +5046,46 @@ mod tests {
         assert!(tree
             .iter()
             .any(|node| node.name() == "DeepResearch" && node.is_folder()));
+    }
+
+    #[test]
+    fn test_graph_view_state_persistence_and_vault_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_a = tmp.path().join("VaultA");
+        let vault_b = tmp.path().join("VaultB");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_a, Some("VaultA".to_string()))
+            .unwrap();
+
+        // 1. Record graph positions and viewport
+        state.preserve_graph_positions([
+            ("note1.md".to_string(), 120.0, 340.0),
+            ("note2.md".to_string(), -50.0, 80.0),
+        ]);
+        state.set_graph_viewport(15.0, -25.0, 1.25);
+
+        assert_eq!(
+            state.get_preserved_graph_position("note1.md"),
+            Some((120.0, 340.0))
+        );
+        assert_eq!(
+            state.get_preserved_graph_position("note2.md"),
+            Some((-50.0, 80.0))
+        );
+        assert_eq!(state.graph_view_state.pan_x, 15.0);
+        assert_eq!(state.graph_view_state.pan_y, -25.0);
+        assert_eq!(state.graph_view_state.zoom, 1.25);
+        assert!(state.graph_view_state.initialized);
+
+        // 2. Switch to Vault B: graph_view_state must reset
+        state
+            .create_vault(&vault_b, Some("VaultB".to_string()))
+            .unwrap();
+        assert!(state.graph_view_state.positions.is_empty());
+        assert!(!state.graph_view_state.initialized);
+        assert_eq!(state.graph_view_state.pan_x, 0.0);
+        assert_eq!(state.graph_view_state.zoom, 1.0);
     }
 }
