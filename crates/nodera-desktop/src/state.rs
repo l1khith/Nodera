@@ -797,7 +797,11 @@ impl Default for AppState {
             toc_headings: Vec::new(),
 
             active_project: None,
-            registered_projects: nodera_project::ProjectRegistry::list().unwrap_or_default(),
+            registered_projects: nodera_project::ProjectRegistry::list()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| p.root.exists())
+                .collect(),
             show_projects_section: true,
 
             show_bookmarks_section: true,

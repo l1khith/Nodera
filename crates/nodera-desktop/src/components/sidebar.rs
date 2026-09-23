@@ -159,6 +159,72 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
             }
         }
 
+        // External Source Projects Section (Dedicated, persistent, works with or without vault)
+        div {
+            style: "padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 4px;",
+            div {
+                style: "display: flex; align-items: center; justify-content: space-between; cursor: pointer; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-radius: 4px; padding: 2px 0;",
+                onclick: move |_| {
+                    let mut s = state.write();
+                    s.show_projects_section = !s.show_projects_section;
+                },
+                div { style: "display: flex; align-items: center; gap: 5px;",
+                    if app_state.show_projects_section {
+                        IconChevronDown { size: 11 }
+                    } else {
+                        IconChevronRight { size: 11 }
+                    }
+                    span { "Projects ({app_state.registered_projects.len()})" }
+                }
+                button {
+                    class: "btn-icon",
+                    style: "width: 18px; height: 18px;",
+                    title: "Refresh registered projects",
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        state.write().refresh_registered_projects();
+                    },
+                    IconRefresh { size: 11 }
+                }
+            }
+            if app_state.show_projects_section {
+                div { style: "display: flex; flex-direction: column; gap: 2px; margin-top: 2px;",
+                    if app_state.registered_projects.is_empty() {
+                        div { style: "font-size: 11px; color: var(--text-muted); padding: 4px 6px;", "No projects registered" }
+                    } else {
+                        for proj in &app_state.registered_projects {
+                            {
+                                let proj_id = proj.id.clone();
+                                let is_active = app_state.active_project.as_ref().map(|p| p.id == proj.id).unwrap_or(false);
+                                let name = proj.name.clone();
+                                rsx! {
+                                    button {
+                                        key: "{proj.id}",
+                                        style: if is_active {
+                                            "display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 4px; background: var(--bg-hover); color: var(--accent); font-weight: 600; width: 100%; text-align: left; font-size: 12px;"
+                                        } else {
+                                            "display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); width: 100%; text-align: left; font-size: 12px;"
+                                        },
+                                        onclick: move |_| {
+                                            let mut s = state.write();
+                                            let _ = s.select_project(&proj_id);
+                                        },
+                                        span { style: "display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                            IconCode { size: 13 }
+                                            span { "{name}" }
+                                        }
+                                        if is_active {
+                                            span { style: "font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--accent); color: white;", "ACTIVE" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Quick Search Input
         if has_vault {
             div {
@@ -434,72 +500,6 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                                             IconClose { size: 10 }
                                                         }
                                                     }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // External Source Projects Section
-                div {
-                    style: "margin-bottom: 8px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px;",
-                    div {
-                        style: "display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; cursor: pointer; color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-radius: 4px;",
-                        onclick: move |_| {
-                            let mut s = state.write();
-                            s.show_projects_section = !s.show_projects_section;
-                        },
-                        div { style: "display: flex; align-items: center; gap: 5px;",
-                            if app_state.show_projects_section {
-                                IconChevronDown { size: 11 }
-                            } else {
-                                IconChevronRight { size: 11 }
-                            }
-                            span { "Projects ({app_state.registered_projects.len()})" }
-                        }
-                        button {
-                            class: "btn-icon",
-                            style: "width: 18px; height: 18px;",
-                            title: "Refresh registered projects",
-                            onclick: move |e| {
-                                e.stop_propagation();
-                                state.write().refresh_registered_projects();
-                            },
-                            IconRefresh { size: 11 }
-                        }
-                    }
-                    if app_state.show_projects_section {
-                        div { style: "display: flex; flex-direction: column; gap: 2px; padding-left: 8px; margin-top: 2px;",
-                            if app_state.registered_projects.is_empty() {
-                                div { style: "font-size: 11px; color: var(--text-muted); padding: 4px 8px;", "No projects registered" }
-                            } else {
-                                for proj in &app_state.registered_projects {
-                                    {
-                                        let proj_id = proj.id.clone();
-                                        let is_active = app_state.active_project.as_ref().map(|p| p.id == proj.id).unwrap_or(false);
-                                        let name = proj.name.clone();
-                                        rsx! {
-                                            button {
-                                                key: "{proj.id}",
-                                                style: if is_active {
-                                                    "display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 4px; background: var(--bg-hover); color: var(--accent); font-weight: 600; width: 100%; text-align: left; font-size: 12px;"
-                                                } else {
-                                                    "display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); width: 100%; text-align: left; font-size: 12px;"
-                                                },
-                                                onclick: move |_| {
-                                                    let mut s = state.write();
-                                                    let _ = s.select_project(&proj_id);
-                                                },
-                                                span { style: "display: inline-flex; align-items: center; gap: 6px;",
-                                                    IconCode { size: 13 }
-                                                    span { "{name}" }
-                                                }
-                                                if is_active {
-                                                    span { style: "font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--accent); color: white;", "ACTIVE" }
                                                 }
                                             }
                                         }
