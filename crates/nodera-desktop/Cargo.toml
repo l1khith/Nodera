@@ -9,6 +9,7 @@ nodera-core.workspace = true
 nodera-markdown.workspace = true
 nodera-index.workspace = true
 nodera-pdf.workspace = true
+nodera-project.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true

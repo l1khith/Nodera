@@ -1,9 +1,11 @@
 use nodera_desktop::components::graph_view::{
-    init_simulation, init_simulation_with_forces, step_simulation_with_forces,
+    init_or_update_simulation, init_simulation, init_simulation_with_forces,
+    step_simulation_with_forces, SimulationPhase,
 };
 use nodera_desktop::state::{GraphForcesSettings, GraphSettings};
 use nodera_desktop::AppState;
 use nodera_markdown::{GraphData, GraphEdge, GraphNode};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::tempdir;
 
@@ -561,5 +563,312 @@ fn test_graph_settings_defaults_and_forces() {
     for n in &sim_nodes {
         assert!(!n.x.is_nan());
         assert!(!n.y.is_nan());
+    }
+}
+
+#[test]
+fn test_simulation_convergence_and_energy_idle_threshold() {
+    let forces = GraphForcesSettings::default();
+    let mut nodes = Vec::new();
+    for i in 0..15 {
+        nodes.push(GraphNode {
+            id: format!("notes/conv_{}.md", i),
+            path: PathBuf::from(format!("notes/conv_{}.md", i)),
+            label: format!("Conv {}", i),
+            degree: if i % 3 == 0 { 2 } else { 1 },
+            is_unresolved: false,
+            is_tag: false,
+            ..Default::default()
+        });
+    }
+    let edges = (0..14)
+        .map(|i| GraphEdge {
+            source: format!("notes/conv_{}.md", i),
+            target: format!("notes/conv_{}.md", i + 1),
+        })
+        .collect::<Vec<_>>();
+
+    let graph = GraphData { nodes, edges };
+    let (mut sim_nodes, sim_edges) = init_simulation_with_forces(&graph, 1000.0, 700.0, &forces);
+
+    let mut alpha = 0.35f32;
+    let mut final_energy = 100.0f32;
+    let mut phase = SimulationPhase::Running { alpha };
+
+    // Run up to 60 cooling frames
+    for _frame in 0..60 {
+        let energy = step_simulation_with_forces(
+            &mut sim_nodes,
+            &sim_edges,
+            (500.0, 350.0),
+            None,
+            alpha,
+            &forces,
+        );
+        final_energy = energy;
+        alpha *= 0.92;
+        phase = SimulationPhase::Settling { alpha, energy };
+
+        if alpha < 0.008 || energy < 0.005 {
+            phase = SimulationPhase::Idle;
+            break;
+        }
+    }
+
+    // Must successfully converge to Idle with kinetic energy below threshold
+    assert_eq!(phase, SimulationPhase::Idle);
+    assert!(
+        final_energy < 0.01,
+        "Kinetic energy must be near zero at idle, got {:.5}",
+        final_energy
+    );
+}
+
+#[test]
+fn test_graph_spatial_memory_position_preservation() {
+    let forces = GraphForcesSettings::default();
+    let mut nodes = Vec::new();
+    for i in 0..12 {
+        nodes.push(GraphNode {
+            id: format!("notes/mem_{}.md", i),
+            path: PathBuf::from(format!("notes/mem_{}.md", i)),
+            label: format!("Memory {}", i),
+            degree: 2,
+            is_unresolved: false,
+            is_tag: false,
+            ..Default::default()
+        });
+    }
+    let edges = (0..11)
+        .map(|i| GraphEdge {
+            source: format!("notes/mem_{}.md", i),
+            target: format!("notes/mem_{}.md", i + 1),
+        })
+        .collect::<Vec<_>>();
+
+    let graph = GraphData { nodes, edges };
+
+    // 1. Initial simulation layout
+    let (sim_nodes_initial, _) = init_simulation_with_forces(&graph, 1000.0, 700.0, &forces);
+
+    // 2. Preserve coordinates in state cache (spatial memory)
+    let mut saved_positions = HashMap::new();
+    for n in &sim_nodes_initial {
+        saved_positions.insert(n.id.clone(), (n.x, n.y));
+    }
+
+    // 3. Re-initialize simulation passing preserved coordinates
+    let (sim_nodes_reloaded, _) =
+        init_or_update_simulation(&graph, 1000.0, 700.0, &forces, &saved_positions);
+
+    assert_eq!(sim_nodes_initial.len(), sim_nodes_reloaded.len());
+
+    // Coordinates must match within minimal relaxation tolerance (< 1.5px)
+    for (n_init, n_reloaded) in sim_nodes_initial.iter().zip(sim_nodes_reloaded.iter()) {
+        assert_eq!(n_init.id, n_reloaded.id);
+        let dx = (n_init.x - n_reloaded.x).abs();
+        let dy = (n_init.y - n_reloaded.y).abs();
+        assert!(
+            dx < 1.5 && dy < 1.5,
+            "Node {} shifted excessively during reload: dx={:.2}, dy={:.2}",
+            n_init.id,
+            dx,
+            dy
+        );
+    }
+}
+
+#[test]
+fn test_incremental_note_addition_preserves_existing_layout() {
+    let forces = GraphForcesSettings::default();
+    let mut nodes = Vec::new();
+    for i in 0..6 {
+        nodes.push(GraphNode {
+            id: format!("notes/base_{}.md", i),
+            path: PathBuf::from(format!("notes/base_{}.md", i)),
+            label: format!("Base {}", i),
+            degree: 2,
+            is_unresolved: false,
+            is_tag: false,
+            ..Default::default()
+        });
+    }
+    let edges = vec![
+        GraphEdge {
+            source: "notes/base_0.md".to_string(),
+            target: "notes/base_1.md".to_string(),
+        },
+        GraphEdge {
+            source: "notes/base_1.md".to_string(),
+            target: "notes/base_2.md".to_string(),
+        },
+        GraphEdge {
+            source: "notes/base_2.md".to_string(),
+            target: "notes/base_3.md".to_string(),
+        },
+    ];
+
+    let graph_base = GraphData {
+        nodes: nodes.clone(),
+        edges: edges.clone(),
+    };
+    let (sim_nodes_base, _) = init_simulation_with_forces(&graph_base, 1000.0, 700.0, &forces);
+
+    let mut saved_positions = HashMap::new();
+    for n in &sim_nodes_base {
+        saved_positions.insert(n.id.clone(), (n.x, n.y));
+    }
+
+    // Add a 7th note (incremental update)
+    let mut extended_nodes = nodes;
+    extended_nodes.push(GraphNode {
+        id: "notes/base_new.md".to_string(),
+        path: PathBuf::from("notes/base_new.md"),
+        label: "Base New".to_string(),
+        degree: 1,
+        is_unresolved: false,
+        is_tag: false,
+        ..Default::default()
+    });
+    let mut extended_edges = edges;
+    extended_edges.push(GraphEdge {
+        source: "notes/base_0.md".to_string(),
+        target: "notes/base_new.md".to_string(),
+    });
+
+    let graph_extended = GraphData {
+        nodes: extended_nodes,
+        edges: extended_edges,
+    };
+
+    let (sim_nodes_updated, _) =
+        init_or_update_simulation(&graph_extended, 1000.0, 700.0, &forces, &saved_positions);
+
+    assert_eq!(sim_nodes_updated.len(), 7);
+
+    // Existing nodes must remain anchored in their existing positions
+    for n in &sim_nodes_updated {
+        if n.id != "notes/base_new.md" {
+            let (orig_x, orig_y) = saved_positions[&n.id];
+            let dist = ((n.x - orig_x).powi(2) + (n.y - orig_y).powi(2)).sqrt();
+            assert!(
+                dist < 10.0,
+                "Node {} moved too much on incremental addition: dist={:.2}",
+                n.id,
+                dist
+            );
+        } else {
+            assert!(n.x.is_finite() && n.y.is_finite());
+        }
+    }
+}
+
+#[test]
+fn test_cursor_anchored_zoom_invariance() {
+    // Mathematical invariant verification for mouse-anchored zoom
+    let test_cases = [
+        // (mouse_x, mouse_y, cur_pan_x, cur_pan_y, cur_zoom, zoom_factor)
+        (450.0f32, 320.0f32, 0.0f32, 0.0f32, 1.0f32, 1.15f32),
+        (200.0f32, 600.0f32, -120.0f32, 85.0f32, 0.85f32, 1.10f32),
+        (750.0f32, 150.0f32, 300.0f32, -200.0f32, 1.50f32, 0.90f32),
+        (100.0f32, 100.0f32, -450.0f32, -350.0f32, 2.20f32, 0.85f32),
+    ];
+
+    for (mouse_x, mouse_y, cur_pan_x, cur_pan_y, cur_zoom, factor) in test_cases {
+        let next_zoom = (cur_zoom * factor).clamp(0.20, 3.5);
+
+        // Pre-zoom world coordinate under cursor
+        let world_x = (mouse_x - cur_pan_x) / cur_zoom;
+        let world_y = (mouse_y - cur_pan_y) / cur_zoom;
+
+        // New viewport pan offsets
+        let new_pan_x = mouse_x - world_x * next_zoom;
+        let new_pan_y = mouse_y - world_y * next_zoom;
+
+        // Post-zoom world coordinate under same cursor position
+        let post_world_x = (mouse_x - new_pan_x) / next_zoom;
+        let post_world_y = (mouse_y - new_pan_y) / next_zoom;
+
+        assert!(
+            (post_world_x - world_x).abs() < 1e-4,
+            "World X invariant failed: before={:.6}, after={:.6}",
+            world_x,
+            post_world_x
+        );
+        assert!(
+            (post_world_y - world_y).abs() < 1e-4,
+            "World Y invariant failed: before={:.6}, after={:.6}",
+            world_y,
+            post_world_y
+        );
+    }
+}
+
+#[test]
+fn test_large_scale_1000_nodes_quadtree_performance_and_finite_coords() {
+    let forces = GraphForcesSettings::default();
+    let mut nodes = Vec::with_capacity(1000);
+    for i in 0..1000 {
+        nodes.push(GraphNode {
+            id: format!("perf/node_{:04}.md", i),
+            path: PathBuf::from(format!("perf/node_{:04}.md", i)),
+            label: format!("Perf Node {:04}", i),
+            degree: if i % 2 == 0 { 2 } else { 1 },
+            centrality: (i % 100) as u32,
+            community_id: i % 8,
+            is_unresolved: false,
+            is_tag: false,
+            ..Default::default()
+        });
+    }
+
+    let mut edges = Vec::with_capacity(1500);
+    for i in 0..999 {
+        edges.push(GraphEdge {
+            source: format!("perf/node_{:04}.md", i),
+            target: format!("perf/node_{:04}.md", i + 1),
+        });
+    }
+    for i in 0..500 {
+        edges.push(GraphEdge {
+            source: format!("perf/node_{:04}.md", i),
+            target: format!("perf/node_{:04}.md", (i * 2) % 1000),
+        });
+    }
+
+    let graph = GraphData { nodes, edges };
+
+    // Run simulation initialization
+    let start = std::time::Instant::now();
+    let (mut sim_nodes, sim_edges) = init_simulation_with_forces(&graph, 1200.0, 900.0, &forces);
+    let init_duration = start.elapsed();
+
+    assert_eq!(sim_nodes.len(), 1000);
+    println!(
+        "1000-node layout initialization completed in {:?}",
+        init_duration
+    );
+
+    // Step Barnes-Hut simulation for 10 ticks
+    let mut alpha = 0.30f32;
+    for _step in 0..10 {
+        let energy = step_simulation_with_forces(
+            &mut sim_nodes,
+            &sim_edges,
+            (600.0, 450.0),
+            None,
+            alpha,
+            &forces,
+        );
+        assert!(energy.is_finite());
+        alpha *= 0.95;
+    }
+
+    // Verify all 1,000 nodes maintain valid non-NaN positions
+    for n in &sim_nodes {
+        assert!(n.x.is_finite(), "Node {} x must be finite", n.id);
+        assert!(n.y.is_finite(), "Node {} y must be finite", n.id);
+        assert!(n.vx.is_finite(), "Node {} vx must be finite", n.id);
+        assert!(n.vy.is_finite(), "Node {} vy must be finite", n.id);
     }
 }

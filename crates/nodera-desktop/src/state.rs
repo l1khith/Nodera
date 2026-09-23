@@ -546,14 +546,14 @@ pub fn build_file_tree(entries: &[VaultEntry]) -> Vec<FileTreeNode> {
                 })
                 .collect();
 
-            folder_nodes.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
+            folder_nodes.sort_by_key(|a| a.name().to_lowercase());
 
             let mut file_nodes: Vec<FileTreeNode> = files
                 .iter()
                 .map(|summary| FileTreeNode::File(summary.clone()))
                 .collect();
 
-            file_nodes.sort_by(|a, b| a.name().to_lowercase().cmp(&b.name().to_lowercase()));
+            file_nodes.sort_by_key(|a| a.name().to_lowercase());
 
             result.extend(folder_nodes);
             result.extend(file_nodes);
@@ -562,6 +562,16 @@ pub fn build_file_tree(entries: &[VaultEntry]) -> Vec<FileTreeNode> {
     }
 
     assemble(Path::new(""), &folder_names, &folder_children)
+}
+
+/// Active context for an inspected external source project.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectContext {
+    pub id: String,
+    pub name: String,
+    pub root: PathBuf,
+    pub graph: nodera_project::ProjectGraph,
+    pub graph_data: nodera_markdown::GraphData,
 }
 
 /// Runtime application state driving the UI.
@@ -605,6 +615,11 @@ pub struct AppState {
 
     // Reading mode Table of Contents
     pub toc_headings: Vec<(usize, String)>,
+
+    // External Source Projects
+    pub active_project: Option<ProjectContext>,
+    pub registered_projects: Vec<nodera_project::ProjectRegistryEntry>,
+    pub show_projects_section: bool,
 
     // Sidebar sections
     pub show_bookmarks_section: bool,
@@ -688,6 +703,33 @@ pub struct AppState {
     pub show_go_to_date_dialog: bool,
     pub go_to_date_input: String,
     pub go_to_date_error: Option<String>,
+
+    // Live Graph Viewport & Position Persistence
+    pub graph_view_state: GraphViewState,
+}
+
+/// Preserved live graph state across navigation and interactions
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphViewState {
+    pub positions: HashMap<String, (f32, f32)>,
+    pub pan_x: f32,
+    pub pan_y: f32,
+    pub zoom: f32,
+    pub selected_node_id: Option<String>,
+    pub initialized: bool,
+}
+
+impl Default for GraphViewState {
+    fn default() -> Self {
+        Self {
+            positions: HashMap::new(),
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+            selected_node_id: None,
+            initialized: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -753,6 +795,14 @@ impl Default for AppState {
             is_resizing_sidebar: false,
             is_resizing_context: false,
             toc_headings: Vec::new(),
+
+            active_project: None,
+            registered_projects: nodera_project::ProjectRegistry::list()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| p.root.exists())
+                .collect(),
+            show_projects_section: true,
 
             show_bookmarks_section: true,
             show_recent_section: true,
@@ -822,6 +872,8 @@ impl Default for AppState {
             show_go_to_date_dialog: false,
             go_to_date_input: String::new(),
             go_to_date_error: None,
+
+            graph_view_state: GraphViewState::default(),
         }
     }
 }
@@ -899,6 +951,7 @@ impl AppState {
         self.status_message = format!("Vault '{}' opened", self.vault_name);
         self.indexing_progress = None;
         self.expanded_folders.clear();
+        self.graph_view_state = GraphViewState::default();
 
         self.refresh_bib_library();
 
@@ -955,6 +1008,7 @@ impl AppState {
         self.toc_headings.clear();
         self.status_message = format!("Vault '{}' created", self.vault_name);
         self.expanded_folders.clear();
+        self.graph_view_state = GraphViewState::default();
 
         self.refresh_bib_library();
 
@@ -977,6 +1031,7 @@ impl AppState {
         self.vault_name = "No Vault Opened".to_string();
         self.entries.clear();
         self.expanded_folders.clear();
+        self.graph_view_state = GraphViewState::default();
 
         self.active_note = None;
         self.editor_content.clear();
@@ -1240,6 +1295,7 @@ impl AppState {
             self.editor_content = note.content.clone();
             self.active_note = Some(note);
             self.active_view = ActiveView::Editor;
+            self.active_project = None;
             self.is_dirty = false;
             self.status_message = format!("Opened '{}'", rel.display());
 
@@ -3060,10 +3116,33 @@ impl AppState {
     }
 
     /// Returns knowledge graph data for the entire vault configured by the provided GraphSettings.
+    /// If an external project is currently active, returns the project's adapted graph data.
     pub fn get_full_graph_data_with_settings(
         &self,
         settings: &GraphSettings,
     ) -> nodera_markdown::GraphData {
+        if let Some(project) = &self.active_project {
+            let mut data = project.graph_data.clone();
+            let query = settings.filters.search_query.trim().to_lowercase();
+            if !query.is_empty() {
+                let matching_ids: std::collections::HashSet<String> = data
+                    .nodes
+                    .iter()
+                    .filter(|n| {
+                        n.label.to_lowercase().contains(&query)
+                            || n.id.to_lowercase().contains(&query)
+                    })
+                    .map(|n| n.id.clone())
+                    .collect();
+
+                data.nodes.retain(|n| matching_ids.contains(&n.id));
+                data.edges.retain(|e| {
+                    matching_ids.contains(&e.source) && matching_ids.contains(&e.target)
+                });
+            }
+            return data;
+        }
+
         let mut note_paths = Vec::new();
         let mut titles = std::collections::HashMap::new();
         let mut note_tags = std::collections::HashMap::new();
@@ -3125,6 +3204,61 @@ impl AppState {
         self.get_full_graph_data_with_settings(&self.preferences.graph_settings)
     }
 
+    /// Refreshes the list of external projects from the global registry.
+    pub fn refresh_registered_projects(&mut self) {
+        if let Ok(projects) = nodera_project::ProjectRegistry::list() {
+            self.registered_projects = projects.into_iter().filter(|p| p.root.exists()).collect();
+        }
+    }
+
+    /// Selects an external project, loads its ProjectGraph, adapts it to GraphData, and switches view to Graph.
+    /// Strictly preserves the Markdown vault state (does NOT modify self.link_graph or self.vault).
+    pub fn select_project(&mut self, project_id: &str) -> std::result::Result<(), String> {
+        let entry = self
+            .registered_projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .cloned()
+            .or_else(|| {
+                nodera_project::ProjectRegistry::find_by_id(project_id)
+                    .ok()
+                    .flatten()
+            });
+
+        if let Some(proj) = entry {
+            let graph_path = proj.root.join(".nodera").join("graph").join("project.json");
+            if graph_path.exists() {
+                if let Ok(graph) = nodera_project::ProjectGraph::load_from_file(&graph_path) {
+                    let graph_data = graph.to_graph_data();
+                    self.active_project = Some(ProjectContext {
+                        id: proj.id.clone(),
+                        name: proj.name.clone(),
+                        root: proj.root.clone(),
+                        graph,
+                        graph_data,
+                    });
+                    self.active_view = ActiveView::Graph;
+                    self.graph_view_state.initialized = false;
+                    self.status_message = format!("Viewing Project: {}", proj.name);
+                    return Ok(());
+                }
+            }
+            return Err(format!(
+                "Project graph not found at {}. Run 'nodera init' in the project directory.",
+                graph_path.display()
+            ));
+        }
+
+        Err(format!("Project '{}' not found in registry", project_id))
+    }
+
+    /// Closes the active project and returns to Vault Mode.
+    pub fn close_project(&mut self) {
+        self.active_project = None;
+        self.graph_view_state.initialized = false;
+        self.status_message = "Returned to Vault".to_string();
+    }
+
     /// Returns local knowledge graph data centered on the currently active note configured by GraphSettings.
     pub fn get_local_graph_data_with_settings(
         &self,
@@ -3166,6 +3300,29 @@ impl AppState {
     /// Returns local knowledge graph data centered on the currently active note with custom depth.
     pub fn get_local_graph_data(&self, depth: usize) -> nodera_markdown::GraphData {
         self.get_local_graph_data_with_settings(depth, &self.preferences.graph_settings)
+    }
+
+    /// Persists node coordinates into the graph view state cache.
+    pub fn preserve_graph_positions(
+        &mut self,
+        positions: impl IntoIterator<Item = (String, f32, f32)>,
+    ) {
+        for (id, x, y) in positions {
+            self.graph_view_state.positions.insert(id, (x, y));
+        }
+        self.graph_view_state.initialized = true;
+    }
+
+    /// Retrieves preserved (x, y) coordinates for a node ID if previously recorded.
+    pub fn get_preserved_graph_position(&self, id: &str) -> Option<(f32, f32)> {
+        self.graph_view_state.positions.get(id).copied()
+    }
+
+    /// Records current graph pan and zoom level for view restoration.
+    pub fn set_graph_viewport(&mut self, pan_x: f32, pan_y: f32, zoom: f32) {
+        self.graph_view_state.pan_x = pan_x;
+        self.graph_view_state.pan_y = pan_y;
+        self.graph_view_state.zoom = zoom;
     }
 
     /// Opens an existing note or creates a new one for a Wikilink target.
@@ -4991,5 +5148,46 @@ mod tests {
         assert!(tree
             .iter()
             .any(|node| node.name() == "DeepResearch" && node.is_folder()));
+    }
+
+    #[test]
+    fn test_graph_view_state_persistence_and_vault_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault_a = tmp.path().join("VaultA");
+        let vault_b = tmp.path().join("VaultB");
+
+        let mut state = AppState::default();
+        state
+            .create_vault(&vault_a, Some("VaultA".to_string()))
+            .unwrap();
+
+        // 1. Record graph positions and viewport
+        state.preserve_graph_positions([
+            ("note1.md".to_string(), 120.0, 340.0),
+            ("note2.md".to_string(), -50.0, 80.0),
+        ]);
+        state.set_graph_viewport(15.0, -25.0, 1.25);
+
+        assert_eq!(
+            state.get_preserved_graph_position("note1.md"),
+            Some((120.0, 340.0))
+        );
+        assert_eq!(
+            state.get_preserved_graph_position("note2.md"),
+            Some((-50.0, 80.0))
+        );
+        assert_eq!(state.graph_view_state.pan_x, 15.0);
+        assert_eq!(state.graph_view_state.pan_y, -25.0);
+        assert_eq!(state.graph_view_state.zoom, 1.25);
+        assert!(state.graph_view_state.initialized);
+
+        // 2. Switch to Vault B: graph_view_state must reset
+        state
+            .create_vault(&vault_b, Some("VaultB".to_string()))
+            .unwrap();
+        assert!(state.graph_view_state.positions.is_empty());
+        assert!(!state.graph_view_state.initialized);
+        assert_eq!(state.graph_view_state.pan_x, 0.0);
+        assert_eq!(state.graph_view_state.zoom, 1.0);
     }
 }

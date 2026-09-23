@@ -13,6 +13,8 @@ nodera-core = { workspace = true }
 nodera-markdown = { workspace = true }
 nodera-index = { workspace = true }
 nodera-pdf = { workspace = true }
+nodera-parser-core = { workspace = true }
+nodera-project = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

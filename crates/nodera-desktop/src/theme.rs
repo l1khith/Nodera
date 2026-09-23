@@ -775,6 +775,30 @@ textarea.editor-textarea::-webkit-scrollbar-corner,
     cursor: grabbing;
 }
 
+.graph-node-circle {
+    transition: r 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 0.18s ease-out,
+                stroke 0.18s ease-out,
+                stroke-width 0.18s ease-out;
+}
+
+.graph-edge-line {
+    transition: opacity 0.18s ease-out,
+                stroke 0.18s ease-out,
+                stroke-width 0.18s ease-out;
+}
+
+.graph-node-label {
+    user-select: none;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out, fill 0.18s ease-out;
+}
+
+.graph-halo-ring {
+    pointer-events: none;
+    transition: r 0.18s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease-out;
+}
+
 .graph-toolbar {
     position: absolute;
     top: 14px;

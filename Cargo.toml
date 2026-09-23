@@ -7,6 +7,8 @@ members = [
     "crates/nodera-pdf",
     "crates/nodera-desktop",
     "crates/nodera-cli",
+    "crates/nodera-parser-core",
+    "crates/nodera-project",
 ]
 
 [workspace.package]
@@ -20,6 +22,12 @@ nodera-core = { path = "crates/nodera-core" }
 nodera-markdown = { path = "crates/nodera-markdown" }
 nodera-index = { path = "crates/nodera-index" }
 nodera-pdf = { path = "crates/nodera-pdf" }
+nodera-parser-core = { path = "crates/nodera-parser-core" }
+nodera-project = { path = "crates/nodera-project" }
+
+toml = "0.8"
+syn = { version = "2.0", features = ["full", "visit", "extra-traits"] }
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
 
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
