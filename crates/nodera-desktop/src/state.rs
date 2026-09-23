@@ -564,6 +564,16 @@ pub fn build_file_tree(entries: &[VaultEntry]) -> Vec<FileTreeNode> {
     assemble(Path::new(""), &folder_names, &folder_children)
 }
 
+/// Active context for an inspected external source project.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectContext {
+    pub id: String,
+    pub name: String,
+    pub root: PathBuf,
+    pub graph: nodera_project::ProjectGraph,
+    pub graph_data: nodera_markdown::GraphData,
+}
+
 /// Runtime application state driving the UI.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -605,6 +615,11 @@ pub struct AppState {
 
     // Reading mode Table of Contents
     pub toc_headings: Vec<(usize, String)>,
+
+    // External Source Projects
+    pub active_project: Option<ProjectContext>,
+    pub registered_projects: Vec<nodera_project::ProjectRegistryEntry>,
+    pub show_projects_section: bool,
 
     // Sidebar sections
     pub show_bookmarks_section: bool,
@@ -780,6 +795,10 @@ impl Default for AppState {
             is_resizing_sidebar: false,
             is_resizing_context: false,
             toc_headings: Vec::new(),
+
+            active_project: None,
+            registered_projects: nodera_project::ProjectRegistry::list().unwrap_or_default(),
+            show_projects_section: true,
 
             show_bookmarks_section: true,
             show_recent_section: true,
@@ -1272,6 +1291,7 @@ impl AppState {
             self.editor_content = note.content.clone();
             self.active_note = Some(note);
             self.active_view = ActiveView::Editor;
+            self.active_project = None;
             self.is_dirty = false;
             self.status_message = format!("Opened '{}'", rel.display());
 
@@ -3092,10 +3112,33 @@ impl AppState {
     }
 
     /// Returns knowledge graph data for the entire vault configured by the provided GraphSettings.
+    /// If an external project is currently active, returns the project's adapted graph data.
     pub fn get_full_graph_data_with_settings(
         &self,
         settings: &GraphSettings,
     ) -> nodera_markdown::GraphData {
+        if let Some(project) = &self.active_project {
+            let mut data = project.graph_data.clone();
+            let query = settings.filters.search_query.trim().to_lowercase();
+            if !query.is_empty() {
+                let matching_ids: std::collections::HashSet<String> = data
+                    .nodes
+                    .iter()
+                    .filter(|n| {
+                        n.label.to_lowercase().contains(&query)
+                            || n.id.to_lowercase().contains(&query)
+                    })
+                    .map(|n| n.id.clone())
+                    .collect();
+
+                data.nodes.retain(|n| matching_ids.contains(&n.id));
+                data.edges.retain(|e| {
+                    matching_ids.contains(&e.source) && matching_ids.contains(&e.target)
+                });
+            }
+            return data;
+        }
+
         let mut note_paths = Vec::new();
         let mut titles = std::collections::HashMap::new();
         let mut note_tags = std::collections::HashMap::new();
@@ -3155,6 +3198,61 @@ impl AppState {
     /// Returns knowledge graph data for the entire vault using saved preferences.
     pub fn get_full_graph_data(&self) -> nodera_markdown::GraphData {
         self.get_full_graph_data_with_settings(&self.preferences.graph_settings)
+    }
+
+    /// Refreshes the list of external projects from the global registry.
+    pub fn refresh_registered_projects(&mut self) {
+        if let Ok(projects) = nodera_project::ProjectRegistry::list() {
+            self.registered_projects = projects.into_iter().filter(|p| p.root.exists()).collect();
+        }
+    }
+
+    /// Selects an external project, loads its ProjectGraph, adapts it to GraphData, and switches view to Graph.
+    /// Strictly preserves the Markdown vault state (does NOT modify self.link_graph or self.vault).
+    pub fn select_project(&mut self, project_id: &str) -> std::result::Result<(), String> {
+        let entry = self
+            .registered_projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .cloned()
+            .or_else(|| {
+                nodera_project::ProjectRegistry::find_by_id(project_id)
+                    .ok()
+                    .flatten()
+            });
+
+        if let Some(proj) = entry {
+            let graph_path = proj.root.join(".nodera").join("graph").join("project.json");
+            if graph_path.exists() {
+                if let Ok(graph) = nodera_project::ProjectGraph::load_from_file(&graph_path) {
+                    let graph_data = graph.to_graph_data();
+                    self.active_project = Some(ProjectContext {
+                        id: proj.id.clone(),
+                        name: proj.name.clone(),
+                        root: proj.root.clone(),
+                        graph,
+                        graph_data,
+                    });
+                    self.active_view = ActiveView::Graph;
+                    self.graph_view_state.initialized = false;
+                    self.status_message = format!("Viewing Project: {}", proj.name);
+                    return Ok(());
+                }
+            }
+            return Err(format!(
+                "Project graph not found at {}. Run 'nodera init' in the project directory.",
+                graph_path.display()
+            ));
+        }
+
+        Err(format!("Project '{}' not found in registry", project_id))
+    }
+
+    /// Closes the active project and returns to Vault Mode.
+    pub fn close_project(&mut self) {
+        self.active_project = None;
+        self.graph_view_state.initialized = false;
+        self.status_message = "Returned to Vault".to_string();
     }
 
     /// Returns local knowledge graph data centered on the currently active note configured by GraphSettings.

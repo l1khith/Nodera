@@ -20,10 +20,14 @@ async fn main() {
 
     let cmd = args[1].to_ascii_lowercase();
     match cmd.as_str() {
+        "init" => handle_init(&args[2..]),
+        "status" => handle_status(&args[2..]),
+        "update" => handle_update(&args[2..]),
         "search" => handle_search(&args[2..]),
         "index" => handle_index(&args[2..]),
         "stats" => handle_stats(&args[2..]),
         "create" => handle_create(&args[2..]),
+        "parse" => handle_parse(&args[2..]),
         "uri" => handle_uri(&args[2..]).await,
         "register-protocol" => handle_register_protocol(),
         "unregister-protocol" => handle_unregister_protocol(),
@@ -44,6 +48,15 @@ USAGE:
     nodera <COMMAND> [OPTIONS]
 
 COMMANDS:
+    init [path]
+        Initialize an existing Rust project or workspace as a Nodera source project.
+
+    status [path]
+        Display Nodera project, graph, and index status.
+
+    update [path]
+        Synchronize project representation with source code changes.
+
     search <vault_path> "<query>" [--limit <n>]
         Search notes in vault with full-text BM25 ranking and snippets.
 
@@ -55,6 +68,9 @@ COMMANDS:
 
     create <vault_path> "<title>" [--content "text"] [--tags "tag1,tag2"]
         Create a new Markdown note in the vault with atomic tempfile safety.
+
+    parse <file_path> [--json]
+        Parse source code file and output normalized symbols, references, and metrics.
 
     uri "<nodera://...>"
         Dispatch a deep link to a running Nodera Desktop or execute headlessly.
@@ -510,10 +526,399 @@ fn handle_unregister_protocol() {
     }
 }
 
+fn handle_parse(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("Usage: nodera parse <file_path> [--json]");
+        std::process::exit(1);
+    }
+
+    let file_path = Path::new(&args[0]);
+    let as_json = args.iter().any(|a| a == "--json");
+
+    let registry = nodera_parser_core::ParserRegistry::with_defaults();
+    let options = nodera_parser_core::ParseOptions::default();
+
+    match registry.parse_file(file_path, &options) {
+        Ok(source_file) => {
+            if as_json {
+                match serde_json::to_string_pretty(&source_file) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => eprintln!("Serialization error: {e}"),
+                }
+            } else {
+                println!("File: {}", source_file.path.display());
+                println!("Language: {}", source_file.language_id);
+                println!(
+                    "Lines: {} total ({} code, {} comments, {} blank)",
+                    source_file.metrics.total_lines,
+                    source_file.metrics.code_lines,
+                    source_file.metrics.comment_lines,
+                    source_file.metrics.blank_lines
+                );
+                let flat = source_file.all_symbols_flat();
+                println!("Symbols ({}):", flat.len());
+                for sym in flat {
+                    let sig = sym.signature.as_deref().unwrap_or(&sym.name);
+                    println!(
+                        "  [{:?}] {} (L{}:C{})",
+                        sym.kind, sig, sym.span.start_line, sym.span.start_col
+                    );
+                }
+                println!("Imports ({}):", source_file.imports.len());
+                for imp in &source_file.imports {
+                    println!("  use {}", imp.path);
+                }
+                if !source_file.diagnostics.is_empty() {
+                    println!("Diagnostics ({}):", source_file.diagnostics.len());
+                    for diag in &source_file.diagnostics {
+                        println!("  {}", diag);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Parse error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_init(args: &[String]) {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            r#"Initialize an existing Rust project or workspace as a Nodera source project.
+
+USAGE:
+    nodera init [path]
+
+ARGS:
+    [path]    Path to the Rust project/workspace (defaults to current directory ".")
+"#
+        );
+        return;
+    }
+
+    let target = if args.is_empty() {
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(&args[0])
+    };
+
+    let options = nodera_project::InitOptions::default();
+    match nodera_project::ProjectInitializer::init(&target, &options) {
+        Ok(res) => {
+            if res.status == nodera_project::InitStatus::AlreadyInitialized {
+                println!("Nodera project already initialized.\n");
+                println!("{:<11} {}", "Project:", res.project.name);
+                println!("{:<11} {}", "Type:", res.project.kind);
+                if let Some(ed) = &res.project.edition {
+                    println!("{:<11} {}", "Edition:", ed);
+                }
+                if res.project.is_workspace() {
+                    println!("{:<11} {}", "Crates:", res.project.package_count());
+                }
+                println!("{:<11} {}", "Rust files:", res.project.total_rust_files());
+                println!("{:<11} {}", "Symbols:", res.symbols_parsed);
+                println!("{:<11} {}", "Graph:", res.graph_path.display());
+                println!("{:<11} {}", "Index:", res.index_path.display());
+                println!("\nMetadata preserved at: {}", res.config_path.display());
+            } else {
+                println!("Nodera Rust Project Initialization\n");
+                println!("✓ Cargo.toml found");
+                println!("✓ Project: {}", res.project.name);
+                if let Some(ed) = &res.project.edition {
+                    println!("✓ Edition: {}", ed);
+                }
+                if res.project.is_workspace() {
+                    println!("✓ {} crates discovered", res.project.package_count());
+                } else {
+                    println!("✓ Rust package discovered");
+                }
+                println!("✓ {} Rust files discovered", res.project.total_rust_files());
+                println!("✓ {} symbols parsed", res.symbols_parsed);
+                println!(
+                    "✓ Project graph generated ({} nodes, {} edges)",
+                    res.nodes_count, res.edges_count
+                );
+                println!("✓ Project index generated");
+                println!("✓ Nodera metadata initialized");
+                println!("\nProject:\n  {}", res.project.root.display());
+                println!(
+                    "\nNodera:\n  .nodera/project.toml\n  .nodera/graph/project.json\n  .nodera/index/\n  .nodera/state/"
+                );
+                println!("\nProject initialized successfully.");
+                println!("\nNext:\n  nodera status\n  nodera update\n  nodera parse <file_path>");
+            }
+
+            if let Some(advisory) = res.gitignore_advisory {
+                println!("\n{}", advisory);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_update(args: &[String]) {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            r#"Synchronize project representation with source code changes.
+
+USAGE:
+    nodera update [path]
+
+ARGS:
+    [path]    Path to the Rust project/workspace (defaults to current directory ".")
+"#
+        );
+        return;
+    }
+
+    let target = if args.is_empty() {
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(&args[0])
+    };
+
+    match nodera_project::ProjectSynchronizer::update(&target) {
+        Ok(res) => {
+            println!("Nodera Project Synchronization\n");
+            if res.was_rebuilt {
+                println!("✓ Derived state was missing or corrupted; full rebuild performed");
+                println!("✓ Files re-indexed: {}", res.changes.added.len());
+                println!("✓ Symbols parsed:  {}", res.total_symbols);
+                println!(
+                    "✓ Project graph regenerated: {} nodes, {} edges",
+                    res.total_nodes, res.total_edges
+                );
+            } else if res.changes.is_empty() {
+                println!("Status:      Up to date (no changes detected)");
+                println!("Project:     {}", res.project.name);
+                println!("Rust files:  {}", res.project.total_rust_files());
+                println!("Symbols:     {}", res.total_symbols);
+                println!(
+                    "Graph:       {} nodes, {} edges",
+                    res.total_nodes, res.total_edges
+                );
+            } else {
+                println!("✓ Changes detected:");
+                println!("  - Added:    {} files", res.changes.added.len());
+                for f in &res.changes.added {
+                    println!("    + {}", f.display());
+                }
+                println!("  - Modified: {} files", res.changes.modified.len());
+                for f in &res.changes.modified {
+                    println!("    * {}", f.display());
+                }
+                println!("  - Deleted:  {} files", res.changes.deleted.len());
+                for f in &res.changes.deleted {
+                    println!("    - {}", f);
+                }
+                if res.changes.manifest_changed {
+                    println!("  - Cargo.toml modified");
+                }
+                println!("✓ Parsed affected source files");
+                println!(
+                    "✓ Project graph updated: {} nodes, {} edges",
+                    res.total_nodes, res.total_edges
+                );
+                println!("✓ Project index updated: {} symbols", res.total_symbols);
+                println!("✓ Nodera state saved");
+                println!("\nProject:  {}", res.project.root.display());
+                println!("Updated:  {}", res.last_updated);
+            }
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_status(args: &[String]) {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            r#"Display Nodera project, graph, and index status.
+
+USAGE:
+    nodera status [path]
+
+ARGS:
+    [path]    Path to the Rust project/workspace (defaults to current directory ".")
+"#
+        );
+        return;
+    }
+
+    let target = if args.is_empty() {
+        PathBuf::from(".")
+    } else {
+        PathBuf::from(&args[0])
+    };
+
+    match nodera_project::ProjectDiscovery::discover(&target) {
+        Ok(project) => {
+            let nodera_dir = project.root.join(".nodera");
+            let is_initialized = nodera_dir.join("project.toml").exists();
+
+            println!("Nodera Project");
+            println!("──────────────");
+            println!("{:<11} {}", "Name", project.name);
+            println!("{:<11} {}", "Type", project.kind);
+            if let Some(ed) = &project.edition {
+                println!("{:<11} {}", "Edition", ed);
+            }
+            if project.is_workspace() {
+                println!("{:<11} {}", "Crates", project.package_count());
+            }
+            println!("{:<11} {}", "Root", project.root.display());
+            println!("{:<11} {}", "Rust files", project.total_rust_files());
+
+            if is_initialized {
+                let graph_path = nodera_dir.join("graph").join("project.json");
+                let index_dir = nodera_dir.join("index");
+                let state_path = nodera_dir.join("state").join("source_state.json");
+
+                println!();
+                println!("Graph");
+                println!("─────");
+                if let Ok(graph) = nodera_project::ProjectGraph::load_from_file(&graph_path) {
+                    println!("{:<11} {}", "Nodes", graph.nodes.len());
+                    println!("{:<11} {}", "Edges", graph.edges.len());
+                } else {
+                    println!("{:<11} Not generated (run 'nodera update')", "Status");
+                }
+
+                println!();
+                println!("Index");
+                println!("─────");
+                if let Ok(index) = nodera_project::ProjectIndex::open_or_create(&index_dir) {
+                    println!("{:<11} Ready", "Status");
+                    if let Ok(symbols) = index.symbol_count() {
+                        println!("{:<11} {}", "Symbols", symbols);
+                    }
+                } else {
+                    println!("{:<11} Not indexed", "Status");
+                }
+
+                println!();
+                println!("Changes");
+                println!("───────");
+                if let Ok(prev_state) = nodera_project::SourceState::load_from_file(&state_path) {
+                    let all_files: Vec<PathBuf> = project
+                        .all_rust_files()
+                        .into_iter()
+                        .map(|p| p.to_path_buf())
+                        .collect();
+                    if let Ok(changes) = nodera_project::SourceState::detect_changes(
+                        &project.root,
+                        &all_files,
+                        &project.manifest_path,
+                        &prev_state,
+                    ) {
+                        if changes.is_empty() {
+                            println!("{:<11} Up to date", "Source");
+                        } else {
+                            println!(
+                                "{:<11} {} changes pending (run 'nodera update')",
+                                "Source",
+                                changes.total_changes()
+                            );
+                        }
+                    } else {
+                        println!("{:<11} Unknown", "Source");
+                    }
+                } else {
+                    println!("{:<11} No state file (run 'nodera update')", "Source");
+                }
+            } else {
+                println!();
+                println!("Index");
+                println!("─────");
+                println!("{:<11} Not initialized (run 'nodera init')", "Status");
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_cli_init_and_status() {
+        let tmp = tempdir().unwrap();
+        let project_dir = tmp.path().join("my-rust-crate");
+        std::fs::create_dir_all(project_dir.join("src")).unwrap();
+        std::fs::write(
+            project_dir.join("Cargo.toml"),
+            r#"[package]
+name = "my-rust-crate"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project_dir.join("src").join("main.rs"),
+            "fn main() { println!(\"hello\"); }",
+        )
+        .unwrap();
+
+        // Run init
+        let options = nodera_project::InitOptions::default();
+        let init_res = nodera_project::ProjectInitializer::init(&project_dir, &options).unwrap();
+        assert_eq!(init_res.status, nodera_project::InitStatus::Initialized);
+        assert_eq!(init_res.project.name, "my-rust-crate");
+        assert_eq!(init_res.project.total_rust_files(), 1);
+        assert!(init_res.graph_path.exists());
+        assert!(init_res.index_path.join("project.db").exists());
+
+        // Run init again (idempotent)
+        let init_res2 = nodera_project::ProjectInitializer::init(&project_dir, &options).unwrap();
+        assert_eq!(
+            init_res2.status,
+            nodera_project::InitStatus::AlreadyInitialized
+        );
+
+        // Discovery / status check
+        let project = nodera_project::ProjectDiscovery::discover(&project_dir).unwrap();
+        assert_eq!(project.kind, nodera_project::ProjectKind::SinglePackage);
+        assert_eq!(project.edition.as_deref(), Some("2021"));
+
+        // Modify file and test update
+        std::fs::write(
+            project_dir.join("src").join("main.rs"),
+            "pub struct Player { pub score: u32 }\nfn main() { println!(\"hello\"); }",
+        )
+        .unwrap();
+
+        let sync_res = nodera_project::ProjectSynchronizer::update(&project_dir).unwrap();
+        assert_eq!(sync_res.changes.modified.len(), 1);
+        assert_eq!(sync_res.total_symbols, 3);
+    }
+
+    #[test]
+    fn test_cli_parse_source_file() {
+        let tmp = tempdir().unwrap();
+        let rs_path = tmp.path().join("sample.rs");
+        std::fs::write(&rs_path, "pub fn sample_fn() -> bool { true }").unwrap();
+
+        let registry = nodera_parser_core::ParserRegistry::with_defaults();
+        let options = nodera_parser_core::ParseOptions::default();
+        let sf = registry.parse_file(&rs_path, &options).unwrap();
+
+        assert_eq!(sf.language_id, nodera_parser_core::LanguageId::Rust);
+        assert_eq!(sf.symbols.len(), 1);
+        assert_eq!(sf.symbols[0].name, "sample_fn");
+    }
 
     #[test]
     fn test_cli_vault_stats_and_create() {

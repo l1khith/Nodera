@@ -956,6 +956,21 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     }
                 }
 
+                if let Some(proj) = &app_state.active_project {
+                    div {
+                        style: "position: absolute; top: 12px; left: 240px; z-index: 10; display: flex; align-items: center; gap: 8px; background: var(--bg-surface); padding: 5px 12px; border-radius: 6px; border: 1px solid var(--accent); box-shadow: var(--shadow-sm);",
+                        span { style: "font-size: 12px; font-weight: 600; color: var(--accent);", "📦 {proj.name}" }
+                        span { style: "font-size: 11px; color: var(--text-muted);", "({total_notes} nodes, {total_edges} edges)" }
+                        button {
+                            style: "background: transparent; border: none; cursor: pointer; color: var(--text-secondary); font-size: 11px; text-decoration: underline; margin-left: 6px; padding: 0;",
+                            onclick: move |_| {
+                                state.write().close_project();
+                            },
+                            "Return to Vault"
+                        }
+                    }
+                }
+
                 // Top-right Compact Controls Toolbar
                 div {
                     class: "graph-toolbar",
@@ -1360,12 +1375,15 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
 
                                                 if is_double_click {
                                                     let mut s = state.write();
-                                                    if is_unresolved {
+                                                    if s.active_project.is_some() {
+                                                        s.status_message = format!("Selected symbol: {}", label_click);
+                                                    } else if is_unresolved {
                                                         let _ = s.open_or_create_target(&label_click);
+                                                        s.active_view = ActiveView::Editor;
                                                     } else {
                                                         let _ = s.select_note(&path_click);
+                                                        s.active_view = ActiveView::Editor;
                                                     }
-                                                    s.active_view = ActiveView::Editor;
                                                     last_click.set(None);
                                                 } else {
                                                     selected_node.set(Some(idx));
@@ -1376,12 +1394,15 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                             ondoubleclick: move |evt: MouseEvent| {
                                                 evt.stop_propagation();
                                                 let mut s = state.write();
-                                                if is_unresolved {
+                                                if s.active_project.is_some() {
+                                                    s.status_message = format!("Selected symbol: {}", label_dbl);
+                                                } else if is_unresolved {
                                                     let _ = s.open_or_create_target(&label_dbl);
+                                                    s.active_view = ActiveView::Editor;
                                                 } else {
                                                     let _ = s.select_note(&path_dbl);
+                                                    s.active_view = ActiveView::Editor;
                                                 }
-                                                s.active_view = ActiveView::Editor;
                                             },
                                             // Selection halo ring
                                             if is_selected {
