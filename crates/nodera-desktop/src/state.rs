@@ -4627,6 +4627,8 @@ mod tests {
         let vault_path = tmp.path().join("BookmarksVault");
 
         let mut state = AppState::default();
+        state.preferences.bookmarks.clear();
+        state.preferences.recent_notes.clear();
         state
             .create_vault(&vault_path, Some("Bookmarks Vault".to_string()))
             .unwrap();

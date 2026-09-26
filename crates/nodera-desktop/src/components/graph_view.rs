@@ -923,12 +923,6 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         if drag_idx < ns.len() {
                             ns[drag_idx].x = world_x;
                             ns[drag_idx].y = world_y;
-                            if current_settings.display.animate {
-                                let es = edges_state.read();
-                                let forces = current_settings.forces.clone();
-                                // Reheat connected neighbors during drag with soft linear force
-                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.16, &forces);
-                            }
                         }
                     }
                 },
