@@ -53,4 +53,7 @@ aes-gcm = "0.10"
 sha2 = { version = "0.10", default-features = false }
 pbkdf2 = { version = "0.12", default-features = false, features = ["simple"] }
 
+[profile.release]
+debug = true
+
 
