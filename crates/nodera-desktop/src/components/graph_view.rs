@@ -774,10 +774,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         }
     });
 
-    // When filters or vault entries change, recompute simulation
+    // When filters, vault entries, or graph settings change, recompute simulation with projection budget
     use_effect(move || {
         let s = state.read().preferences.graph_settings.clone();
-        let current_graph = state.read().get_full_graph_data_with_settings(&s);
+        let (current_graph, meta) = state.read().get_projected_graph_data_with_settings(&s);
+        state.write().graph_view_state.projection_meta = meta;
         let saved_pos = state.read().graph_view_state.positions.clone();
         let (n, e) =
             init_or_update_simulation(&current_graph, 1000.0, 700.0, &s.forces, &saved_pos);
@@ -1142,10 +1143,20 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     span {
                         style: "display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-primary);",
                         IconGraph { size: 13 }
-                        span { "{total_notes} nodes" }
+                        if state.read().graph_view_state.projection_meta.is_budget_capped {
+                            span { "Showing {total_notes} of {state.read().graph_view_state.projection_meta.total_nodes} nodes" }
+                        } else {
+                            span { "{total_notes} nodes" }
+                        }
                     }
                     span { style: "color: var(--text-muted);", "•" }
                     span { style: "color: var(--text-secondary);", "{total_edges} connections" }
+                    if state.read().graph_view_state.projection_meta.is_budget_capped {
+                        span {
+                            style: "background: rgba(92, 111, 230, 0.18); color: var(--accent-primary, #5C6FE6); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;",
+                            "Budget Capped (60 FPS)"
+                        }
+                    }
                 }
 
                 // Hovered Node Intelligence Card
@@ -1367,6 +1378,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let label_dbl = node.label.clone();
                                     let is_unresolved = node.is_unresolved;
                                     let node_id_val = node.id.clone();
+                                    let node_id_dbl = node.id.clone();
 
                                     // 4-Tier Adaptive Label LOD
                                     let is_hub = node.degree >= 3 || is_center_node;
@@ -1420,15 +1432,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
 
                                                 if is_double_click {
                                                     let mut s = state.write();
-                                                    if s.active_project.is_some() {
-                                                        s.status_message = format!("Selected symbol: {}", label_click);
-                                                        s.context_panel_open = true;
-                                                    } else if is_unresolved {
+                                                    if is_unresolved {
                                                         let _ = s.open_or_create_target(&label_click);
                                                         s.active_view = ActiveView::Editor;
                                                     } else {
-                                                        let _ = s.select_note(&path_click);
-                                                        s.active_view = ActiveView::Editor;
+                                                        let _ = s.open_graph_node_document(&node_id_val, &path_click);
                                                     }
                                                     last_click.set(None);
                                                 } else {
@@ -1442,15 +1450,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                             ondoubleclick: move |evt: MouseEvent| {
                                                 evt.stop_propagation();
                                                 let mut s = state.write();
-                                                if s.active_project.is_some() {
-                                                    s.status_message = format!("Selected symbol: {}", label_dbl);
-                                                    s.context_panel_open = true;
-                                                } else if is_unresolved {
+                                                if is_unresolved {
                                                     let _ = s.open_or_create_target(&label_dbl);
                                                     s.active_view = ActiveView::Editor;
                                                 } else {
-                                                    let _ = s.select_note(&path_dbl);
-                                                    s.active_view = ActiveView::Editor;
+                                                    let _ = s.open_graph_node_document(&node_id_dbl, &path_dbl);
                                                 }
                                             },
                                             // Selection halo ring

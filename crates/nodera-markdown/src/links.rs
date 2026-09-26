@@ -94,6 +94,201 @@ pub struct GraphData {
     pub edges: Vec<GraphEdge>,
 }
 
+/// Hard render budget and bounding constraints for graph visualization
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderBudget {
+    /// Maximum number of nodes to render concurrently (default: 400).
+    pub max_nodes: usize,
+    /// Maximum number of edges to render concurrently (default: 800).
+    pub max_edges: usize,
+    /// Maximum number of visible text labels (default: 100).
+    pub max_labels: usize,
+}
+
+impl Default for RenderBudget {
+    fn default() -> Self {
+        Self {
+            max_nodes: 400,
+            max_edges: 800,
+            max_labels: 100,
+        }
+    }
+}
+
+/// Metadata reporting the projected vs total graph metrics
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GraphProjectionMeta {
+    pub total_nodes: usize,
+    pub displayed_nodes: usize,
+    pub total_edges: usize,
+    pub displayed_edges: usize,
+    pub is_budget_capped: bool,
+}
+
+impl GraphData {
+    /// Projects a bounded subgraph around an optional focus node within a given hop depth and render budget.
+    ///
+    /// - If `focus_node` is provided:
+    ///   Expands outward via BFS from the focus node up to `depth` hops.
+    ///   If the discovered neighborhood exceeds `budget.max_nodes`, prioritizes nodes by closest hop distance,
+    ///   then by total connection degree.
+    ///
+    /// - If `focus_node` is None (global graph view):
+    ///   If total nodes <= `budget.max_nodes`, returns the graph unmodified.
+    ///   Otherwise, selects the top `budget.max_nodes` most significant nodes ranked by degree and centrality.
+    ///
+    /// Retains edges only between selected nodes, prioritizing the most connected edges up to `budget.max_edges`.
+    pub fn project(
+        &self,
+        focus_node: Option<&str>,
+        depth: usize,
+        budget: RenderBudget,
+    ) -> (Self, GraphProjectionMeta) {
+        let total_nodes = self.nodes.len();
+        let total_edges = self.edges.len();
+
+        if total_nodes <= budget.max_nodes && total_edges <= budget.max_edges && focus_node.is_none() {
+            let meta = GraphProjectionMeta {
+                total_nodes,
+                displayed_nodes: total_nodes,
+                total_edges,
+                displayed_edges: total_edges,
+                is_budget_capped: false,
+            };
+            return (self.clone(), meta);
+        }
+
+        // 1. Build adjacency lookup table for fast traversal
+        let mut adj: HashMap<&str, Vec<&str>> = HashMap::with_capacity(self.nodes.len());
+        for edge in &self.edges {
+            adj.entry(edge.source.as_str()).or_default().push(edge.target.as_str());
+            adj.entry(edge.target.as_str()).or_default().push(edge.source.as_str());
+        }
+
+        // Map node_id -> &GraphNode
+        let node_map: HashMap<&str, &GraphNode> = self.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+
+        let selected_ids: HashSet<String> = if let Some(root_id) = focus_node {
+            if !node_map.contains_key(root_id) {
+                // Focus node not found, fallback to top degree nodes
+                Self::select_top_nodes(&self.nodes, budget.max_nodes)
+            } else {
+                // BFS outward from root_id up to depth hops
+                let mut visited = HashSet::new();
+                visited.insert(root_id.to_string());
+                let mut frontier = vec![root_id];
+                let mut hop_levels: HashMap<String, usize> = HashMap::new();
+                hop_levels.insert(root_id.to_string(), 0);
+
+                for d in 1..=depth {
+                    let mut next_frontier = Vec::new();
+                    for curr in frontier {
+                        if let Some(neighbors) = adj.get(curr) {
+                            for &neighbor in neighbors {
+                                if visited.insert(neighbor.to_string()) {
+                                    hop_levels.insert(neighbor.to_string(), d);
+                                    next_frontier.push(neighbor);
+                                }
+                            }
+                        }
+                    }
+                    frontier = next_frontier;
+                    if frontier.is_empty() || visited.len() >= budget.max_nodes * 2 {
+                        break;
+                    }
+                }
+
+                if visited.len() <= budget.max_nodes {
+                    visited
+                } else {
+                    // Rank visited nodes by (hop_distance ASC, degree DESC, centrality DESC)
+                    let mut ranked_nodes: Vec<_> = visited
+                        .into_iter()
+                        .filter_map(|id| {
+                            let node = node_map.get(id.as_str())?;
+                            let hop = hop_levels.get(&id).copied().unwrap_or(usize::MAX);
+                            Some((id, hop, node.degree, node.centrality))
+                        })
+                        .collect();
+
+                    ranked_nodes.sort_by(|a, b| {
+                        a.1.cmp(&b.1) // Closest hop first
+                            .then_with(|| b.2.cmp(&a.2)) // Higher degree first
+                            .then_with(|| b.3.cmp(&a.3)) // Higher centrality
+                    });
+
+                    ranked_nodes
+                        .into_iter()
+                        .take(budget.max_nodes)
+                        .map(|(id, _, _, _)| id)
+                        .collect()
+                }
+            }
+        } else {
+            Self::select_top_nodes(&self.nodes, budget.max_nodes)
+        };
+
+        // 2. Collect projected nodes
+        let mut projected_nodes: Vec<GraphNode> = self
+            .nodes
+            .iter()
+            .filter(|n| selected_ids.contains(&n.id))
+            .cloned()
+            .collect();
+        projected_nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
+        // 3. Collect and filter edges between selected nodes
+        let mut candidate_edges: Vec<&GraphEdge> = self
+            .edges
+            .iter()
+            .filter(|e| selected_ids.contains(&e.source) && selected_ids.contains(&e.target))
+            .collect();
+
+        // If candidate edges exceed budget, prioritize edges connecting higher-degree nodes
+        if candidate_edges.len() > budget.max_edges {
+            candidate_edges.sort_by(|a, b| {
+                let deg_a = node_map.get(a.source.as_str()).map(|n| n.degree).unwrap_or(0)
+                    + node_map.get(a.target.as_str()).map(|n| n.degree).unwrap_or(0);
+                let deg_b = node_map.get(b.source.as_str()).map(|n| n.degree).unwrap_or(0)
+                    + node_map.get(b.target.as_str()).map(|n| n.degree).unwrap_or(0);
+                deg_b.cmp(&deg_a)
+            });
+            candidate_edges.truncate(budget.max_edges);
+        }
+
+        let mut projected_edges: Vec<GraphEdge> = candidate_edges.into_iter().cloned().collect();
+        projected_edges.sort_by(|a, b| (&a.source, &a.target).cmp(&(&b.source, &b.target)));
+
+        let is_budget_capped = projected_nodes.len() < total_nodes || projected_edges.len() < total_edges;
+        let meta = GraphProjectionMeta {
+            total_nodes,
+            displayed_nodes: projected_nodes.len(),
+            total_edges,
+            displayed_edges: projected_edges.len(),
+            is_budget_capped,
+        };
+
+        (
+            GraphData {
+                nodes: projected_nodes,
+                edges: projected_edges,
+            },
+            meta,
+        )
+    }
+
+    fn select_top_nodes(nodes: &[GraphNode], max_nodes: usize) -> HashSet<String> {
+        let mut ranked = nodes.to_vec();
+        ranked.sort_by(|a, b| {
+            b.degree
+                .cmp(&a.degree)
+                .then_with(|| b.centrality.cmp(&a.centrality))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        ranked.into_iter().take(max_nodes).map(|n| n.id).collect()
+    }
+}
+
 /// High-performance O(1) link target resolver using precomputed hash lookup tables.
 #[derive(Debug, Clone, Default)]
 pub struct TargetResolver {
@@ -595,13 +790,16 @@ impl LinkGraph {
                     }
                 }
                 // Follow incoming links (backlinks) to this note
-                if let Some(sources) = self.incoming.get(note_path.as_path()) {
-                    for source_path in sources {
-                        if source_path.as_path() != note_path.as_path()
-                            && included_paths.insert(source_path.clone())
-                        {
-                            next_frontier.push(source_path.clone());
-                        }
+                let sources = if let Some(sources) = self.incoming.get(note_path.as_path()) {
+                    sources.iter().cloned().collect::<Vec<_>>()
+                } else {
+                    self.get_backlinks(note_path.as_path(), all_paths)
+                };
+                for source_path in sources {
+                    if source_path.as_path() != note_path.as_path()
+                        && included_paths.insert(source_path.clone())
+                    {
+                        next_frontier.push(source_path);
                     }
                 }
             }
@@ -1729,5 +1927,76 @@ mod tests {
         graph.remove_note(&path_c);
         let backlinks_b_after_delete = graph.get_backlinks(&path_b, &paths);
         assert!(backlinks_b_after_delete.is_empty());
+    }
+
+    #[test]
+    fn test_graph_data_project_with_budget_and_focus() {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+
+        // Create 20 nodes in a line: 0 -> 1 -> 2 -> ... -> 19
+        for i in 0..20 {
+            nodes.push(GraphNode {
+                id: format!("node_{}", i),
+                path: PathBuf::from(format!("node_{}.md", i)),
+                label: format!("Node {}", i),
+                degree: if i == 0 || i == 19 { 1 } else { 2 },
+                is_unresolved: false,
+                is_tag: false,
+                in_degree: if i == 0 { 0 } else { 1 },
+                out_degree: if i == 19 { 0 } else { 1 },
+                centrality: (20 - i) as u32,
+                community_id: 0,
+            });
+            if i < 19 {
+                edges.push(GraphEdge {
+                    source: format!("node_{}", i),
+                    target: format!("node_{}", i + 1),
+                });
+            }
+        }
+
+        let full_graph = GraphData { nodes, edges };
+
+        // Test 1: Focus on node_0 with depth 2 and budget of 3 nodes
+        let budget = RenderBudget {
+            max_nodes: 3,
+            max_edges: 5,
+            max_labels: 3,
+        };
+        let (projected, meta) = full_graph.project(Some("node_0"), 2, budget);
+
+        assert_eq!(meta.total_nodes, 20);
+        assert_eq!(meta.displayed_nodes, 3);
+        assert!(meta.is_budget_capped);
+        assert_eq!(projected.nodes.len(), 3);
+        // Should contain node_0, node_1, node_2
+        let ids: Vec<_> = projected.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, vec!["node_0", "node_1", "node_2"]);
+        assert_eq!(projected.edges.len(), 2);
+
+        // Test 2: Global projection (no focus) with budget of 4 nodes
+        let budget_global = RenderBudget {
+            max_nodes: 4,
+            max_edges: 4,
+            max_labels: 4,
+        };
+        let (projected_global, meta_global) = full_graph.project(None, 1, budget_global);
+        assert_eq!(meta_global.total_nodes, 20);
+        assert_eq!(meta_global.displayed_nodes, 4);
+        assert!(meta_global.is_budget_capped);
+        assert_eq!(projected_global.nodes.len(), 4);
+
+        // Test 3: Unbounded budget returns complete graph unmodified
+        let generous_budget = RenderBudget {
+            max_nodes: 100,
+            max_edges: 100,
+            max_labels: 100,
+        };
+        let (unbounded, meta_unbounded) = full_graph.project(None, 1, generous_budget);
+        assert_eq!(meta_unbounded.displayed_nodes, 20);
+        assert!(!meta_unbounded.is_budget_capped);
+        assert_eq!(unbounded.nodes.len(), 20);
+        assert_eq!(unbounded.edges.len(), 19);
     }
 }

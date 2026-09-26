@@ -379,6 +379,8 @@ pub struct GraphSettings {
     #[serde(default)]
     pub colors: GraphColorSettings,
     #[serde(default)]
+    pub budget: nodera_markdown::RenderBudget,
+    #[serde(default)]
     pub is_panel_open: bool,
     #[serde(default)]
     pub expanded_sections: GraphExpandedSections,
@@ -924,6 +926,7 @@ pub struct GraphViewState {
     pub zoom: f32,
     pub selected_node_id: Option<String>,
     pub initialized: bool,
+    pub projection_meta: nodera_markdown::GraphProjectionMeta,
 }
 
 impl Default for GraphViewState {
@@ -935,6 +938,7 @@ impl Default for GraphViewState {
             zoom: 1.0,
             selected_node_id: None,
             initialized: false,
+            projection_meta: nodera_markdown::GraphProjectionMeta::default(),
         }
     }
 }
@@ -3323,11 +3327,17 @@ impl AppState {
     }
 
     /// Returns knowledge graph data for the entire vault configured by the provided GraphSettings.
-    /// If an external project is currently active, returns the project's adapted graph data.
-    pub fn get_full_graph_data_with_settings(
+    /// Returns knowledge graph data for the entire vault or active project, applying projection and render budget.
+    pub fn get_projected_graph_data_with_settings(
         &self,
         settings: &GraphSettings,
-    ) -> nodera_markdown::GraphData {
+    ) -> (nodera_markdown::GraphData, nodera_markdown::GraphProjectionMeta) {
+        let focus_node = self.active_note.as_ref().map(|n| {
+            n.relative_path.to_string_lossy().replace('\\', "/")
+        }).or_else(|| {
+            self.graph_view_state.selected_node_id.clone()
+        });
+
         if let Some(project) = &self.active_project {
             let mut data = project.graph_data.clone();
             let query = settings.filters.search_query.trim().to_lowercase();
@@ -3347,7 +3357,7 @@ impl AppState {
                     matching_ids.contains(&e.source) && matching_ids.contains(&e.target)
                 });
             }
-            return data;
+            return data.project(focus_node.as_deref(), 2, settings.budget);
         }
 
         let mut note_paths = Vec::new();
@@ -3403,7 +3413,49 @@ impl AppState {
                 .retain(|e| matching_ids.contains(&e.source) && matching_ids.contains(&e.target));
         }
 
-        data
+        data.project(focus_node.as_deref(), 2, settings.budget)
+    }
+
+    /// Returns knowledge graph data for the entire vault or active project, bounded by render budget.
+    pub fn get_full_graph_data_with_settings(
+        &self,
+        settings: &GraphSettings,
+    ) -> nodera_markdown::GraphData {
+        self.get_projected_graph_data_with_settings(settings).0
+    }
+
+    /// Opens a document/file for editing or inspection from a graph node.
+    /// In Vault mode, selects and opens the Markdown note in the editor.
+    /// In Project mode, reads the source file from the project root and opens it in the editor.
+    pub fn open_graph_node_document(&mut self, _node_id: &str, path: &Path) -> Result<()> {
+        if let Some(proj) = &self.active_project {
+            let full_path = proj.root.join(path);
+            if full_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&full_path) {
+                    let file_name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("source")
+                        .to_string();
+                    let pseudo_note = nodera_core::Note {
+                        id: nodera_core::NoteId::new(),
+                        title: file_name,
+                        relative_path: path.to_path_buf(),
+                        content: content.clone(),
+                    };
+                    self.active_note = Some(pseudo_note);
+                    self.editor_content = content;
+                    self.active_view = ActiveView::Editor;
+                    self.is_dirty = false;
+                    self.status_message = format!("Viewing: {}", path.display());
+                    return Ok(());
+                }
+            }
+            self.status_message = format!("File not found: {}", path.display());
+            Ok(())
+        } else {
+            self.select_note(path)
+        }
     }
 
     /// Returns knowledge graph data for the entire vault using saved preferences.
