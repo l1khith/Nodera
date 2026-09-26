@@ -181,9 +181,9 @@ pub fn init_or_update_simulation(
     // so spatial memory is preserved and positions don't drift.
     // If nodes are mostly new, run pre-warm relaxation steps for clean layout.
     let total_steps = if preserved_count > 0 && preserved_count * 2 >= n {
-        8
+        4
     } else {
-        100
+        10
     };
 
     for step in 0..total_steps {
@@ -217,6 +217,8 @@ pub fn step_simulation(
     )
 }
 
+use std::cell::RefCell;
+
 /// Compact QuadTree node for Barnes-Hut spatial force approximation.
 #[derive(Debug, Clone)]
 struct QuadTreeNode {
@@ -240,12 +242,16 @@ struct QuadTree {
     nodes: Vec<QuadTreeNode>,
 }
 
+thread_local! {
+    static QUAD_TREE_SCRATCH: RefCell<QuadTree> = RefCell::new(QuadTree {
+        nodes: Vec::with_capacity(2048),
+    });
+}
+
 impl QuadTree {
-    fn with_capacity(capacity: usize, cx: f32, cy: f32, size: f32) -> Self {
-        let mut tree = Self {
-            nodes: Vec::with_capacity(capacity),
-        };
-        tree.nodes.push(QuadTreeNode {
+    fn reset(&mut self, cx: f32, cy: f32, size: f32) {
+        self.nodes.clear();
+        self.nodes.push(QuadTreeNode {
             cx,
             cy,
             size,
@@ -254,7 +260,6 @@ impl QuadTree {
             com_y: 0.0,
             payload: QuadPayload::Empty,
         });
-        tree
     }
 
     fn insert(
@@ -550,29 +555,32 @@ pub fn step_simulation_with_forces(
         let cy = (min_y + max_y) * 0.5;
         let size = ((max_x - min_x).max(max_y - min_y) + 20.0).max(100.0);
 
-        let mut tree = QuadTree::with_capacity((n * 4).max(128), cx, cy, size);
-        for (i, node) in nodes.iter().enumerate() {
-            let mass = 1.0 + (node.degree as f32) * 0.15;
-            tree.insert(0, i, node.x, node.y, mass, 16);
-        }
+        QUAD_TREE_SCRATCH.with(|tree_cell| {
+            let mut tree = tree_cell.borrow_mut();
+            tree.reset(cx, cy, size);
+            for (i, node) in nodes.iter().enumerate() {
+                let mass = 1.0 + (node.degree as f32) * 0.15;
+                tree.insert(0, i, node.x, node.y, mass, 16);
+            }
 
-        let theta_sq = 0.75 * 0.75;
-        for i in 0..n {
-            let mass_i = 1.0 + (nodes[i].degree as f32) * 0.15;
-            tree.compute_repulsion(
-                0,
-                i,
-                nodes[i].x,
-                nodes[i].y,
-                mass_i,
-                nodes[i].radius,
-                nodes,
-                k_rep,
-                theta_sq,
-                &mut fx[i],
-                &mut fy[i],
-            );
-        }
+            let theta_sq = 0.75 * 0.75;
+            for i in 0..n {
+                let mass_i = 1.0 + (nodes[i].degree as f32) * 0.15;
+                tree.compute_repulsion(
+                    0,
+                    i,
+                    nodes[i].x,
+                    nodes[i].y,
+                    mass_i,
+                    nodes[i].radius,
+                    nodes,
+                    k_rep,
+                    theta_sq,
+                    &mut fx[i],
+                    &mut fy[i],
+                );
+            }
+        });
     }
 
     // 2. Spring attraction along connected edges
@@ -696,7 +704,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         mut state: Signal<AppState>,
         mut nodes_state: Signal<Vec<SimNode>>,
         edges_state: Signal<Vec<SimEdge>>,
-        dragged_node: Signal<Option<usize>>,
+        _dragged_node: Signal<Option<usize>>,
         mut sim_generation: Signal<u64>,
         mut sim_phase: Signal<SimulationPhase>,
         start_alpha: f32,
@@ -721,37 +729,37 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
             energy: 0.05,
         };
 
+        let nodes_to_relax = nodes_state.read().clone();
+        let edges_to_relax = edges_state.read().clone();
+
         spawn(async move {
-            let mut alpha = start_alpha;
-            for _frame in 0..30 {
-                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-                if *sim_generation.read() != gen {
-                    return;
-                }
-                if dragged_node.read().is_some() {
-                    continue;
-                }
-                let (energy, is_done) = {
-                    let mut ns = nodes_state.write();
-                    let es = edges_state.read();
+            let res = tokio::task::spawn_blocking(move || {
+                let mut current_nodes = nodes_to_relax;
+                let mut alpha = start_alpha;
+                for _step in 0..25 {
                     let energy = step_simulation_with_forces(
-                        &mut ns,
-                        &es,
+                        &mut current_nodes,
+                        &edges_to_relax,
                         (500.0, 350.0),
                         None,
                         alpha,
                         &forces,
                     );
                     alpha *= 0.88;
-                    (energy, alpha < 0.008 || energy < 0.005)
-                };
-                *sim_phase.write() = SimulationPhase::Settling { alpha, energy };
-
-                if is_done {
-                    break;
+                    if alpha < 0.008 || energy < 0.005 {
+                        break;
+                    }
                 }
+                current_nodes
+            })
+            .await;
+
+            if *sim_generation.read() != gen {
+                return;
             }
-            if *sim_generation.read() == gen {
+
+            if let Ok(relaxed_nodes) = res {
+                nodes_state.set(relaxed_nodes);
                 *sim_phase.write() = SimulationPhase::Idle;
                 let pos_list = nodes_state
                     .read()
