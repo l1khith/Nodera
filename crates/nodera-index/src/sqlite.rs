@@ -92,7 +92,7 @@ impl SqliteIndex {
             );
 
             CREATE TABLE IF NOT EXISTS links (
-                source_id     TEXT NOT NULL,
+                source_id     TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
                 target_path   TEXT NOT NULL,
                 target_id     TEXT,
                 start_offset  INTEGER,
@@ -102,7 +102,7 @@ impl SqliteIndex {
 
             CREATE TABLE IF NOT EXISTS tasks (
                 id            TEXT PRIMARY KEY,
-                note_id       TEXT NOT NULL,
+                note_id       TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
                 line_number   INTEGER NOT NULL,
                 checked       INTEGER NOT NULL,
                 text          TEXT NOT NULL,
@@ -110,13 +110,13 @@ impl SqliteIndex {
             );
 
             CREATE TABLE IF NOT EXISTS tags (
-                note_id       TEXT NOT NULL,
+                note_id       TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
                 tag           TEXT NOT NULL,
                 PRIMARY KEY (note_id, tag)
             );
 
             CREATE TABLE IF NOT EXISTS properties (
-                note_id       TEXT NOT NULL,
+                note_id       TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
                 key           TEXT NOT NULL,
                 value_json    TEXT NOT NULL,
                 PRIMARY KEY (note_id, key)
@@ -157,6 +157,8 @@ impl SqliteIndex {
 
         Ok(())
     }
+
+
 
     /// Indexes or updates a note file's metadata and derived entities atomically.
     #[allow(clippy::too_many_arguments)]
@@ -207,12 +209,18 @@ impl SqliteIndex {
 
         // 3. Links
         for link in links {
+            let target_id: Option<String> = tx.query_row(
+                "SELECT id FROM files WHERE path = ?1 OR path = ?1 || '.md'",
+                [&link.target],
+                |row| row.get(0),
+            ).ok();
             tx.execute(
                 "INSERT OR IGNORE INTO links (source_id, target_path, target_id, start_offset, end_offset)
-                 VALUES (?, ?, NULL, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?)",
                 params![
                     note_id,
                     link.target,
+                    target_id,
                     link.start as i64,
                     link.end as i64,
                 ],
@@ -296,8 +304,12 @@ impl SqliteIndex {
             let mut stmt_link = tx
                 .prepare_cached(
                     "INSERT OR IGNORE INTO links (source_id, target_path, target_id, start_offset, end_offset)
-                     VALUES (?, ?, NULL, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?)",
                 )
+                .map_err(db_err)?;
+
+            let mut stmt_resolve = tx
+                .prepare_cached("SELECT id FROM files WHERE path = ?1 OR path = ?1 || '.md'")
                 .map_err(db_err)?;
 
             let mut stmt_task = tx
@@ -331,10 +343,12 @@ impl SqliteIndex {
                     .map_err(db_err)?;
 
                 for link in record.links {
+                    let target_id: Option<String> = stmt_resolve.query_row([&link.target], |row| row.get(0)).ok();
                     stmt_link
                         .execute(params![
                             record.note_id,
                             link.target,
+                            target_id,
                             link.start as i64,
                             link.end as i64,
                         ])
@@ -411,8 +425,12 @@ impl SqliteIndex {
             let mut stmt_link = tx
                 .prepare_cached(
                     "INSERT OR IGNORE INTO links (source_id, target_path, target_id, start_offset, end_offset)
-                     VALUES (?, ?, NULL, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?)",
                 )
+                .map_err(db_err)?;
+
+            let mut stmt_resolve = tx
+                .prepare_cached("SELECT id FROM files WHERE path = ?1 OR path = ?1 || '.md'")
                 .map_err(db_err)?;
 
             let mut stmt_task = tx
@@ -459,10 +477,12 @@ impl SqliteIndex {
                     .map_err(db_err)?;
 
                 for link in record.links {
+                    let target_id: Option<String> = stmt_resolve.query_row([&link.target], |row| row.get(0)).ok();
                     stmt_link
                         .execute(params![
                             record.note_id,
                             link.target,
+                            target_id,
                             link.start as i64,
                             link.end as i64,
                         ])

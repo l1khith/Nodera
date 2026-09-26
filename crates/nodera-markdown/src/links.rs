@@ -555,6 +555,10 @@ impl LinkGraph {
     }
 
     /// Extracts a local neighborhood subgraph around `active_note` with filter options.
+    ///
+    /// Uses direct adjacency traversal over the LinkGraph's outgoing and incoming indexes
+    /// instead of constructing the full vault graph. This is O(nodes_within_depth) rather
+    /// than O(total_vault_nodes + total_vault_edges).
     pub fn to_local_graph_data_with_options(
         &self,
         active_note: &Path,
@@ -564,31 +568,39 @@ impl LinkGraph {
         options: &GraphFilterOptions,
         depth: usize,
     ) -> GraphData {
-        let full_graph = self.to_graph_data_with_options(all_paths, titles, note_tags, options);
-        let active_str = active_note.to_string_lossy().replace('\\', "/");
+        let resolver = TargetResolver::from_paths(all_paths);
+        let all_paths_set: HashSet<&Path> = all_paths.iter().map(|p| p.as_path()).collect();
 
-        let mut included_ids: HashSet<String> = HashSet::new();
-        included_ids.insert(active_str.clone());
+        // BFS frontier: collect all note paths within `depth` hops of active_note.
+        let mut included_paths: HashSet<PathBuf> = HashSet::new();
+        included_paths.insert(active_note.to_path_buf());
 
-        // Adjacency for undirected exploration
-        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-        for edge in &full_graph.edges {
-            adj.entry(edge.source.clone())
-                .or_default()
-                .push(edge.target.clone());
-            adj.entry(edge.target.clone())
-                .or_default()
-                .push(edge.source.clone());
-        }
+        let mut current_frontier: Vec<PathBuf> = vec![active_note.to_path_buf()];
 
-        let mut current_frontier = vec![active_str];
         for _ in 0..depth {
             let mut next_frontier = Vec::new();
-            for node_id in current_frontier {
-                if let Some(neighbors) = adj.get(&node_id) {
-                    for neighbor in neighbors {
-                        if included_ids.insert(neighbor.clone()) {
-                            next_frontier.push(neighbor.clone());
+            for note_path in &current_frontier {
+                // Follow outgoing links from this note
+                if let Some(links) = self.outgoing.get(note_path.as_path()) {
+                    for link in links {
+                        let trimmed = link.target.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Some(target_path) = resolver.resolve(trimmed) {
+                            if &target_path != note_path && included_paths.insert(target_path.clone()) {
+                                next_frontier.push(target_path);
+                            }
+                        }
+                    }
+                }
+                // Follow incoming links (backlinks) to this note
+                if let Some(sources) = self.incoming.get(note_path.as_path()) {
+                    for source_path in sources {
+                        if source_path.as_path() != note_path.as_path()
+                            && included_paths.insert(source_path.clone())
+                        {
+                            next_frontier.push(source_path.clone());
                         }
                     }
                 }
@@ -599,17 +611,170 @@ impl LinkGraph {
             }
         }
 
-        let nodes: Vec<GraphNode> = full_graph
-            .nodes
-            .into_iter()
-            .filter(|n| included_ids.contains(&n.id))
-            .collect();
+        // Build edges and degree maps only for the included neighborhood
+        let mut edges_set: HashSet<GraphEdge> = HashSet::new();
+        let mut degree_map: HashMap<String, usize> = HashMap::new();
+        let mut in_degree_map: HashMap<String, usize> = HashMap::new();
+        let mut out_degree_map: HashMap<String, usize> = HashMap::new();
+        let mut unresolved_targets: HashSet<String> = HashSet::new();
 
-        let edges: Vec<GraphEdge> = full_graph
-            .edges
+        for note_path in &included_paths {
+            let source_str = note_path.to_string_lossy().replace('\\', "/");
+            if let Some(links) = self.outgoing.get(note_path.as_path()) {
+                for link in links {
+                    let trimmed = link.target.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Some(target_path) = resolver.resolve(trimmed) {
+                        if &target_path != note_path && included_paths.contains(&target_path) {
+                            let target_str = target_path.to_string_lossy().replace('\\', "/");
+                            let edge = GraphEdge {
+                                source: source_str.clone(),
+                                target: target_str.clone(),
+                            };
+                            if edges_set.insert(edge) {
+                                *degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                                *out_degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                                *degree_map.entry(target_str.clone()).or_insert(0) += 1;
+                                *in_degree_map.entry(target_str).or_insert(0) += 1;
+                            }
+                        }
+                    } else if !options.existing_files_only {
+                        let unresolved_id = format!("unresolved:{}", trimmed);
+                        let edge = GraphEdge {
+                            source: source_str.clone(),
+                            target: unresolved_id.clone(),
+                        };
+                        if edges_set.insert(edge) {
+                            *degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                            *out_degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                            *degree_map.entry(unresolved_id.clone()).or_insert(0) += 1;
+                            *in_degree_map.entry(unresolved_id.clone()).or_insert(0) += 1;
+                            unresolved_targets.insert(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build nodes for included vault notes
+        let mut nodes = Vec::with_capacity(included_paths.len());
+        for note_path in &included_paths {
+            if options.existing_files_only && !all_paths_set.contains(note_path.as_path()) {
+                continue;
+            }
+            let path_str = note_path.to_string_lossy().replace('\\', "/");
+            let label = titles
+                .get(note_path)
+                .cloned()
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| {
+                    note_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&path_str)
+                        .to_string()
+                });
+            let degree = degree_map.get(&path_str).copied().unwrap_or(0);
+            let in_deg = in_degree_map.get(&path_str).copied().unwrap_or(0);
+            let out_deg = out_degree_map.get(&path_str).copied().unwrap_or(0);
+
+            nodes.push(GraphNode {
+                id: path_str,
+                path: note_path.clone(),
+                label,
+                degree,
+                is_unresolved: false,
+                is_tag: false,
+                in_degree: in_deg,
+                out_degree: out_deg,
+                centrality: 0,
+                community_id: 0,
+            });
+        }
+
+        // Build nodes for unresolved targets within the neighborhood
+        if !options.existing_files_only {
+            for target_name in unresolved_targets {
+                let unresolved_id = format!("unresolved:{}", target_name);
+                let degree = degree_map.get(&unresolved_id).copied().unwrap_or(1);
+                let in_deg = in_degree_map.get(&unresolved_id).copied().unwrap_or(degree);
+                let out_deg = out_degree_map.get(&unresolved_id).copied().unwrap_or(0);
+                nodes.push(GraphNode {
+                    id: unresolved_id,
+                    path: PathBuf::from(&target_name),
+                    label: target_name,
+                    degree,
+                    is_unresolved: true,
+                    is_tag: false,
+                    in_degree: in_deg,
+                    out_degree: out_deg,
+                    centrality: 0,
+                    community_id: 0,
+                });
+            }
+        }
+
+        // Include tag nodes for the local neighborhood if requested
+        if options.tags {
+            let mut tag_degree_map: HashMap<String, usize> = HashMap::new();
+            for note_path in &included_paths {
+                if let Some(tags) = note_tags.get(note_path) {
+                    let source_str = note_path.to_string_lossy().replace('\\', "/");
+                    for tag in tags {
+                        let clean_tag = if tag.starts_with('#') {
+                            tag.clone()
+                        } else {
+                            format!("#{tag}")
+                        };
+                        let tag_id = format!("tag:{}", clean_tag);
+                        let edge = GraphEdge {
+                            source: source_str.clone(),
+                            target: tag_id.clone(),
+                        };
+                        if edges_set.insert(edge) {
+                            *degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                            *out_degree_map.entry(source_str.clone()).or_insert(0) += 1;
+                            *tag_degree_map.entry(clean_tag.clone()).or_insert(0) += 1;
+                            *in_degree_map.entry(tag_id).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            for (tag_name, deg) in tag_degree_map {
+                let tag_id = format!("tag:{}", tag_name);
+                let in_deg = in_degree_map.get(&tag_id).copied().unwrap_or(deg);
+                nodes.push(GraphNode {
+                    id: tag_id,
+                    path: PathBuf::from(&tag_name),
+                    label: tag_name,
+                    degree: deg,
+                    is_unresolved: false,
+                    is_tag: true,
+                    in_degree: in_deg,
+                    out_degree: 0,
+                    centrality: 0,
+                    community_id: 0,
+                });
+            }
+        }
+
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
+        // Collect edges where both endpoints are in the node set
+        let node_id_set: HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+        let mut edges: Vec<GraphEdge> = edges_set
             .into_iter()
-            .filter(|e| included_ids.contains(&e.source) && included_ids.contains(&e.target))
+            .filter(|e| {
+                node_id_set.contains(e.source.as_str()) && node_id_set.contains(e.target.as_str())
+            })
             .collect();
+        edges.sort_by(|a, b| (&a.source, &a.target).cmp(&(&b.source, &b.target)));
+
+        // Run community detection and centrality only on the small local neighborhood
+        detect_communities(&mut nodes, &edges);
+        calculate_centrality(&mut nodes);
 
         GraphData { nodes, edges }
     }

@@ -1,6 +1,6 @@
 use rayon::prelude::*;
+use sha2::Digest;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tracing::info;
@@ -17,6 +17,7 @@ use crate::tantivy_index::TantivyIndex;
 
 /// Coordinated vault index manager providing derived SQLite metadata and Tantivy full-text search.
 pub struct VaultIndex {
+    vault_root: std::path::PathBuf,
     sqlite: SqliteIndex,
     tantivy: TantivyIndex,
 }
@@ -61,14 +62,22 @@ impl VaultIndex {
             }
         };
 
-        Ok(Self { sqlite, tantivy })
+        Ok(Self {
+            vault_root: root.to_path_buf(),
+            sqlite,
+            tantivy,
+        })
     }
 
     /// Creates an in-memory index pair for testing.
     pub fn in_memory() -> Result<Self> {
         let sqlite = SqliteIndex::in_memory()?;
         let tantivy = TantivyIndex::in_memory()?;
-        Ok(Self { sqlite, tantivy })
+        Ok(Self {
+            vault_root: std::env::temp_dir(),
+            sqlite,
+            tantivy,
+        })
     }
 
     /// Stages indexing for a note without immediate Tantivy commit. Used for batch indexing.
@@ -77,13 +86,12 @@ impl VaultIndex {
         let title = parsed.title.clone().unwrap_or_else(|| note.title.clone());
 
         // Content hash for change detection
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        note.content.hash(&mut hasher);
-        let content_hash = format!("{:016x}", hasher.finish());
+        let content_hash = format!("{:x}", sha2::Sha256::digest(note.content.as_bytes()));
 
         let size_bytes = note.content.len() as u64;
-        let modified_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let modified_ns = self.vault_root.join(&note.relative_path).metadata()
+            .and_then(|m| m.modified())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other))
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
 
@@ -405,13 +413,12 @@ impl VaultIndex {
                 let path_str = note.relative_path.to_string_lossy().replace('\\', "/");
                 let title = parsed.title.clone().unwrap_or_else(|| note.title.clone());
 
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                note.content.hash(&mut hasher);
-                let content_hash = format!("{:016x}", hasher.finish());
+                let content_hash = format!("{:x}", sha2::Sha256::digest(note.content.as_bytes()));
 
                 let size_bytes = note.content.len() as u64;
-                let modified_ns = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+                let modified_ns = vault_service.vault().root().join(&note.relative_path).metadata()
+                    .and_then(|m| m.modified())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other))
                     .map(|d| d.as_nanos() as u64)
                     .unwrap_or(0);
 

@@ -66,7 +66,7 @@ impl TantivyIndex {
         let f_path = schema_builder.add_text_field("path", STRING | STORED);
         let f_title = schema_builder.add_text_field("title", TEXT | STORED);
         let f_headings = schema_builder.add_text_field("headings", TEXT);
-        let f_body = schema_builder.add_text_field("body", TEXT | STORED);
+        let f_body = schema_builder.add_text_field("body", TEXT);
         let f_tags = schema_builder.add_text_field("tags", TEXT | STORED);
         let schema = schema_builder.build();
         (schema, f_id, f_path, f_title, f_headings, f_body, f_tags)
@@ -164,10 +164,13 @@ impl TantivyIndex {
         query_parser.set_field_boost(self.f_headings, 2.0);
         query_parser.set_field_boost(self.f_tags, 1.5);
 
-        let query = query_parser
+        let query = match query_parser
             .parse_query(clean_query)
             .or_else(|_| query_parser.parse_query(&format!("*{clean_query}*")))
-            .unwrap_or_else(|_| Box::new(tantivy::query::AllQuery));
+        {
+            Ok(q) => q,
+            Err(_) => return Ok(Vec::new()),
+        };
 
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit))
@@ -206,17 +209,7 @@ impl TantivyIndex {
                 let snip = gen.snippet_from_doc(&retrieved_doc);
                 snip.to_html()
             } else {
-                retrieved_doc
-                    .get_first(self.f_body)
-                    .and_then(|v: &OwnedValue| v.as_str())
-                    .map(|b: &str| {
-                        if b.len() > 120 {
-                            format!("{}...", &b[..120])
-                        } else {
-                            b.to_string()
-                        }
-                    })
-                    .unwrap_or_default()
+                String::new()
             };
 
             results.push(SearchResult {
