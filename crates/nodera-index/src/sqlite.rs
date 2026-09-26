@@ -7,7 +7,8 @@ use nodera_core::{IndexError, NoderaError, Result};
 use nodera_markdown::{ParsedTask, Wikilink};
 
 use crate::models::{
-    IndexedTask, KnowledgeStats, ReviewCategory, ReviewQueueItem, TagCount, TaskFilter,
+    Activity, ActivityFilter, ActivityKind, IndexedTask, KnowledgeStats, ReviewCategory,
+    ReviewQueueItem, TagCount, TaskFilter,
 };
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -121,6 +122,18 @@ impl SqliteIndex {
                 PRIMARY KEY (note_id, key)
             );
 
+            CREATE TABLE IF NOT EXISTS activities (
+                id             TEXT PRIMARY KEY,
+                timestamp_secs INTEGER NOT NULL,
+                kind           TEXT NOT NULL,
+                duration_secs  INTEGER,
+                source         TEXT NOT NULL,
+                project_id     TEXT,
+                task_id        TEXT,
+                note_path      TEXT,
+                metadata_json  TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
             CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_path);
             CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id);
@@ -128,6 +141,9 @@ impl SqliteIndex {
             CREATE INDEX IF NOT EXISTS idx_tasks_checked ON tasks(checked);
             CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
             CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);
+            CREATE INDEX IF NOT EXISTS idx_activities_time ON activities(timestamp_secs DESC);
+            CREATE INDEX IF NOT EXISTS idx_activities_kind ON activities(kind);
+            CREATE INDEX IF NOT EXISTS idx_activities_project ON activities(project_id);
             ",
             )
             .map_err(db_err)?;
@@ -208,13 +224,14 @@ impl SqliteIndex {
             let task_id = format!("{note_id}:{}", task.line_number);
             tx.execute(
                 "INSERT INTO tasks (id, note_id, line_number, checked, text, due_date)
-                 VALUES (?, ?, ?, ?, ?, NULL)",
+                 VALUES (?, ?, ?, ?, ?, ?)",
                 params![
                     task_id,
                     note_id,
                     task.line_number as i64,
                     if task.checked { 1 } else { 0 },
                     task.text,
+                    task.due_date,
                 ],
             )
             .map_err(db_err)?;
@@ -286,7 +303,7 @@ impl SqliteIndex {
             let mut stmt_task = tx
                 .prepare_cached(
                     "INSERT INTO tasks (id, note_id, line_number, checked, text, due_date)
-                     VALUES (?, ?, ?, ?, ?, NULL)",
+                     VALUES (?, ?, ?, ?, ?, ?)",
                 )
                 .map_err(db_err)?;
 
@@ -333,6 +350,7 @@ impl SqliteIndex {
                             task.line_number as i64,
                             if task.checked { 1 } else { 0 },
                             task.text,
+                            task.due_date,
                         ])
                         .map_err(db_err)?;
                 }
@@ -541,6 +559,11 @@ impl SqliteIndex {
         if let Some(q) = &filter.search_query {
             query.push_str(" AND t.text LIKE ?");
             params_vec.push(Box::new(format!("%{q}%")));
+        }
+
+        if let Some(due) = &filter.due_date {
+            query.push_str(" AND t.due_date = ?");
+            params_vec.push(Box::new(due.clone()));
         }
 
         query.push_str(" ORDER BY f.path ASC, t.line_number ASC");
@@ -921,10 +944,130 @@ impl SqliteIndex {
             DELETE FROM tags;
             DELETE FROM properties;
             DELETE FROM files;
+            DELETE FROM activities;
             ",
             )
             .map_err(db_err)?;
         info!("Cleared all SQLite index tables");
+        Ok(())
+    }
+
+    /// Records an activity event into the persistent local evidence stream.
+    pub fn record_activity(&mut self, activity: &Activity) -> Result<()> {
+        let metadata_str = serde_json::to_string(&activity.metadata).unwrap_or_default();
+        let kind_str = activity.kind.to_string();
+
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO activities (
+                    id, timestamp_secs, kind, duration_secs, source, project_id, task_id, note_path, metadata_json
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    activity.id,
+                    activity.timestamp_secs,
+                    kind_str,
+                    activity.duration_secs,
+                    activity.source,
+                    activity.project_id,
+                    activity.task_id,
+                    activity.note_path,
+                    metadata_str,
+                ],
+            )
+            .map_err(db_err)?;
+        Ok(())
+    }
+
+    /// Queries activity events with optional filtering criteria and limit.
+    pub fn query_activities(&self, filter: &ActivityFilter) -> Result<Vec<Activity>> {
+        let mut query = String::from(
+            "SELECT id, timestamp_secs, kind, duration_secs, source, project_id, task_id, note_path, metadata_json
+             FROM activities
+             WHERE 1=1",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(kind) = &filter.kind {
+            query.push_str(" AND kind = ?");
+            params_vec.push(Box::new(kind.to_string()));
+        }
+
+        if let Some(project_id) = &filter.project_id {
+            query.push_str(" AND project_id = ?");
+            params_vec.push(Box::new(project_id.clone()));
+        }
+
+        if let Some(note_path) = &filter.note_path {
+            query.push_str(" AND note_path = ?");
+            params_vec.push(Box::new(note_path.clone()));
+        }
+
+        if let Some(since) = filter.since_secs {
+            query.push_str(" AND timestamp_secs >= ?");
+            params_vec.push(Box::new(since));
+        }
+
+        if let Some(until) = filter.until_secs {
+            query.push_str(" AND timestamp_secs <= ?");
+            params_vec.push(Box::new(until));
+        }
+
+        query.push_str(" ORDER BY timestamp_secs DESC");
+
+        if let Some(limit) = filter.limit {
+            query.push_str(&format!(" LIMIT {limit}"));
+        }
+
+        let mut stmt = self.conn.prepare(&query).map_err(db_err)?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(rusqlite_params.as_slice(), |row| {
+                let kind_str: String = row.get(2)?;
+                let kind = kind_str
+                    .parse::<ActivityKind>()
+                    .unwrap_or(ActivityKind::Custom(kind_str));
+                let meta_str: Option<String> = row.get(8)?;
+                let metadata = meta_str
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default();
+
+                Ok(Activity {
+                    id: row.get(0)?,
+                    timestamp_secs: row.get(1)?,
+                    kind,
+                    duration_secs: row.get(3)?,
+                    source: row.get(4)?,
+                    project_id: row.get(5)?,
+                    task_id: row.get(6)?,
+                    note_path: row.get(7)?,
+                    metadata,
+                })
+            })
+            .map_err(db_err)?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(db_err)?);
+        }
+        Ok(results)
+    }
+
+    /// Deletes an activity record by id.
+    pub fn delete_activity(&mut self, id: &str) -> Result<bool> {
+        let count = self
+            .conn
+            .execute("DELETE FROM activities WHERE id = ?", params![id])
+            .map_err(db_err)?;
+        Ok(count > 0)
+    }
+
+    /// Clears all recorded activities.
+    pub fn clear_activities(&mut self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM activities", [])
+            .map_err(db_err)?;
         Ok(())
     }
 }
@@ -943,12 +1086,14 @@ mod tests {
                 checked: false,
                 text: "Build search".to_string(),
                 raw_line: "- [ ] Build search".to_string(),
+                due_date: None,
             },
             ParsedTask {
                 line_number: 10,
                 checked: true,
                 text: "Design schema".to_string(),
                 raw_line: "- [x] Design schema".to_string(),
+                due_date: Some("2026-09-30".to_string()),
             },
         ];
 
@@ -1014,12 +1159,14 @@ mod tests {
             checked: false,
             text: "Task A".to_string(),
             raw_line: "- [ ] Task A".to_string(),
+            due_date: None,
         }];
         let tasks2 = vec![ParsedTask {
             line_number: 2,
             checked: true,
             text: "Task B".to_string(),
             raw_line: "- [x] Task B".to_string(),
+            due_date: None,
         }];
         let links1 = vec![Wikilink {
             raw: "[[Note2]]".to_string(),
@@ -1077,6 +1224,7 @@ mod tests {
             checked: false,
             text: "Initial task".to_string(),
             raw_line: "- [ ] Initial task".to_string(),
+            due_date: None,
         }];
         let tags1 = vec!["initial".to_string()];
         let props = HashMap::new();
@@ -1107,12 +1255,14 @@ mod tests {
                 checked: false,
                 text: "Task 1".to_string(),
                 raw_line: "- [ ] Task 1".to_string(),
+                due_date: None,
             },
             ParsedTask {
                 line_number: 42, // Duplicate task_id will fail PRIMARY KEY (id) constraint!
                 checked: true,
                 text: "Task 2 (duplicate id)".to_string(),
                 raw_line: "- [x] Task 2 (duplicate id)".to_string(),
+                due_date: None,
             },
         ];
         let bad_tags = vec!["bad".to_string()];
@@ -1162,6 +1312,7 @@ mod tests {
             checked: true,
             text: "Task".to_string(),
             raw_line: "- [x] Task".to_string(),
+            due_date: None,
         }];
         let links = vec![Wikilink {
             raw: "[[Target]]".to_string(),
@@ -1313,5 +1464,160 @@ mod tests {
         assert_eq!(stats.rough_count, 1);
         assert_eq!(stats.permanent_count, 1);
         assert_eq!(stats.source_count, 1);
+    }
+
+    #[test]
+    fn test_activity_recording_and_querying() {
+        let mut idx = SqliteIndex::in_memory().unwrap();
+
+        let mut meta = HashMap::new();
+        meta.insert("lines_changed".to_string(), serde_json::json!(42));
+
+        let act1 = Activity {
+            id: "act-1".to_string(),
+            timestamp_secs: 1000,
+            kind: ActivityKind::Coding,
+            duration_secs: Some(1800),
+            source: "git".to_string(),
+            project_id: Some("fungame".to_string()),
+            task_id: None,
+            note_path: None,
+            metadata: meta,
+        };
+
+        let act2 = Activity {
+            id: "act-2".to_string(),
+            timestamp_secs: 2000,
+            kind: ActivityKind::Reading,
+            duration_secs: Some(600),
+            source: "pdf_reader".to_string(),
+            project_id: None,
+            task_id: None,
+            note_path: Some("Books/RustInAction.md".to_string()),
+            metadata: HashMap::new(),
+        };
+
+        let act3 = Activity {
+            id: "act-3".to_string(),
+            timestamp_secs: 3000,
+            kind: ActivityKind::TaskCompletion,
+            duration_secs: None,
+            source: "task_board".to_string(),
+            project_id: None,
+            task_id: Some("note-1:5".to_string()),
+            note_path: Some("Daily/2026-09-24.md".to_string()),
+            metadata: HashMap::new(),
+        };
+
+        idx.record_activity(&act1).unwrap();
+        idx.record_activity(&act2).unwrap();
+        idx.record_activity(&act3).unwrap();
+
+        // 1. Query all activities (ordered by timestamp DESC)
+        let all = idx.query_activities(&ActivityFilter::default()).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, "act-3");
+        assert_eq!(all[1].id, "act-2");
+        assert_eq!(all[2].id, "act-1");
+        assert_eq!(
+            all[2].metadata.get("lines_changed"),
+            Some(&serde_json::json!(42))
+        );
+
+        // 2. Query by kind
+        let coding = idx
+            .query_activities(&ActivityFilter {
+                kind: Some(ActivityKind::Coding),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(coding.len(), 1);
+        assert_eq!(coding[0].id, "act-1");
+
+        // 3. Query by project
+        let project_acts = idx
+            .query_activities(&ActivityFilter {
+                project_id: Some("fungame".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(project_acts.len(), 1);
+        assert_eq!(project_acts[0].id, "act-1");
+
+        // 4. Query with timestamp range & limit
+        let recent = idx
+            .query_activities(&ActivityFilter {
+                since_secs: Some(1500),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, "act-3");
+
+        // 5. Delete activity
+        assert!(idx.delete_activity("act-2").unwrap());
+        let after_delete = idx.query_activities(&ActivityFilter::default()).unwrap();
+        assert_eq!(after_delete.len(), 2);
+
+        // 6. Clear activities
+        idx.clear_activities().unwrap();
+        assert!(idx
+            .query_activities(&ActivityFilter::default())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn test_task_due_date_querying() {
+        let mut idx = SqliteIndex::in_memory().unwrap();
+        let tasks = vec![
+            ParsedTask {
+                line_number: 1,
+                checked: false,
+                text: "No date task".to_string(),
+                raw_line: "- [ ] No date task".to_string(),
+                due_date: None,
+            },
+            ParsedTask {
+                line_number: 2,
+                checked: false,
+                text: "Due tomorrow 📅 2026-09-25".to_string(),
+                raw_line: "- [ ] Due tomorrow 📅 2026-09-25".to_string(),
+                due_date: Some("2026-09-25".to_string()),
+            },
+            ParsedTask {
+                line_number: 3,
+                checked: true,
+                text: "Completed later @due(2026-10-01)".to_string(),
+                raw_line: "- [x] Completed later @due(2026-10-01)".to_string(),
+                due_date: Some("2026-10-01".to_string()),
+            },
+        ];
+
+        idx.index_note_metadata(
+            "note-due",
+            "Project/Roadmap.md",
+            "Roadmap",
+            "hash-due",
+            500,
+            1000,
+            &[],
+            &tasks,
+            &[],
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        // Query by exact due_date
+        let filtered = idx
+            .query_tasks(&TaskFilter {
+                due_date: Some("2026-09-25".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].line_number, 2);
+        assert_eq!(filtered[0].due_date, Some("2026-09-25".to_string()));
     }
 }

@@ -385,7 +385,7 @@ pub fn App() -> Element {
                                             show_more_dropdown.set(false);
                                             state.write().toggle_theme();
                                         },
-                                        if app_state.theme == crate::theme::Theme::Dark {
+                                        if app_state.theme.is_dark() {
                                             IconSun { size: 14 }
                                             span { "Switch to Light Theme" }
                                         } else {

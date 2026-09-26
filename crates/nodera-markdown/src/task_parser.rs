@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 use nodera_core::{ParseError, Result};
+
+static DUE_DATE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?:📅\s*(\d{4}-\d{2}-\d{2})|@due\((\d{4}-\d{2}-\d{2})\))").unwrap()
+});
 
 /// A parsed Markdown task item from document source text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,6 +18,18 @@ pub struct ParsedTask {
     pub text: String,
     /// Complete original line.
     pub raw_line: String,
+    /// Optional scheduled / due date (`YYYY-MM-DD`).
+    pub due_date: Option<String>,
+}
+
+/// Extracts a scheduled or due date from task text if present.
+/// Supports both emoji syntax (`📅 YYYY-MM-DD`) and attribute syntax (`@due(YYYY-MM-DD)`).
+pub fn extract_due_date(text: &str) -> Option<String> {
+    DUE_DATE_RE.captures(text).and_then(|caps| {
+        caps.get(1)
+            .or_else(|| caps.get(2))
+            .map(|m| m.as_str().to_string())
+    })
 }
 
 /// Extracts all task checkbox items from Markdown text.
@@ -21,11 +38,13 @@ pub fn extract_tasks(content: &str) -> Vec<ParsedTask> {
 
     for (zero_idx, line) in content.lines().enumerate() {
         if let Some((checked, text)) = parse_task_line(line) {
+            let due_date = extract_due_date(&text);
             tasks.push(ParsedTask {
                 line_number: zero_idx + 1,
                 checked,
                 text,
                 raw_line: line.to_string(),
+                due_date,
             });
         }
     }
@@ -167,5 +186,36 @@ Some normal paragraph.
         let doc = "# Heading\nNormal text\n";
         assert!(toggle_task_at_line(doc, 1).is_err());
         assert!(toggle_task_at_line(doc, 99).is_err());
+    }
+
+    #[test]
+    fn test_extract_due_dates() {
+        assert_eq!(extract_due_date("Normal task text"), None);
+        assert_eq!(
+            extract_due_date("Submit report 📅 2026-09-30"),
+            Some("2026-09-30".to_string())
+        );
+        assert_eq!(
+            extract_due_date("Fix regression 📅2026-10-05"),
+            Some("2026-10-05".to_string())
+        );
+        assert_eq!(
+            extract_due_date("Deploy service @due(2026-12-31) #priority"),
+            Some("2026-12-31".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_tasks_with_dates() {
+        let doc = r#"
+- [ ] Task without date
+- [x] Task with emoji 📅 2026-09-25
+- [ ] Task with attribute @due(2026-10-01) and tags #work
+"#;
+        let tasks = extract_tasks(doc);
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].due_date, None);
+        assert_eq!(tasks[1].due_date, Some("2026-09-25".to_string()));
+        assert_eq!(tasks[2].due_date, Some("2026-10-01".to_string()));
     }
 }
