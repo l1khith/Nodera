@@ -169,7 +169,7 @@ pub fn SettingsModal(state: Signal<AppState>) -> Element {
                                     div { style: "display: flex; flex-direction: column; gap: 10px;",
                                         div { style: "display: flex; align-items: baseline; justify-content: space-between;",
                                             label { style: "font-weight: 600; font-size: 13px; color: var(--text-primary);", "Theme Palette" }
-                                            span { style: "font-size: 11px; color: var(--text-muted);", "6 calibrated workspace themes" }
+                                            span { style: "font-size: 11px; color: var(--text-muted);", "7 calibrated workspace themes" }
                                         }
 
                                         div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;",

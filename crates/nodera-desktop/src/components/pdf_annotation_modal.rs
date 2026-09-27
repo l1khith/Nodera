@@ -43,7 +43,7 @@ pub fn PdfAnnotationModal(state: Signal<AppState>) -> Element {
                     div {
                         style: "display: flex; align-items: center; gap: 10px;",
                         div {
-                            style: "width: 32px; height: 32px; border-radius: 8px; background: rgba(91, 108, 255, 0.15); color: var(--accent); display: flex; align-items: center; justify-content: center;",
+                            style: "width: 32px; height: 32px; border-radius: 8px; background: var(--accent-focus); color: var(--accent); display: flex; align-items: center; justify-content: center;",
                             IconFile { size: 18 }
                         }
                         div {
@@ -123,7 +123,7 @@ pub fn PdfAnnotationModal(state: Signal<AppState>) -> Element {
                                     p { style: "margin: 2px 0 0 0; font-size: 12px; color: var(--text-muted);", "{report.total_pages} pages in document" }
                                 }
                                 div {
-                                    style: "background: rgba(91, 108, 255, 0.12); color: var(--accent); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 20px;",
+                                    style: "background: var(--accent-focus); color: var(--accent); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 20px;",
                                     "{report.annotations.len()} annotations found"
                                 }
                             }

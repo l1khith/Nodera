@@ -45,7 +45,7 @@ pub fn VaultHealthModal(state: Signal<AppState>) -> Element {
                     div {
                         style: "display: flex; align-items: center; gap: 10px;",
                         div {
-                            style: "width: 32px; height: 32px; border-radius: 8px; background: rgba(91, 108, 255, 0.15); color: var(--accent); display: flex; align-items: center; justify-content: center;",
+                            style: "width: 32px; height: 32px; border-radius: 8px; background: var(--accent-focus); color: var(--accent); display: flex; align-items: center; justify-content: center;",
                             IconActivity { size: 18 }
                         }
                         div {

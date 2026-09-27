@@ -28,7 +28,7 @@ pub fn LibraryView(state: Signal<AppState>) -> Element {
                 div {
                     style: "display: flex; align-items: center; gap: 14px;",
                     div {
-                        style: "width: 38px; height: 38px; border-radius: 8px; background: rgba(91, 108, 255, 0.12); border: 1px solid rgba(91, 108, 255, 0.25); display: flex; align-items: center; justify-content: center; color: var(--accent);",
+                        style: "width: 38px; height: 38px; border-radius: 8px; background: var(--accent-focus); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--accent);",
                         IconLibrary { size: 22 }
                     }
                     div {
@@ -74,7 +74,7 @@ pub fn LibraryView(state: Signal<AppState>) -> Element {
                     // Import PDF button
                     button {
                         class: "btn-primary",
-                        style: "display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; border-radius: 6px; background: var(--accent); color: #ffffff; border: 1px solid transparent; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(91, 108, 255, 0.35);",
+                        style: "display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; border-radius: 6px; background: var(--accent); color: #ffffff; border: 1px solid transparent; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-sm);",
                         onclick: move |_| {
                             state.write().open_pdf_import_modal();
                         },
@@ -117,7 +117,7 @@ pub fn LibraryView(state: Signal<AppState>) -> Element {
                         if query.is_empty() {
                             button {
                                 class: "btn-primary",
-                                style: "display: inline-flex; align-items: center; gap: 8px; padding: 8px 20px; border-radius: 6px; background: var(--accent); color: #ffffff; border: none; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(91, 108, 255, 0.35);",
+                                style: "display: inline-flex; align-items: center; gap: 8px; padding: 8px 20px; border-radius: 6px; background: var(--accent); color: #ffffff; border: none; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-sm);",
                                 onclick: move |_| {
                                     state.write().open_pdf_import_modal();
                                 },
@@ -270,7 +270,7 @@ pub fn LibraryView(state: Signal<AppState>) -> Element {
 
                                             button {
                                                 class: "btn-primary",
-                                                style: "display: inline-flex; align-items: center; gap: 6px; padding: 7px 18px; border-radius: 6px; background: var(--accent); color: #ffffff; border: 1px solid transparent; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 6px rgba(91, 108, 255, 0.3);",
+                                                style: "display: inline-flex; align-items: center; gap: 6px; padding: 7px 18px; border-radius: 6px; background: var(--accent); color: #ffffff; border: 1px solid transparent; font-size: 12px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-sm);",
                                                 onclick: move |_| {
                                                     let _ = state.write().open_book_in_reader(&book_path_read);
                                                 },

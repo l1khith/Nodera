@@ -1696,6 +1696,7 @@ fn GraphColorControls(mut state: Signal<AppState>) -> Element {
                         GraphPalettePreset::SolarAmber => "solar_amber",
                         GraphPalettePreset::Dracula => "dracula",
                         GraphPalettePreset::Monochrome => "monochrome",
+                        GraphPalettePreset::Graphite => "graphite",
                         GraphPalettePreset::Custom => "custom",
                     },
                     onchange: move |evt: FormEvent| {
@@ -1706,6 +1707,7 @@ fn GraphColorControls(mut state: Signal<AppState>) -> Element {
                             "solar_amber" => GraphPalettePreset::SolarAmber,
                             "dracula" => GraphPalettePreset::Dracula,
                             "monochrome" => GraphPalettePreset::Monochrome,
+                            "graphite" => GraphPalettePreset::Graphite,
                             "custom" => GraphPalettePreset::Custom,
                             _ => GraphPalettePreset::NoderaTech,
                         };
@@ -1724,6 +1726,7 @@ fn GraphColorControls(mut state: Signal<AppState>) -> Element {
                     option { value: "solar_amber", "Solar Amber" }
                     option { value: "dracula", "Dracula Synth" }
                     option { value: "monochrome", "Slate Monochrome" }
+                    option { value: "graphite", "Graphite Near-Black" }
                     option { value: "custom", "Custom Palette" }
                 }
             }

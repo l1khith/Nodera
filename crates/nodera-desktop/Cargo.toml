@@ -32,6 +32,10 @@ lopdf.workspace = true
 name = "vault_benchmarks"
 harness = false
 
+[[bench]]
+name = "graph_scale_benchmarks"
+harness = false
+
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 

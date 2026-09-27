@@ -214,7 +214,7 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
                                             span { "{name}" }
                                         }
                                         if is_active {
-                                            span { style: "font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--accent); color: white;", "ACTIVE" }
+                                            span { style: "font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border);", "ACTIVE" }
                                         }
                                     }
                                 }

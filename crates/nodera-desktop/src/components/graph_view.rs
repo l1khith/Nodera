@@ -6,12 +6,63 @@ use std::time::Instant;
 use crate::icons::*;
 use crate::state::{ActiveView, AppState, GraphForcesSettings};
 use crate::strings::{actions, empty_states, graph as graph_strings, placeholders};
+use crate::theme::ThemeId;
 use nodera_markdown::GraphData;
 
 pub const COMMUNITY_COLORS: [&str; 12] = [
     "#5C6FE6", "#7081F0", "#8492F6", "#4F61C9", "#3F4D9E", "#6B7DF2", "#7E8DF4", "#4555B8",
     "#364391", "#5466DB", "#6475E8", "#4A5CC5",
 ];
+
+pub const GRAPHITE_COMMUNITY_COLORS: [&str; 8] = [
+    "#5A6270", "#6B7280", "#7E8B9B", "#4A5260", "#636B78", "#717B8A", "#535B69", "#828D9D",
+];
+
+pub fn symbol_kind_color_graphite(kind: &str) -> &'static str {
+    match kind.to_lowercase().as_str() {
+        "file" => "#6B7280",
+        "mod" | "module" => "#9CA3AF",
+        "struct" => "#8E95A5",
+        "enum" | "variant" => "#7E8B9B",
+        "fn" | "function" => "#64748B",
+        "method" => "#5A6270",
+        "trait" => "#718096",
+        "impl" => "#7A8294",
+        "const" | "constant" | "static" => "#A0AEC0",
+        "macro" => "#8492A6",
+        "type" | "typealias" => "#8E95A5",
+        _ => "#5A6270",
+    }
+}
+
+pub fn get_symbol_kind_color_graphite(node: &SimNode) -> Option<&'static str> {
+    if node.id.starts_with("sym:") {
+        let parts: Vec<&str> = node.id.split("::").collect();
+        if parts.len() >= 3 {
+            let kind = parts[2];
+            return Some(symbol_kind_color_graphite(kind));
+        }
+    }
+    if node.label.starts_with("fn ") || node.label.contains("()") {
+        Some(symbol_kind_color_graphite("fn"))
+    } else if node.label.starts_with("struct ") {
+        Some(symbol_kind_color_graphite("struct"))
+    } else if node.label.starts_with("enum ") || node.label.starts_with("::") {
+        Some(symbol_kind_color_graphite("enum"))
+    } else if node.label.starts_with("const ") || node.label.starts_with("static ") {
+        Some(symbol_kind_color_graphite("const"))
+    } else if node.label.starts_with("trait ") {
+        Some(symbol_kind_color_graphite("trait"))
+    } else if node.label.starts_with("impl ") {
+        Some(symbol_kind_color_graphite("impl"))
+    } else if node.label.starts_with("mod ") {
+        Some(symbol_kind_color_graphite("mod"))
+    } else if node.label.ends_with('!') {
+        Some(symbol_kind_color_graphite("macro"))
+    } else {
+        None
+    }
+}
 
 /// Resolves semantic color for project AST symbols based on symbol kind or signature
 pub fn get_symbol_kind_color(node: &SimNode) -> Option<&'static str> {
@@ -181,9 +232,9 @@ pub fn init_or_update_simulation(
     // so spatial memory is preserved and positions don't drift.
     // If nodes are mostly new, run pre-warm relaxation steps for clean layout.
     let total_steps = if preserved_count > 0 && preserved_count * 2 >= n {
-        8
+        2
     } else {
-        100
+        180
     };
 
     for step in 0..total_steps {
@@ -217,6 +268,8 @@ pub fn step_simulation(
     )
 }
 
+use std::cell::RefCell;
+
 /// Compact QuadTree node for Barnes-Hut spatial force approximation.
 #[derive(Debug, Clone)]
 struct QuadTreeNode {
@@ -240,12 +293,16 @@ struct QuadTree {
     nodes: Vec<QuadTreeNode>,
 }
 
+thread_local! {
+    static QUAD_TREE_SCRATCH: RefCell<QuadTree> = RefCell::new(QuadTree {
+        nodes: Vec::with_capacity(2048),
+    });
+}
+
 impl QuadTree {
-    fn with_capacity(capacity: usize, cx: f32, cy: f32, size: f32) -> Self {
-        let mut tree = Self {
-            nodes: Vec::with_capacity(capacity),
-        };
-        tree.nodes.push(QuadTreeNode {
+    fn reset(&mut self, cx: f32, cy: f32, size: f32) {
+        self.nodes.clear();
+        self.nodes.push(QuadTreeNode {
             cx,
             cy,
             size,
@@ -254,7 +311,6 @@ impl QuadTree {
             com_y: 0.0,
             payload: QuadPayload::Empty,
         });
-        tree
     }
 
     fn insert(
@@ -550,29 +606,32 @@ pub fn step_simulation_with_forces(
         let cy = (min_y + max_y) * 0.5;
         let size = ((max_x - min_x).max(max_y - min_y) + 20.0).max(100.0);
 
-        let mut tree = QuadTree::with_capacity((n * 4).max(128), cx, cy, size);
-        for (i, node) in nodes.iter().enumerate() {
-            let mass = 1.0 + (node.degree as f32) * 0.15;
-            tree.insert(0, i, node.x, node.y, mass, 16);
-        }
+        QUAD_TREE_SCRATCH.with(|tree_cell| {
+            let mut tree = tree_cell.borrow_mut();
+            tree.reset(cx, cy, size);
+            for (i, node) in nodes.iter().enumerate() {
+                let mass = 1.0 + (node.degree as f32) * 0.15;
+                tree.insert(0, i, node.x, node.y, mass, 16);
+            }
 
-        let theta_sq = 0.75 * 0.75;
-        for i in 0..n {
-            let mass_i = 1.0 + (nodes[i].degree as f32) * 0.15;
-            tree.compute_repulsion(
-                0,
-                i,
-                nodes[i].x,
-                nodes[i].y,
-                mass_i,
-                nodes[i].radius,
-                nodes,
-                k_rep,
-                theta_sq,
-                &mut fx[i],
-                &mut fy[i],
-            );
-        }
+            let theta_sq = 0.75 * 0.75;
+            for i in 0..n {
+                let mass_i = 1.0 + (nodes[i].degree as f32) * 0.15;
+                tree.compute_repulsion(
+                    0,
+                    i,
+                    nodes[i].x,
+                    nodes[i].y,
+                    mass_i,
+                    nodes[i].radius,
+                    nodes,
+                    k_rep,
+                    theta_sq,
+                    &mut fx[i],
+                    &mut fy[i],
+                );
+            }
+        });
     }
 
     // 2. Spring attraction along connected edges
@@ -696,7 +755,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         mut state: Signal<AppState>,
         mut nodes_state: Signal<Vec<SimNode>>,
         edges_state: Signal<Vec<SimEdge>>,
-        dragged_node: Signal<Option<usize>>,
+        _dragged_node: Signal<Option<usize>>,
         mut sim_generation: Signal<u64>,
         mut sim_phase: Signal<SimulationPhase>,
         start_alpha: f32,
@@ -721,37 +780,37 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
             energy: 0.05,
         };
 
+        let nodes_to_relax = nodes_state.read().clone();
+        let edges_to_relax = edges_state.read().clone();
+
         spawn(async move {
-            let mut alpha = start_alpha;
-            for _frame in 0..30 {
-                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-                if *sim_generation.read() != gen {
-                    return;
-                }
-                if dragged_node.read().is_some() {
-                    continue;
-                }
-                let (energy, is_done) = {
-                    let mut ns = nodes_state.write();
-                    let es = edges_state.read();
+            let res = tokio::task::spawn_blocking(move || {
+                let mut current_nodes = nodes_to_relax;
+                let mut alpha = start_alpha;
+                for _step in 0..25 {
                     let energy = step_simulation_with_forces(
-                        &mut ns,
-                        &es,
+                        &mut current_nodes,
+                        &edges_to_relax,
                         (500.0, 350.0),
                         None,
                         alpha,
                         &forces,
                     );
                     alpha *= 0.88;
-                    (energy, alpha < 0.008 || energy < 0.005)
-                };
-                *sim_phase.write() = SimulationPhase::Settling { alpha, energy };
-
-                if is_done {
-                    break;
+                    if alpha < 0.008 || energy < 0.005 {
+                        break;
+                    }
                 }
+                current_nodes
+            })
+            .await;
+
+            if *sim_generation.read() != gen {
+                return;
             }
-            if *sim_generation.read() == gen {
+
+            if let Ok(relaxed_nodes) = res {
+                nodes_state.set(relaxed_nodes);
                 *sim_phase.write() = SimulationPhase::Idle;
                 let pos_list = nodes_state
                     .read()
@@ -774,10 +833,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         }
     });
 
-    // When filters or vault entries change, recompute simulation
+    // When filters, vault entries, or graph settings change, recompute simulation with projection budget
     use_effect(move || {
         let s = state.read().preferences.graph_settings.clone();
-        let current_graph = state.read().get_full_graph_data_with_settings(&s);
+        let (current_graph, meta) = state.read().get_projected_graph_data_with_settings(&s);
+        state.write().graph_view_state.projection_meta = meta;
         let saved_pos = state.read().graph_view_state.positions.clone();
         let (n, e) =
             init_or_update_simulation(&current_graph, 1000.0, 700.0, &s.forces, &saved_pos);
@@ -826,12 +886,81 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         .as_ref()
         .map(|n| n.relative_path.to_string_lossy().replace('\\', "/"));
 
-    let conf_center_color = current_settings.colors.effective_center_color();
-    let conf_sub_color = current_settings.colors.effective_sub_node_color();
-    let conf_selected_color = current_settings.colors.effective_selected_color();
-    let conf_edge_color = current_settings.colors.effective_edge_color();
+    let is_graphite = app_state.theme == ThemeId::Graphite;
+    let theme_tokens = app_state.theme.theme();
+
+    let conf_center_color = if let Some(c) = &current_settings.colors.center_node_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_node_current.as_str()
+        } else {
+            current_settings.colors.effective_center_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_node_current.as_str()
+    } else {
+        current_settings.colors.effective_center_color()
+    };
+
+    let conf_sub_color = if let Some(c) = &current_settings.colors.sub_node_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_node.as_str()
+        } else {
+            current_settings.colors.effective_sub_node_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_node.as_str()
+    } else {
+        current_settings.colors.effective_sub_node_color()
+    };
+
+    let conf_selected_color = if let Some(c) = &current_settings.colors.selected_node_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_node_selected.as_str()
+        } else {
+            current_settings.colors.effective_selected_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_node_selected.as_str()
+    } else {
+        current_settings.colors.effective_selected_color()
+    };
+
+    let conf_edge_color = if let Some(c) = &current_settings.colors.edge_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_edge.as_str()
+        } else {
+            current_settings.colors.effective_edge_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_edge.as_str()
+    } else {
+        current_settings.colors.effective_edge_color()
+    };
+
     let conf_edge_opacity = current_settings.colors.edge_opacity;
-    let conf_text_color = current_settings.colors.effective_text_color();
+
+    let conf_text_color = if let Some(c) = &current_settings.colors.text_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_label.as_str()
+        } else {
+            current_settings.colors.effective_text_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_label.as_str()
+    } else {
+        current_settings.colors.effective_text_color()
+    };
+
     let color_by_kind = current_settings.colors.color_by_kind;
 
     let current_hovered = *hovered_node.read();
@@ -914,12 +1043,6 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         if drag_idx < ns.len() {
                             ns[drag_idx].x = world_x;
                             ns[drag_idx].y = world_y;
-                            if current_settings.display.animate {
-                                let es = edges_state.read();
-                                let forces = current_settings.forces.clone();
-                                // Reheat connected neighbors during drag with soft linear force
-                                step_simulation_with_forces(&mut ns, &es, (500.0, 350.0), Some(drag_idx), 0.16, &forces);
-                            }
                         }
                     }
                 },
@@ -1142,10 +1265,20 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     span {
                         style: "display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-primary);",
                         IconGraph { size: 13 }
-                        span { "{total_notes} nodes" }
+                        if state.read().graph_view_state.projection_meta.is_budget_capped {
+                            span { "Showing {total_notes} of {state.read().graph_view_state.projection_meta.total_nodes} nodes" }
+                        } else {
+                            span { "{total_notes} nodes" }
+                        }
                     }
                     span { style: "color: var(--text-muted);", "•" }
                     span { style: "color: var(--text-secondary);", "{total_edges} connections" }
+                    if state.read().graph_view_state.projection_meta.is_budget_capped {
+                        span {
+                            style: "background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;",
+                            "Budget Capped (60 FPS)"
+                        }
+                    }
                 }
 
                 // Hovered Node Intelligence Card
@@ -1153,7 +1286,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     if let Some(h_idx) = *hovered_node.read() {
                         if let Some(h_node) = nodes.get(h_idx) {
                             let cent_pct = (h_node.centrality as f32) / 100.0;
-                            let comm_col = COMMUNITY_COLORS[h_node.community_id % COMMUNITY_COLORS.len()];
+                            let comm_col = if is_graphite {
+                                GRAPHITE_COMMUNITY_COLORS[h_node.community_id % GRAPHITE_COMMUNITY_COLORS.len()]
+                            } else {
+                                COMMUNITY_COLORS[h_node.community_id % COMMUNITY_COLORS.len()]
+                            };
                             rsx! {
                                 div {
                                     style: "position: absolute; bottom: 50px; left: 14px; background: var(--bg-surface-elevated, #1A1D24); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 11px; z-index: 10; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); pointer-events: none;",
@@ -1309,7 +1446,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     };
 
                                     let community_color = if current_settings.display.color_by_community {
-                                        COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                        if is_graphite {
+                                            GRAPHITE_COMMUNITY_COLORS[node.community_id % GRAPHITE_COMMUNITY_COLORS.len()]
+                                        } else {
+                                            COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                        }
                                     } else {
                                         conf_sub_color
                                     };
@@ -1319,7 +1460,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let base_fill = if is_center_node {
                                         conf_center_color
                                     } else if color_by_kind {
-                                        if let Some(kind_col) = get_symbol_kind_color(node) {
+                                        if let Some(kind_col) = if is_graphite {
+                                            get_symbol_kind_color_graphite(node)
+                                        } else {
+                                            get_symbol_kind_color(node)
+                                        } {
                                             kind_col
                                         } else {
                                             community_color
@@ -1367,6 +1512,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let label_dbl = node.label.clone();
                                     let is_unresolved = node.is_unresolved;
                                     let node_id_val = node.id.clone();
+                                    let node_id_dbl = node.id.clone();
 
                                     // 4-Tier Adaptive Label LOD
                                     let is_hub = node.degree >= 3 || is_center_node;
@@ -1420,15 +1566,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
 
                                                 if is_double_click {
                                                     let mut s = state.write();
-                                                    if s.active_project.is_some() {
-                                                        s.status_message = format!("Selected symbol: {}", label_click);
-                                                        s.context_panel_open = true;
-                                                    } else if is_unresolved {
+                                                    if is_unresolved {
                                                         let _ = s.open_or_create_target(&label_click);
                                                         s.active_view = ActiveView::Editor;
                                                     } else {
-                                                        let _ = s.select_note(&path_click);
-                                                        s.active_view = ActiveView::Editor;
+                                                        let _ = s.open_graph_node_document(&node_id_val, &path_click);
                                                     }
                                                     last_click.set(None);
                                                 } else {
@@ -1442,15 +1584,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                             ondoubleclick: move |evt: MouseEvent| {
                                                 evt.stop_propagation();
                                                 let mut s = state.write();
-                                                if s.active_project.is_some() {
-                                                    s.status_message = format!("Selected symbol: {}", label_dbl);
-                                                    s.context_panel_open = true;
-                                                } else if is_unresolved {
+                                                if is_unresolved {
                                                     let _ = s.open_or_create_target(&label_dbl);
                                                     s.active_view = ActiveView::Editor;
                                                 } else {
-                                                    let _ = s.select_note(&path_dbl);
-                                                    s.active_view = ActiveView::Editor;
+                                                    let _ = s.open_graph_node_document(&node_id_dbl, &path_dbl);
                                                 }
                                             },
                                             // Selection halo ring
