@@ -9,7 +9,8 @@ use nodera_core::{IndexingPhase, IndexingProgress, Note, Result, VaultEntry, Vau
 use nodera_markdown::{parse_document, ParsedDocument};
 
 use crate::models::{
-    IndexedTask, KnowledgeStats, RelatedNote, ReviewQueueItem, SearchResult, TagCount, TaskFilter,
+    Activity, ActivityFilter, IndexedTask, KnowledgeStats, RelatedNote, ReviewQueueItem,
+    SearchResult, TagCount, TaskFilter,
 };
 use crate::sqlite::{NoteMetadataRecord, SqliteIndex};
 use crate::tantivy_index::TantivyIndex;
@@ -197,6 +198,26 @@ impl VaultIndex {
     /// Queries high-level knowledge metrics across the vault.
     pub fn query_knowledge_stats(&self) -> Result<KnowledgeStats> {
         self.sqlite.query_knowledge_stats()
+    }
+
+    /// Records an activity event in the local evidence stream.
+    pub fn record_activity(&mut self, activity: &Activity) -> Result<()> {
+        self.sqlite.record_activity(activity)
+    }
+
+    /// Queries activity events matching filter criteria.
+    pub fn query_activities(&self, filter: &ActivityFilter) -> Result<Vec<Activity>> {
+        self.sqlite.query_activities(filter)
+    }
+
+    /// Deletes an activity event by id.
+    pub fn delete_activity(&mut self, id: &str) -> Result<bool> {
+        self.sqlite.delete_activity(id)
+    }
+
+    /// Clears all recorded activities.
+    pub fn clear_activities(&mut self) -> Result<()> {
+        self.sqlite.clear_activities()
     }
 
     /// Returns scored related note recommendations combining BM25 lexical similarity (70%) and tag Jaccard overlap (30%).

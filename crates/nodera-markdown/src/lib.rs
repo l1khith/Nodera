@@ -23,5 +23,7 @@ pub use links::{
 pub use parser::{parse_document, Heading, ParsedDocument};
 pub use renderer::{render_to_html, render_to_html_with_resolver};
 pub use tags::extract_tags;
-pub use task_parser::{extract_tasks, parse_task_line, toggle_task_at_line, ParsedTask};
+pub use task_parser::{
+    extract_due_date, extract_tasks, parse_task_line, toggle_task_at_line, ParsedTask,
+};
 pub use wikilink::{extract_wikilinks, rewrite_wikilinks, Wikilink};

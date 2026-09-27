@@ -11,7 +11,7 @@ use nodera_core::{
 use nodera_markdown::{parse_document, LinkAuditReport, LinkGraph};
 
 use crate::strings::palette;
-use crate::theme::Theme;
+use crate::theme::{Theme, ThemeId};
 
 fn default_sidebar_width() -> u32 {
     260
@@ -149,6 +149,8 @@ pub struct GraphExpandedSections {
     pub display: bool,
     #[serde(default)]
     pub forces: bool,
+    #[serde(default = "default_true")]
+    pub colors: bool,
 }
 
 impl Default for GraphExpandedSections {
@@ -158,6 +160,209 @@ impl Default for GraphExpandedSections {
             groups: false,
             display: false,
             forces: false,
+            colors: true,
+        }
+    }
+}
+
+/// Six calibrated standard palettes guaranteeing high contrast and visual clarity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GraphPalettePreset {
+    #[default]
+    NoderaTech,
+    Cyberpunk,
+    Emerald,
+    SolarAmber,
+    Dracula,
+    Monochrome,
+    Custom,
+}
+
+impl GraphPalettePreset {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::NoderaTech => "Nodera Tech",
+            Self::Cyberpunk => "Neon Cyberpunk",
+            Self::Emerald => "Nordic Emerald",
+            Self::SolarAmber => "Solar Amber",
+            Self::Dracula => "Dracula Synth",
+            Self::Monochrome => "Slate Monochrome",
+            Self::Custom => "Custom",
+        }
+    }
+
+    pub fn center_color(&self) -> &'static str {
+        match self {
+            Self::NoderaTech => "#9A4BFF",
+            Self::Cyberpunk => "#FF007F",
+            Self::Emerald => "#10B981",
+            Self::SolarAmber => "#F59E0B",
+            Self::Dracula => "#BD93F9",
+            Self::Monochrome => "#FFFFFF",
+            Self::Custom => "#9A4BFF",
+        }
+    }
+
+    pub fn sub_node_color(&self) -> &'static str {
+        match self {
+            Self::NoderaTech => "#5C6FE6",
+            Self::Cyberpunk => "#00F0FF",
+            Self::Emerald => "#06B6D4",
+            Self::SolarAmber => "#FB923C",
+            Self::Dracula => "#8BE9FD",
+            Self::Monochrome => "#94A3B8",
+            Self::Custom => "#5C6FE6",
+        }
+    }
+
+    pub fn selected_color(&self) -> &'static str {
+        match self {
+            Self::NoderaTech => "#7182FF",
+            Self::Cyberpunk => "#FFE600",
+            Self::Emerald => "#34D399",
+            Self::SolarAmber => "#FDE047",
+            Self::Dracula => "#50FA7B",
+            Self::Monochrome => "#38BDF8",
+            Self::Custom => "#7182FF",
+        }
+    }
+
+    pub fn edge_color(&self) -> &'static str {
+        match self {
+            Self::NoderaTech => "#444A5B",
+            Self::Cyberpunk => "#0080FF",
+            Self::Emerald => "#2D5A4C",
+            Self::SolarAmber => "#78350F",
+            Self::Dracula => "#6272A4",
+            Self::Monochrome => "#334155",
+            Self::Custom => "#444A5B",
+        }
+    }
+
+    pub fn text_color(&self) -> &'static str {
+        match self {
+            Self::NoderaTech => "#DEE2ED",
+            Self::Cyberpunk => "#FFFFFF",
+            Self::Emerald => "#ECFDF5",
+            Self::SolarAmber => "#FFFBEB",
+            Self::Dracula => "#F8F8F2",
+            Self::Monochrome => "#F1F5F9",
+            Self::Custom => "#DEE2ED",
+        }
+    }
+}
+
+fn default_edge_opacity() -> f32 {
+    0.35
+}
+
+pub const STANDARD_GRAPH_SWATCHES: [&str; 8] = [
+    "#9A4BFF", // Violet
+    "#5C6FE6", // Indigo
+    "#06B6D4", // Cyan
+    "#10B981", // Emerald
+    "#F59E0B", // Amber
+    "#FB923C", // Orange
+    "#EF4444", // Crimson
+    "#DEE2ED", // Silver
+];
+
+/// Fine-grained color configuration for graph nodes, connections, and labels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphColorSettings {
+    #[serde(default)]
+    pub palette: GraphPalettePreset,
+    #[serde(default)]
+    pub center_node_color: Option<String>,
+    #[serde(default)]
+    pub sub_node_color: Option<String>,
+    #[serde(default)]
+    pub selected_node_color: Option<String>,
+    #[serde(default)]
+    pub edge_color: Option<String>,
+    #[serde(default = "default_edge_opacity")]
+    pub edge_opacity: f32,
+    #[serde(default)]
+    pub text_color: Option<String>,
+    #[serde(default = "default_true")]
+    pub color_by_kind: bool,
+}
+
+impl Default for GraphColorSettings {
+    fn default() -> Self {
+        Self {
+            palette: GraphPalettePreset::NoderaTech,
+            center_node_color: None,
+            sub_node_color: None,
+            selected_node_color: None,
+            edge_color: None,
+            edge_opacity: default_edge_opacity(),
+            text_color: None,
+            color_by_kind: true,
+        }
+    }
+}
+
+impl GraphColorSettings {
+    pub fn effective_center_color(&self) -> &str {
+        if let Some(c) = &self.center_node_color {
+            if !c.is_empty() {
+                return c.as_str();
+            }
+        }
+        self.palette.center_color()
+    }
+
+    pub fn effective_sub_node_color(&self) -> &str {
+        if let Some(c) = &self.sub_node_color {
+            if !c.is_empty() {
+                return c.as_str();
+            }
+        }
+        self.palette.sub_node_color()
+    }
+
+    pub fn effective_selected_color(&self) -> &str {
+        if let Some(c) = &self.selected_node_color {
+            if !c.is_empty() {
+                return c.as_str();
+            }
+        }
+        self.palette.selected_color()
+    }
+
+    pub fn effective_edge_color(&self) -> &str {
+        if let Some(c) = &self.edge_color {
+            if !c.is_empty() {
+                return c.as_str();
+            }
+        }
+        self.palette.edge_color()
+    }
+
+    pub fn effective_text_color(&self) -> &str {
+        if let Some(c) = &self.text_color {
+            if !c.is_empty() {
+                return c.as_str();
+            }
+        }
+        self.palette.text_color()
+    }
+
+    pub fn symbol_kind_color(kind: &str) -> &'static str {
+        match kind.to_lowercase().as_str() {
+            "file" => "#64748B",
+            "mod" | "module" => "#F59E0B",
+            "struct" => "#A855F7",
+            "enum" | "variant" => "#FB923C",
+            "fn" | "function" => "#3B82F6",
+            "method" => "#06B6D4",
+            "trait" => "#10B981",
+            "impl" => "#14B8A6",
+            "const" | "constant" | "static" => "#EF4444",
+            "macro" => "#EC4899",
+            "type" | "typealias" => "#8B5CF6",
+            _ => "#5C6FE6",
         }
     }
 }
@@ -171,6 +376,8 @@ pub struct GraphSettings {
     pub display: GraphDisplaySettings,
     #[serde(default)]
     pub forces: GraphForcesSettings,
+    #[serde(default)]
+    pub colors: GraphColorSettings,
     #[serde(default)]
     pub is_panel_open: bool,
     #[serde(default)]
@@ -188,7 +395,7 @@ impl GraphSettings {
 pub struct AppPreferences {
     pub last_vault: Option<PathBuf>,
     pub recent_vaults: Vec<PathBuf>,
-    pub theme: Theme,
+    pub theme: ThemeId,
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: u32,
     #[serde(default = "default_context_width")]
@@ -220,7 +427,7 @@ impl Default for AppPreferences {
         Self {
             last_vault: None,
             recent_vaults: Vec::new(),
-            theme: Theme::Dark,
+            theme: ThemeId::NoderaDark,
             sidebar_width: 260,
             context_panel_width: 280,
             reading_progress: HashMap::new(),
@@ -599,7 +806,7 @@ pub struct AppState {
     pub search_results: Vec<SearchResult>,
     pub task_filter: TaskFilter,
 
-    pub theme: Theme,
+    pub theme: ThemeId,
     pub sidebar_open: bool,
     pub context_panel_open: bool,
     pub status_message: String,
@@ -3826,6 +4033,18 @@ impl AppState {
         self.theme = self.theme.toggle();
         self.preferences.theme = self.theme;
         self.preferences.save();
+    }
+
+    /// Sets the active theme and persists the choice.
+    pub fn set_theme(&mut self, theme: ThemeId) {
+        self.theme = theme;
+        self.preferences.theme = theme;
+        self.preferences.save();
+    }
+
+    /// Returns the resolved Theme design tokens for the active theme.
+    pub fn theme(&self) -> Theme {
+        Theme::from_id(self.theme)
     }
 
     /// Opens the PDF import dialog.

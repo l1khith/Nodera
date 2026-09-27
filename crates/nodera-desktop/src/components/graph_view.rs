@@ -13,6 +13,38 @@ pub const COMMUNITY_COLORS: [&str; 12] = [
     "#364391", "#5466DB", "#6475E8", "#4A5CC5",
 ];
 
+/// Resolves semantic color for project AST symbols based on symbol kind or signature
+pub fn get_symbol_kind_color(node: &SimNode) -> Option<&'static str> {
+    if node.id.starts_with("sym:") {
+        let parts: Vec<&str> = node.id.split("::").collect();
+        if parts.len() >= 3 {
+            let kind = parts[2];
+            return Some(crate::state::GraphColorSettings::symbol_kind_color(kind));
+        }
+    }
+    if node.label.starts_with("fn ") || node.label.contains("()") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("fn"))
+    } else if node.label.starts_with("struct ") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color(
+            "struct",
+        ))
+    } else if node.label.starts_with("enum ") || node.label.starts_with("::") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("enum"))
+    } else if node.label.starts_with("const ") || node.label.starts_with("static ") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("const"))
+    } else if node.label.starts_with("trait ") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("trait"))
+    } else if node.label.starts_with("impl ") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("impl"))
+    } else if node.label.starts_with("mod ") {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("mod"))
+    } else if node.label.ends_with('!') {
+        Some(crate::state::GraphColorSettings::symbol_kind_color("macro"))
+    } else {
+        None
+    }
+}
+
 /// Node in the 2D physics simulation canvas
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimNode {
@@ -553,7 +585,12 @@ pub fn step_simulation_with_forces(
         let dx = nodes[t].x - nodes[s].x;
         let dy = nodes[t].y - nodes[s].y;
         let dist = (dx * dx + dy * dy).sqrt().max(0.1);
-        let displacement = dist - target_len;
+
+        // Scale target spring length adaptively based on hub degree:
+        // A hub with 80 children needs a larger radial perimeter so child nodes don't collide and violently oscillate
+        let hub_degree = nodes[s].degree.max(nodes[t].degree);
+        let adaptive_target_len = target_len * (1.0 + (hub_degree as f32).min(60.0) * 0.035);
+        let displacement = dist - adaptive_target_len;
         let force = displacement * k_spring;
         let f_x = (dx / dist) * force;
         let f_y = (dy / dist) * force;
@@ -686,7 +723,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
 
         spawn(async move {
             let mut alpha = start_alpha;
-            for _frame in 0..50 {
+            for _frame in 0..30 {
                 tokio::time::sleep(std::time::Duration::from_millis(16)).await;
                 if *sim_generation.read() != gen {
                     return;
@@ -705,7 +742,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         alpha,
                         &forces,
                     );
-                    alpha *= 0.92;
+                    alpha *= 0.88;
                     (energy, alpha < 0.008 || energy < 0.005)
                 };
                 *sim_phase.write() = SimulationPhase::Settling { alpha, energy };
@@ -788,6 +825,14 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         .active_note
         .as_ref()
         .map(|n| n.relative_path.to_string_lossy().replace('\\', "/"));
+
+    let conf_center_color = current_settings.colors.effective_center_color();
+    let conf_sub_color = current_settings.colors.effective_sub_node_color();
+    let conf_selected_color = current_settings.colors.effective_selected_color();
+    let conf_edge_color = current_settings.colors.effective_edge_color();
+    let conf_edge_opacity = current_settings.colors.edge_opacity;
+    let conf_text_color = current_settings.colors.effective_text_color();
+    let color_by_kind = current_settings.colors.color_by_kind;
 
     let current_hovered = *hovered_node.read();
     let current_selected = *selected_node.read();
@@ -1158,7 +1203,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             orient: "auto-start-reverse",
                             path {
                                 d: "M 0 1.5 L 8 5 L 0 8.5 z",
-                                fill: "var(--graph-edge, #444A5B)",
+                                fill: "{conf_edge_color}",
                             }
                         }
                         marker {
@@ -1171,7 +1216,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             orient: "auto-start-reverse",
                             path {
                                 d: "M 0 1.5 L 8 5 L 0 8.5 z",
-                                fill: "var(--graph-edge-highlight, #7182FF)",
+                                fill: "{conf_selected_color}",
                             }
                         }
                     }
@@ -1206,15 +1251,15 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                         rsx! {}
                                     } else {
                                         let edge_color = if is_highlighted {
-                                            "var(--graph-edge-highlight, #7182FF)"
+                                            conf_selected_color
                                         } else {
-                                            "var(--graph-edge, #444A5B)"
+                                            conf_edge_color
                                         };
 
                                         let edge_opacity = if focused_idx.is_some() {
-                                            if is_highlighted { "1.0" } else { "0.06" }
+                                            if is_highlighted { "1.0".to_string() } else { format!("{:.2}", (conf_edge_opacity * 0.25).max(0.04)) }
                                         } else {
-                                            "0.35"
+                                            format!("{:.2}", conf_edge_opacity)
                                         };
 
                                         let edge_width = (if is_highlighted { 2.0 } else { 1.0 }) * current_settings.display.link_thickness;
@@ -1266,46 +1311,45 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let community_color = if current_settings.display.color_by_community {
                                         COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
                                     } else {
-                                        "var(--graph-node, #6680FF)"
+                                        conf_sub_color
+                                    };
+
+                                    let is_center_node = is_current || node.is_tag || node.id.starts_with("file:");
+
+                                    let base_fill = if is_center_node {
+                                        conf_center_color
+                                    } else if color_by_kind {
+                                        if let Some(kind_col) = get_symbol_kind_color(node) {
+                                            kind_col
+                                        } else {
+                                            community_color
+                                        }
+                                    } else {
+                                        community_color
                                     };
 
                                     let (node_color, stroke_color, stroke_width, node_opacity, stroke_dash) = if node.is_unresolved {
                                         let fill = "transparent";
                                         let stroke = if is_selected || is_hovered {
-                                            "var(--graph-node-hover, #7182FF)"
+                                            conf_selected_color
                                         } else {
                                             "var(--text-muted, #8E90A0)"
                                         };
                                         let opacity = if focused_idx.is_some() && !is_connected { "0.15" } else { "0.85" };
                                         (fill, stroke, "1.5", opacity, "3 2")
-                                    } else if node.is_tag {
-                                        let fill = "#E5A158";
-                                        let stroke = if is_selected || is_hovered { "#FFFFFF" } else { "var(--border, #28313C)" };
-                                        let opacity = if focused_idx.is_some() && !is_connected { "0.15" } else { "0.95" };
-                                        (fill, stroke, "1.5", opacity, "")
                                     } else if focused_idx.is_some() {
                                         if is_hovered || is_selected {
-                                            let fill = if is_current {
-                                                "var(--graph-node-current, #9A4BFF)"
-                                            } else if is_hovered {
-                                                "var(--graph-node-hover, #7182FF)"
-                                            } else {
-                                                community_color
-                                            };
-                                            let stroke = if is_current { "#D5C7FF" } else { "#FFFFFF" };
+                                            let fill = conf_selected_color;
+                                            let stroke = "#FFFFFF";
                                             (fill, stroke, "2.5", "1.0", "")
                                         } else if is_connected {
-                                            (community_color, "var(--border-strong, #383F4F)", "2.0", "1.0", "")
+                                            (base_fill, "var(--border-strong, #383F4F)", "2.0", "1.0", "")
                                         } else {
-                                            (community_color, "var(--border, #28313C)", "1.0", "0.12", "")
+                                            (base_fill, "var(--border, #28313C)", "1.0", "0.15", "")
                                         }
                                     } else {
-                                        let fill = if is_current {
-                                            "var(--graph-node-current, #9A4BFF)"
-                                        } else {
-                                            community_color
-                                        };
-                                        let stroke = if is_current { "#D5C7FF" } else { "var(--border, #28313C)" };
+                                        let fill = base_fill;
+                                        let stroke = if is_center_node { "#FFFFFF" } else { "var(--border, #28313C)" };
                                         let opacity = if !matches_query { "0.15" } else { "1.0" };
                                         (fill, stroke, "1.5", opacity, "")
                                     };
@@ -1325,21 +1369,22 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let node_id_val = node.id.clone();
 
                                     // 4-Tier Adaptive Label LOD
+                                    let is_hub = node.degree >= 3 || is_center_node;
                                     let show_label = if is_selected
                                         || is_hovered
                                         || (focused_idx.is_some() && is_connected)
-                                        || total_notes <= 25
+                                        || total_notes <= 20
                                     {
                                         true
-                                    } else if zoom_val < 0.45 {
+                                    } else if zoom_val < 0.55 {
                                         // Tier 1: Far zoom: only major hubs
                                         node.degree >= 6 || node.centrality >= 500
-                                    } else if zoom_val < 0.75 {
-                                        // Tier 2: Mid-far zoom: nodes with multiple connections
-                                        node.degree >= 2
-                                    } else if zoom_val < 1.15 {
-                                        // Tier 3: Normal zoom: connected nodes
-                                        node.degree >= 1 || total_notes <= 80
+                                    } else if zoom_val < 0.90 {
+                                        // Tier 2: Mid-far zoom: hubs and multi-connection symbols
+                                        node.degree >= 3
+                                    } else if zoom_val < 1.25 {
+                                        // Tier 3: Normal zoom: show hubs and multi-degree nodes, hide dense degree-1 leaves until hovered
+                                        is_hub || total_notes <= 35
                                     } else {
                                         // Tier 4: Close zoom: all nodes
                                         true
@@ -1377,6 +1422,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                                     let mut s = state.write();
                                                     if s.active_project.is_some() {
                                                         s.status_message = format!("Selected symbol: {}", label_click);
+                                                        s.context_panel_open = true;
                                                     } else if is_unresolved {
                                                         let _ = s.open_or_create_target(&label_click);
                                                         s.active_view = ActiveView::Editor;
@@ -1387,7 +1433,9 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                                     last_click.set(None);
                                                 } else {
                                                     selected_node.set(Some(idx));
-                                                    state.write().graph_view_state.selected_node_id = Some(node_id_val.clone());
+                                                    let mut s = state.write();
+                                                    s.graph_view_state.selected_node_id = Some(node_id_val.clone());
+                                                    s.context_panel_open = true;
                                                     last_click.set(Some((idx, now)));
                                                 }
                                             },
@@ -1396,6 +1444,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                                 let mut s = state.write();
                                                 if s.active_project.is_some() {
                                                     s.status_message = format!("Selected symbol: {}", label_dbl);
+                                                    s.context_panel_open = true;
                                                 } else if is_unresolved {
                                                     let _ = s.open_or_create_target(&label_dbl);
                                                     s.active_view = ActiveView::Editor;
@@ -1412,10 +1461,10 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                                     cy: "{node.y}",
                                                     r: "{node_radius + 6.0}",
                                                     fill: "none",
-                                                    stroke: "var(--graph-node-current, #9A4BFF)",
-                                                    stroke_width: "2",
+                                                    stroke: "{conf_selected_color}",
+                                                    stroke_width: "2.5",
                                                     stroke_dasharray: "4 3",
-                                                    opacity: "0.85",
+                                                    opacity: "0.95",
                                                 }
                                             }
                                             circle {
@@ -1435,6 +1484,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                                     y: format!("{}", node.y + node_radius + 12.0),
                                                     text_anchor: "middle",
                                                     font_weight: "{font_weight}",
+                                                    fill: "{conf_text_color}",
                                                     "{node.label}"
                                                 }
                                             }

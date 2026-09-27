@@ -1,12 +1,12 @@
 use dioxus::prelude::*;
 
 use crate::icons::{
-    IconClose, IconEdit, IconFile, IconFolder, IconKeyboard, IconMoon, IconPalette, IconRefresh,
-    IconSearch, IconSettings, IconSun,
+    IconClose, IconEdit, IconFile, IconFolder, IconKeyboard, IconPalette, IconRefresh, IconSearch,
+    IconSettings,
 };
 use crate::state::AppState;
 use crate::strings::{actions, settings, tooltips};
-use crate::theme::Theme;
+use crate::theme::{Theme, ThemeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
@@ -166,31 +166,100 @@ pub fn SettingsModal(state: Signal<AppState>) -> Element {
                                 div { style: "display: flex; flex-direction: column; gap: 18px;",
                                     h4 { style: "margin: 0; font-size: 15px; color: var(--text-primary);", "Appearance & Layout" }
 
-                                    div { style: "display: flex; flex-direction: column; gap: 8px;",
-                                        label { style: "font-weight: 500; color: var(--text-secondary);", "Theme" }
-                                        div { style: "display: flex; gap: 12px;",
-                                            button {
-                                                style: if current_theme == Theme::Dark { "display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 6px; background-color: var(--accent); color: #fff; font-weight: 600;" } else { "display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background-color: var(--bg-sidebar); color: var(--text-primary);" },
-                                                onclick: move |_| {
-                                                    let mut s = state.write();
-                                                    s.theme = Theme::Dark;
-                                                    s.preferences.theme = Theme::Dark;
-                                                    s.preferences.save();
-                                                },
-                                                IconMoon { size: 14 }
-                                                span { "Dark" }
-                                            }
-                                            button {
-                                                style: if current_theme == Theme::Light { "display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 6px; background-color: var(--accent); color: #fff; font-weight: 600;" } else { "display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background-color: var(--bg-sidebar); color: var(--text-primary);" },
-                                                onclick: move |_| {
-                                                    let mut s = state.write();
-                                                    s.theme = Theme::Light;
-                                                    s.preferences.theme = Theme::Light;
-                                                    s.preferences.save();
-                                                },
-                                                IconSun { size: 14 }
-                                                span { "Light" }
-                                            }
+                                    div { style: "display: flex; flex-direction: column; gap: 10px;",
+                                        div { style: "display: flex; align-items: baseline; justify-content: space-between;",
+                                            label { style: "font-weight: 600; font-size: 13px; color: var(--text-primary);", "Theme Palette" }
+                                            span { style: "font-size: 11px; color: var(--text-muted);", "6 calibrated workspace themes" }
+                                        }
+
+                                        div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;",
+                                            {ThemeId::ALL.iter().map(|&id| {
+                                                let theme_item = Theme::from_id(id);
+                                                let is_selected = current_theme == id;
+
+                                                rsx! {
+                                                    div {
+                                                        key: "{id.as_str()}",
+                                                        style: format!(
+                                                            "display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; cursor: pointer; border: 1px solid {}; background-color: {}; transition: all 0.15s ease;",
+                                                            if is_selected { "var(--accent)" } else { "var(--border)" },
+                                                            if is_selected { "var(--bg-hover)" } else { "var(--bg-sidebar)" }
+                                                        ),
+                                                        onclick: move |_| {
+                                                            state.write().set_theme(id);
+                                                        },
+
+                                                        div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                                            div { style: "display: flex; align-items: center; gap: 8px;",
+                                                                span {
+                                                                    style: format!(
+                                                                        "display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid {}; background-color: {}; box-sizing: border-box;",
+                                                                        if is_selected { "var(--accent)" } else { "var(--border-strong)" },
+                                                                        if is_selected { "var(--accent)" } else { "transparent" }
+                                                                    )
+                                                                }
+                                                                span { style: "font-weight: 600; font-size: 13px; color: var(--text-primary);", "{theme_item.name}" }
+                                                            }
+                                                            if is_selected {
+                                                                span {
+                                                                    style: "font-size: 10px; font-weight: 600; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background-color: var(--accent); color: #ffffff;",
+                                                                    "Active"
+                                                                }
+                                                            }
+                                                        }
+
+                                                        div { style: "font-size: 11px; color: var(--text-muted); line-height: 15px; min-height: 30px;", "{theme_item.description}" }
+
+                                                        div {
+                                                            style: format!(
+                                                                "background-color: {}; border: 1px solid {}; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none;",
+                                                                theme_item.bg_app,
+                                                                theme_item.border
+                                                            ),
+                                                            div {
+                                                                style: format!(
+                                                                    "display: flex; align-items: center; justify-content: space-between; background-color: {}; padding: 4px 6px; border-radius: 4px; border: 1px solid {};",
+                                                                    theme_item.bg_surface,
+                                                                    theme_item.border_subtle
+                                                                ),
+                                                                span { style: format!("font-size: 10px; font-weight: 700; color: {};", theme_item.accent), "Aa" }
+                                                                span { style: format!("font-size: 9px; color: {};", theme_item.text_muted), "Workspace" }
+                                                                span {
+                                                                    style: format!(
+                                                                        "display: inline-block; width: 6px; height: 6px; border-radius: 50%; background-color: {};",
+                                                                        theme_item.graph_node
+                                                                    )
+                                                                }
+                                                            }
+                                                            div {
+                                                                style: format!("font-size: 11px; font-weight: 600; color: {}; margin-top: 2px;", theme_item.text_primary),
+                                                                "Technical Precision"
+                                                            }
+                                                            div {
+                                                                style: format!("font-size: 10px; color: {}; line-height: 13px;", theme_item.text_secondary),
+                                                                "Semantic design architecture"
+                                                            }
+                                                            div { style: format!("height: 1px; background-color: {}; width: 100%;", theme_item.border_subtle) }
+                                                            div { style: "display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 2px;",
+                                                                div {
+                                                                    style: format!(
+                                                                        "display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: 600; background-color: {}; color: #ffffff;",
+                                                                        theme_item.accent
+                                                                    ),
+                                                                    "Action"
+                                                                }
+                                                                div {
+                                                                    style: format!(
+                                                                        "display: inline-flex; align-items: center; font-size: 9px; color: {};",
+                                                                        theme_item.accent_secondary
+                                                                    ),
+                                                                    "[[knowledge]]"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            })}
                                         }
                                     }
 

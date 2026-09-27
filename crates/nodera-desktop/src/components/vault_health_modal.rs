@@ -78,31 +78,31 @@ pub fn VaultHealthModal(state: Signal<AppState>) -> Element {
                     }
                     div {
                         style: format!(
-                            "background: {}; border: 1px solid {}; border-radius: 8px; padding: 10px 14px;",
-                            if total_broken > 0 { "rgba(244, 63, 94, 0.08)" } else { "rgba(16, 185, 129, 0.08)" },
-                            if total_broken > 0 { "rgba(244, 63, 94, 0.3)" } else { "rgba(16, 185, 129, 0.3)" },
+                            "background: var({}); border: 1px solid var({}); border-radius: 8px; padding: 10px 14px;",
+                            if total_broken > 0 { "--danger-container" } else { "--success-container" },
+                            if total_broken > 0 { "--danger" } else { "--success" },
                         ),
                         div {
-                            style: format!("font-size: 11px; text-transform: uppercase; font-weight: 600; color: {};", if total_broken > 0 { "#F43F5E" } else { "#10B981" }),
+                            style: format!("font-size: 11px; text-transform: uppercase; font-weight: 600; color: var({});", if total_broken > 0 { "--danger" } else { "--success" }),
                             "Broken Links"
                         }
                         div {
-                            style: format!("font-size: 20px; font-weight: 700; color: {}; margin-top: 2px;", if total_broken > 0 { "#F43F5E" } else { "#10B981" }),
+                            style: format!("font-size: 20px; font-weight: 700; color: var({}); margin-top: 2px;", if total_broken > 0 { "--danger" } else { "--success" }),
                             "{total_broken}"
                         }
                     }
                     div {
                         style: format!(
-                            "background: {}; border: 1px solid {}; border-radius: 8px; padding: 10px 14px;",
-                            if total_orphans > 0 { "rgba(245, 158, 11, 0.08)" } else { "rgba(16, 185, 129, 0.08)" },
-                            if total_orphans > 0 { "rgba(245, 158, 11, 0.3)" } else { "rgba(16, 185, 129, 0.3)" },
+                            "background: var({}); border: 1px solid var({}); border-radius: 8px; padding: 10px 14px;",
+                            if total_orphans > 0 { "--warning-container" } else { "--success-container" },
+                            if total_orphans > 0 { "--warning" } else { "--success" },
                         ),
                         div {
-                            style: format!("font-size: 11px; text-transform: uppercase; font-weight: 600; color: {};", if total_orphans > 0 { "#F59E0B" } else { "#10B981" }),
+                            style: format!("font-size: 11px; text-transform: uppercase; font-weight: 600; color: var({});", if total_orphans > 0 { "--warning" } else { "--success" }),
                             "Orphan Notes"
                         }
                         div {
-                            style: format!("font-size: 20px; font-weight: 700; color: {}; margin-top: 2px;", if total_orphans > 0 { "#F59E0B" } else { "#10B981" }),
+                            style: format!("font-size: 20px; font-weight: 700; color: var({}); margin-top: 2px;", if total_orphans > 0 { "--warning" } else { "--success" }),
                             "{total_orphans}"
                         }
                     }
@@ -116,13 +116,13 @@ pub fn VaultHealthModal(state: Signal<AppState>) -> Element {
                         div { style: "display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-muted);",
                             span { strong { style: "color: var(--text-primary);", "{knowledge_stats.rough_count}" } " rough" }
                             span { "·" }
-                            span { strong { style: "color: #10B981;", "{knowledge_stats.permanent_count}" } " permanent" }
+                            span { strong { style: "color: var(--success);", "{knowledge_stats.permanent_count}" } " permanent" }
                             span { "·" }
                             span { strong { style: "color: var(--accent);", "{knowledge_stats.source_count}" } " sources" }
                             span { "·" }
                             span { strong { style: "color: var(--text-primary);", "{knowledge_stats.index_count}" } " index" }
                             span { "·" }
-                            span { strong { style: "color: #F59E0B;", "{knowledge_stats.unlinked_count}" } " unlinked thoughts" }
+                            span { strong { style: "color: var(--warning);", "{knowledge_stats.unlinked_count}" } " unlinked thoughts" }
                         }
                     }
                     button {

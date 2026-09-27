@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Represents an indexed Markdown task in the derived database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,75 @@ pub struct TaskFilter {
     pub note_path: Option<String>,
     /// Optional text substring match
     pub search_query: Option<String>,
+    /// Optional filter by exact due date or prefix
+    pub due_date: Option<String>,
+}
+
+/// Universal activity event recorded in the local evidence stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Activity {
+    pub id: String,
+    pub timestamp_secs: i64,
+    pub kind: ActivityKind,
+    pub duration_secs: Option<u32>,
+    pub source: String,
+    pub project_id: Option<String>,
+    pub task_id: Option<String>,
+    pub note_path: Option<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Typed categories of verifiable activity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    Coding,
+    Reading,
+    Writing,
+    TaskCompletion,
+    JournalEntry,
+    Review,
+    Custom(String),
+}
+
+impl std::fmt::Display for ActivityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Coding => write!(f, "coding"),
+            Self::Reading => write!(f, "reading"),
+            Self::Writing => write!(f, "writing"),
+            Self::TaskCompletion => write!(f, "task_completion"),
+            Self::JournalEntry => write!(f, "journal_entry"),
+            Self::Review => write!(f, "review"),
+            Self::Custom(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+impl std::str::FromStr for ActivityKind {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
+            "coding" => Self::Coding,
+            "reading" => Self::Reading,
+            "writing" => Self::Writing,
+            "task_completion" => Self::TaskCompletion,
+            "journal_entry" => Self::JournalEntry,
+            "review" => Self::Review,
+            other => Self::Custom(other.to_string()),
+        })
+    }
+}
+
+/// Criteria for querying the activity event stream.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityFilter {
+    pub kind: Option<ActivityKind>,
+    pub project_id: Option<String>,
+    pub note_path: Option<String>,
+    pub since_secs: Option<i64>,
+    pub until_secs: Option<i64>,
+    pub limit: Option<usize>,
 }
 
 /// Search hit returned by full-text search.
