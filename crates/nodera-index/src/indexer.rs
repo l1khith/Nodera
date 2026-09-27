@@ -89,9 +89,15 @@ impl VaultIndex {
         let content_hash = format!("{:x}", sha2::Sha256::digest(note.content.as_bytes()));
 
         let size_bytes = note.content.len() as u64;
-        let modified_ns = self.vault_root.join(&note.relative_path).metadata()
+        let modified_ns = self
+            .vault_root
+            .join(&note.relative_path)
+            .metadata()
             .and_then(|m| m.modified())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other))
+            .and_then(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map_err(std::io::Error::other)
+            })
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
 
@@ -416,9 +422,16 @@ impl VaultIndex {
                 let content_hash = format!("{:x}", sha2::Sha256::digest(note.content.as_bytes()));
 
                 let size_bytes = note.content.len() as u64;
-                let modified_ns = vault_service.vault().root().join(&note.relative_path).metadata()
+                let modified_ns = vault_service
+                    .vault()
+                    .root()
+                    .join(&note.relative_path)
+                    .metadata()
                     .and_then(|m| m.modified())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other))
+                    .and_then(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .map_err(std::io::Error::other)
+                    })
                     .map(|d| d.as_nanos() as u64)
                     .unwrap_or(0);
 

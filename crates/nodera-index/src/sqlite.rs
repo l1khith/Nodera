@@ -158,8 +158,6 @@ impl SqliteIndex {
         Ok(())
     }
 
-
-
     /// Indexes or updates a note file's metadata and derived entities atomically.
     #[allow(clippy::too_many_arguments)]
     pub fn index_note_metadata(
@@ -209,11 +207,13 @@ impl SqliteIndex {
 
         // 3. Links
         for link in links {
-            let target_id: Option<String> = tx.query_row(
-                "SELECT id FROM files WHERE path = ?1 OR path = ?1 || '.md'",
-                [&link.target],
-                |row| row.get(0),
-            ).ok();
+            let target_id: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM files WHERE path = ?1 OR path = ?1 || '.md'",
+                    [&link.target],
+                    |row| row.get(0),
+                )
+                .ok();
             tx.execute(
                 "INSERT OR IGNORE INTO links (source_id, target_path, target_id, start_offset, end_offset)
                  VALUES (?, ?, ?, ?, ?)",
@@ -343,7 +343,9 @@ impl SqliteIndex {
                     .map_err(db_err)?;
 
                 for link in record.links {
-                    let target_id: Option<String> = stmt_resolve.query_row([&link.target], |row| row.get(0)).ok();
+                    let target_id: Option<String> = stmt_resolve
+                        .query_row([&link.target], |row| row.get(0))
+                        .ok();
                     stmt_link
                         .execute(params![
                             record.note_id,
@@ -477,7 +479,9 @@ impl SqliteIndex {
                     .map_err(db_err)?;
 
                 for link in record.links {
-                    let target_id: Option<String> = stmt_resolve.query_row([&link.target], |row| row.get(0)).ok();
+                    let target_id: Option<String> = stmt_resolve
+                        .query_row([&link.target], |row| row.get(0))
+                        .ok();
                     stmt_link
                         .execute(params![
                             record.note_id,

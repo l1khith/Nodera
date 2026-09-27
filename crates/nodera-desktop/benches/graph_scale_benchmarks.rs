@@ -22,11 +22,7 @@ impl BenchMetric {
     pub fn print(&self) {
         println!(
             "| {:<28} | {:>6} nodes | {:>6} edges | {:>10.3?} | {:>8.3} ms/step |",
-            self.name,
-            self.node_count,
-            self.edge_count,
-            self.duration,
-            self.avg_tick_ms
+            self.name, self.node_count, self.edge_count, self.duration, self.avg_tick_ms
         );
     }
 }
@@ -94,12 +90,8 @@ fn benchmark_tier(node_count: usize) {
 
     // 1. Full Graph Generation (Linear map + LPA Community Detection + Degree Centrality)
     let t0 = Instant::now();
-    let full_graph = link_graph.to_graph_data_with_options(
-        &paths,
-        &titles,
-        &note_tags,
-        &filter_options,
-    );
+    let full_graph =
+        link_graph.to_graph_data_with_options(&paths, &titles, &note_tags, &filter_options);
     let full_gen_dur = t0.elapsed();
     BenchMetric {
         name: "1. Full Graph Gen (LPA+Centr)".to_string(),

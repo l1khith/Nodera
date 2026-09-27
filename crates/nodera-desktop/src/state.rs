@@ -175,6 +175,7 @@ pub enum GraphPalettePreset {
     SolarAmber,
     Dracula,
     Monochrome,
+    Graphite,
     Custom,
 }
 
@@ -187,6 +188,7 @@ impl GraphPalettePreset {
             Self::SolarAmber => "Solar Amber",
             Self::Dracula => "Dracula Synth",
             Self::Monochrome => "Slate Monochrome",
+            Self::Graphite => "Graphite Near-Black",
             Self::Custom => "Custom",
         }
     }
@@ -199,6 +201,7 @@ impl GraphPalettePreset {
             Self::SolarAmber => "#F59E0B",
             Self::Dracula => "#BD93F9",
             Self::Monochrome => "#FFFFFF",
+            Self::Graphite => "#CBD5E1",
             Self::Custom => "#9A4BFF",
         }
     }
@@ -211,6 +214,7 @@ impl GraphPalettePreset {
             Self::SolarAmber => "#FB923C",
             Self::Dracula => "#8BE9FD",
             Self::Monochrome => "#94A3B8",
+            Self::Graphite => "#5A6270",
             Self::Custom => "#5C6FE6",
         }
     }
@@ -223,6 +227,7 @@ impl GraphPalettePreset {
             Self::SolarAmber => "#FDE047",
             Self::Dracula => "#50FA7B",
             Self::Monochrome => "#38BDF8",
+            Self::Graphite => "#E2E8F0",
             Self::Custom => "#7182FF",
         }
     }
@@ -235,6 +240,7 @@ impl GraphPalettePreset {
             Self::SolarAmber => "#78350F",
             Self::Dracula => "#6272A4",
             Self::Monochrome => "#334155",
+            Self::Graphite => "#292929",
             Self::Custom => "#444A5B",
         }
     }
@@ -247,6 +253,7 @@ impl GraphPalettePreset {
             Self::SolarAmber => "#FFFBEB",
             Self::Dracula => "#F8F8F2",
             Self::Monochrome => "#F1F5F9",
+            Self::Graphite => "#E0E0E0",
             Self::Custom => "#DEE2ED",
         }
     }
@@ -3331,12 +3338,15 @@ impl AppState {
     pub fn get_projected_graph_data_with_settings(
         &self,
         settings: &GraphSettings,
-    ) -> (nodera_markdown::GraphData, nodera_markdown::GraphProjectionMeta) {
-        let focus_node = self.active_note.as_ref().map(|n| {
-            n.relative_path.to_string_lossy().replace('\\', "/")
-        }).or_else(|| {
-            self.graph_view_state.selected_node_id.clone()
-        });
+    ) -> (
+        nodera_markdown::GraphData,
+        nodera_markdown::GraphProjectionMeta,
+    ) {
+        let focus_node = self
+            .active_note
+            .as_ref()
+            .map(|n| n.relative_path.to_string_lossy().replace('\\', "/"))
+            .or_else(|| self.graph_view_state.selected_node_id.clone());
 
         if let Some(project) = &self.active_project {
             let mut data = project.graph_data.clone();
@@ -4091,6 +4101,11 @@ impl AppState {
     pub fn set_theme(&mut self, theme: ThemeId) {
         self.theme = theme;
         self.preferences.theme = theme;
+        if theme == ThemeId::Graphite
+            && self.preferences.graph_settings.colors.palette == GraphPalettePreset::NoderaTech
+        {
+            self.preferences.graph_settings.colors.palette = GraphPalettePreset::Graphite;
+        }
         self.preferences.save();
     }
 

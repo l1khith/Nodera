@@ -66,7 +66,7 @@ impl TantivyIndex {
         let f_path = schema_builder.add_text_field("path", STRING | STORED);
         let f_title = schema_builder.add_text_field("title", TEXT | STORED);
         let f_headings = schema_builder.add_text_field("headings", TEXT);
-        let f_body = schema_builder.add_text_field("body", TEXT);
+        let f_body = schema_builder.add_text_field("body", TEXT | STORED);
         let f_tags = schema_builder.add_text_field("tags", TEXT | STORED);
         let schema = schema_builder.build();
         (schema, f_id, f_path, f_title, f_headings, f_body, f_tags)

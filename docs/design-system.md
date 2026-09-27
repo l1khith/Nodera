@@ -132,13 +132,14 @@ This ratio is a visual discipline, not a literal pixel-area requirement.
 
 # 3. Built-in Theme System
 
-Nodera features a centralized, token-driven theme architecture supporting 6 production-calibrated built-in themes. All components resolve colors from semantic CSS custom properties and strongly typed `Theme` tokens in Rust.
+Nodera features a centralized, token-driven theme architecture supporting 7 production-calibrated built-in themes. All components resolve colors from semantic CSS custom properties and strongly typed `Theme` tokens in Rust.
 
 ```text
                     ┌──────────────────┐
                     │     ThemeId      │
                     │                  │
                     │ nodera-dark      │
+                    │ graphite         │
                     │ nodera-light     │
                     │ midnight         │
                     │ nord             │
@@ -173,6 +174,7 @@ Theme identity is serialized as stable kebab-case strings:
 | Theme ID | Name | Tone | Characteristics |
 |---|---|---|---|
 | `nodera-dark` | Nodera Dark | Dark (Reference) | Deep slate backdrop (`#0B0F14`), cobalt interactive focus (`#6680FF`), relational violet (`#9A4BFF`). |
+| `graphite` | Graphite | Dark (Restrained) | Restrained near-black workspace (`#0D0D0D`), hairline dark borders (`#292929`), steel accent (`#8E95A5`). |
 | `nodera-light` | Nodera Light | Light | Crisp light workspace (`#F4F6F9`), high-contrast dark text (`#171C23`), cobalt accent (`#4A63E8`). |
 | `midnight` | Midnight | Dark (OLED) | Ultra-deep black void (`#020408`), luminous electric sapphire accent (`#38BDF8`), indigo links (`#818CF8`). |
 | `nord` | Nord | Dark (Arctic) | Cool muted arctic palette (`#2E3440`), frost cyan accent (`#88C0D0`), aurora purple (`#B48EAD`). |
@@ -181,30 +183,30 @@ Theme identity is serialized as stable kebab-case strings:
 
 ## 3.2 Token Specification Across Themes
 
-| Token | Nodera Dark | Nodera Light | Midnight | Nord | Dracula | Solarized |
-|---|---|---|---|---|---|---|
-| `--bg-app` | `#0B0F14` | `#F4F6F9` | `#020408` | `#2E3440` | `#21222C` | `#FDF6E3` |
-| `--bg-sidebar` | `#11161D` | `#ECEFF3` | `#060A10` | `#292E39` | `#1D1E26` | `#F5EED9` |
-| `--bg-surface` | `#141720` | `#FFFFFF` | `#080D16` | `#333A47` | `#282A36` | `#FFFFFF` |
-| `--bg-surface-elevated` | `#161D26` | `#F8FAFC` | `#0E1624` | `#3B4252` | `#2F3242` | `#EEE8D5` |
-| `--bg-hover` | `#202533` | `#EEF2F6` | `#141F32` | `#434C5E` | `#383A4C` | `#E9E2CE` |
-| `--bg-active` | `#252A3A` | `#E4E9F2` | `#1A2840` | `#4C566A` | `#44475A` | `#DFD7C2` |
-| `--border` | `#28313C` | `#D1D7E0` | `#162234` | `#3B4252` | `#3B3E52` | `#D6CFBA` |
-| `--border-strong` | `#383F4F` | `#A8B2C0` | `#253650` | `#4C566A` | `#6272A4` | `#93A1A1` |
-| `--border-subtle` | `#1E232F` | `#E6EAF0` | `#0E1622` | `#353B49` | `#2C2E3E` | `#EBE4D0` |
-| `--text-primary` | `#DEE2ED` | `#171C23` | `#E2E8F0` | `#ECEFF4` | `#F8F8F2` | `#586E75` |
-| `--text-secondary` | `#C5C5D6` | `#475060` | `#94A3B8` | `#D8DEE9` | `#D6D6E0` | `#657B83` |
-| `--text-muted` | `#8E90A0` | `#6B7687` | `#64748B` | `#9FA8B8` | `#9AA6C4` | `#839496` |
-| `--text-disabled` | `#444654` | `#98A2B3` | `#334155` | `#4C566A` | `#545B78` | `#A8B3B5` |
-| `--accent` | `#6680FF` | `#4A63E8` | `#38BDF8` | `#88C0D0` | `#BD93F9` | `#268BD2` |
-| `--accent-hover` | `#7182FF` | `#3B53D8` | `#60A5FA` | `#8FBCBB` | `#CAA7FA` | `#1F76B4` |
-| `--accent-pressed` | `#4A55E8` | `#2D41B8` | `#2563EB` | `#81A1C1` | `#A877F0` | `#1A6398` |
-| `--accent-secondary` | `#9A4BFF` | `#7E3FE0` | `#818CF8` | `#B48EAD` | `#FF79C6` | `#6C71C4` |
-| `--accent-secondary-hover` | `#AC68FF` | `#9253F0` | `#A5B4FC` | `#C69EC0` | `#FF92D0` | `#5A5FA8` |
-| `--selection` | `#252A3A` | `#DDE4FF` | `#1E293B` | `#434C5E` | `#44475A` | `#EEE8D5` |
-| `--focus` | `#6680FF` | `#4A63E8` | `#38BDF8` | `#88C0D0` | `#BD93F9` | `#268BD2` |
-| `--graph-node` | `#6680FF` | `#4A63E8` | `#38BDF8` | `#88C0D0` | `#BD93F9` | `#268BD2` |
-| `--graph-edge` | `#444A5B` | `#D1D7E0` | `#1E293B` | `#434C5E` | `#44475A` | `#D6CFBA` |
+| Token | Nodera Dark | Graphite | Nodera Light | Midnight | Nord | Dracula | Solarized |
+|---|---|---|---|---|---|---|---|
+| `--bg-app` | `#0B0F14` | `#0D0D0D` | `#F4F6F9` | `#020408` | `#2E3440` | `#21222C` | `#FDF6E3` |
+| `--bg-sidebar` | `#11161D` | `#111111` | `#ECEFF3` | `#060A10` | `#292E39` | `#1D1E26` | `#F5EED9` |
+| `--bg-surface` | `#141720` | `#151515` | `#FFFFFF` | `#080D16` | `#333A47` | `#282A36` | `#FFFFFF` |
+| `--bg-surface-elevated` | `#161D26` | `#191919` | `#F8FAFC` | `#0E1624` | `#3B4252` | `#2F3242` | `#EEE8D5` |
+| `--bg-hover` | `#202533` | `#212121` | `#EEF2F6` | `#141F32` | `#434C5E` | `#383A4C` | `#E9E2CE` |
+| `--bg-active` | `#252A3A` | `#2A2A2A` | `#E4E9F2` | `#1A2840` | `#4C566A` | `#44475A` | `#DFD7C2` |
+| `--border` | `#28313C` | `#292929` | `#D1D7E0` | `#162234` | `#3B4252` | `#3B3E52` | `#D6CFBA` |
+| `--border-strong` | `#383F4F` | `#383838` | `#A8B2C0` | `#253650` | `#4C566A` | `#6272A4` | `#93A1A1` |
+| `--border-subtle` | `#1E232F` | `#202020` | `#E6EAF0` | `#0E1622` | `#353B49` | `#2C2E3E` | `#EBE4D0` |
+| `--text-primary` | `#DEE2ED` | `#F2F2F2` | `#171C23` | `#E2E8F0` | `#ECEFF4` | `#F8F8F2` | `#586E75` |
+| `--text-secondary` | `#C5C5D6` | `#A1A1A1` | `#475060` | `#94A3B8` | `#D8DEE9` | `#D6D6E0` | `#657B83` |
+| `--text-muted` | `#8E90A0` | `#737373` | `#6B7687` | `#64748B` | `#9FA8B8` | `#9AA6C4` | `#839496` |
+| `--text-disabled` | `#444654` | `#555555` | `#98A2B3` | `#334155` | `#4C566A` | `#545B78` | `#A8B3B5` |
+| `--accent` | `#6680FF` | `#8E95A5` | `#4A63E8` | `#38BDF8` | `#88C0D0` | `#BD93F9` | `#268BD2` |
+| `--accent-hover` | `#7182FF` | `#9FA6B6` | `#3B53D8` | `#60A5FA` | `#8FBCBB` | `#CAA7FA` | `#1F76B4` |
+| `--accent-pressed` | `#4A55E8` | `#7D8494` | `#2D41B8` | `#2563EB` | `#81A1C1` | `#A877F0` | `#1A6398` |
+| `--accent-secondary` | `#9A4BFF` | `#6B7280` | `#7E3FE0` | `#818CF8` | `#B48EAD` | `#FF79C6` | `#6C71C4` |
+| `--accent-secondary-hover` | `#AC68FF` | `#7C8391` | `#9253F0` | `#A5B4FC` | `#C69EC0` | `#FF92D0` | `#5A5FA8` |
+| `--selection` | `#252A3A` | `#2A2A2A` | `#DDE4FF` | `#1E293B` | `#434C5E` | `#44475A` | `#EEE8D5` |
+| `--focus` | `#6680FF` | `#3A3A3A` | `#4A63E8` | `#38BDF8` | `#88C0D0` | `#BD93F9` | `#268BD2` |
+| `--graph-node` | `#6680FF` | `#CBD5E1` | `#4A63E8` | `#38BDF8` | `#88C0D0` | `#BD93F9` | `#268BD2` |
+| `--graph-edge` | `#444A5B` | `#292929` | `#D1D7E0` | `#1E293B` | `#434C5E` | `#44475A` | `#D6CFBA` |
 
 ## 3.3 Theme Persistence & Fallback Policy
 

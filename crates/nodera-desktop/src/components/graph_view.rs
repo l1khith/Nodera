@@ -6,12 +6,63 @@ use std::time::Instant;
 use crate::icons::*;
 use crate::state::{ActiveView, AppState, GraphForcesSettings};
 use crate::strings::{actions, empty_states, graph as graph_strings, placeholders};
+use crate::theme::ThemeId;
 use nodera_markdown::GraphData;
 
 pub const COMMUNITY_COLORS: [&str; 12] = [
     "#5C6FE6", "#7081F0", "#8492F6", "#4F61C9", "#3F4D9E", "#6B7DF2", "#7E8DF4", "#4555B8",
     "#364391", "#5466DB", "#6475E8", "#4A5CC5",
 ];
+
+pub const GRAPHITE_COMMUNITY_COLORS: [&str; 8] = [
+    "#5A6270", "#6B7280", "#7E8B9B", "#4A5260", "#636B78", "#717B8A", "#535B69", "#828D9D",
+];
+
+pub fn symbol_kind_color_graphite(kind: &str) -> &'static str {
+    match kind.to_lowercase().as_str() {
+        "file" => "#6B7280",
+        "mod" | "module" => "#9CA3AF",
+        "struct" => "#8E95A5",
+        "enum" | "variant" => "#7E8B9B",
+        "fn" | "function" => "#64748B",
+        "method" => "#5A6270",
+        "trait" => "#718096",
+        "impl" => "#7A8294",
+        "const" | "constant" | "static" => "#A0AEC0",
+        "macro" => "#8492A6",
+        "type" | "typealias" => "#8E95A5",
+        _ => "#5A6270",
+    }
+}
+
+pub fn get_symbol_kind_color_graphite(node: &SimNode) -> Option<&'static str> {
+    if node.id.starts_with("sym:") {
+        let parts: Vec<&str> = node.id.split("::").collect();
+        if parts.len() >= 3 {
+            let kind = parts[2];
+            return Some(symbol_kind_color_graphite(kind));
+        }
+    }
+    if node.label.starts_with("fn ") || node.label.contains("()") {
+        Some(symbol_kind_color_graphite("fn"))
+    } else if node.label.starts_with("struct ") {
+        Some(symbol_kind_color_graphite("struct"))
+    } else if node.label.starts_with("enum ") || node.label.starts_with("::") {
+        Some(symbol_kind_color_graphite("enum"))
+    } else if node.label.starts_with("const ") || node.label.starts_with("static ") {
+        Some(symbol_kind_color_graphite("const"))
+    } else if node.label.starts_with("trait ") {
+        Some(symbol_kind_color_graphite("trait"))
+    } else if node.label.starts_with("impl ") {
+        Some(symbol_kind_color_graphite("impl"))
+    } else if node.label.starts_with("mod ") {
+        Some(symbol_kind_color_graphite("mod"))
+    } else if node.label.ends_with('!') {
+        Some(symbol_kind_color_graphite("macro"))
+    } else {
+        None
+    }
+}
 
 /// Resolves semantic color for project AST symbols based on symbol kind or signature
 pub fn get_symbol_kind_color(node: &SimNode) -> Option<&'static str> {
@@ -181,9 +232,9 @@ pub fn init_or_update_simulation(
     // so spatial memory is preserved and positions don't drift.
     // If nodes are mostly new, run pre-warm relaxation steps for clean layout.
     let total_steps = if preserved_count > 0 && preserved_count * 2 >= n {
-        4
+        2
     } else {
-        10
+        180
     };
 
     for step in 0..total_steps {
@@ -835,12 +886,81 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         .as_ref()
         .map(|n| n.relative_path.to_string_lossy().replace('\\', "/"));
 
-    let conf_center_color = current_settings.colors.effective_center_color();
-    let conf_sub_color = current_settings.colors.effective_sub_node_color();
-    let conf_selected_color = current_settings.colors.effective_selected_color();
-    let conf_edge_color = current_settings.colors.effective_edge_color();
+    let is_graphite = app_state.theme == ThemeId::Graphite;
+    let theme_tokens = app_state.theme.theme();
+
+    let conf_center_color = if let Some(c) = &current_settings.colors.center_node_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_node_current.as_str()
+        } else {
+            current_settings.colors.effective_center_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_node_current.as_str()
+    } else {
+        current_settings.colors.effective_center_color()
+    };
+
+    let conf_sub_color = if let Some(c) = &current_settings.colors.sub_node_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_node.as_str()
+        } else {
+            current_settings.colors.effective_sub_node_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_node.as_str()
+    } else {
+        current_settings.colors.effective_sub_node_color()
+    };
+
+    let conf_selected_color = if let Some(c) = &current_settings.colors.selected_node_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_node_selected.as_str()
+        } else {
+            current_settings.colors.effective_selected_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_node_selected.as_str()
+    } else {
+        current_settings.colors.effective_selected_color()
+    };
+
+    let conf_edge_color = if let Some(c) = &current_settings.colors.edge_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_edge.as_str()
+        } else {
+            current_settings.colors.effective_edge_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_edge.as_str()
+    } else {
+        current_settings.colors.effective_edge_color()
+    };
+
     let conf_edge_opacity = current_settings.colors.edge_opacity;
-    let conf_text_color = current_settings.colors.effective_text_color();
+
+    let conf_text_color = if let Some(c) = &current_settings.colors.text_color {
+        if !c.is_empty() {
+            c.as_str()
+        } else if is_graphite {
+            theme_tokens.graph_label.as_str()
+        } else {
+            current_settings.colors.effective_text_color()
+        }
+    } else if is_graphite {
+        theme_tokens.graph_label.as_str()
+    } else {
+        current_settings.colors.effective_text_color()
+    };
+
     let color_by_kind = current_settings.colors.color_by_kind;
 
     let current_hovered = *hovered_node.read();
@@ -1155,7 +1275,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     span { style: "color: var(--text-secondary);", "{total_edges} connections" }
                     if state.read().graph_view_state.projection_meta.is_budget_capped {
                         span {
-                            style: "background: rgba(92, 111, 230, 0.18); color: var(--accent-primary, #5C6FE6); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;",
+                            style: "background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;",
                             "Budget Capped (60 FPS)"
                         }
                     }
@@ -1166,7 +1286,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     if let Some(h_idx) = *hovered_node.read() {
                         if let Some(h_node) = nodes.get(h_idx) {
                             let cent_pct = (h_node.centrality as f32) / 100.0;
-                            let comm_col = COMMUNITY_COLORS[h_node.community_id % COMMUNITY_COLORS.len()];
+                            let comm_col = if is_graphite {
+                                GRAPHITE_COMMUNITY_COLORS[h_node.community_id % GRAPHITE_COMMUNITY_COLORS.len()]
+                            } else {
+                                COMMUNITY_COLORS[h_node.community_id % COMMUNITY_COLORS.len()]
+                            };
                             rsx! {
                                 div {
                                     style: "position: absolute; bottom: 50px; left: 14px; background: var(--bg-surface-elevated, #1A1D24); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 11px; z-index: 10; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); pointer-events: none;",
@@ -1322,7 +1446,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     };
 
                                     let community_color = if current_settings.display.color_by_community {
-                                        COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                        if is_graphite {
+                                            GRAPHITE_COMMUNITY_COLORS[node.community_id % GRAPHITE_COMMUNITY_COLORS.len()]
+                                        } else {
+                                            COMMUNITY_COLORS[node.community_id % COMMUNITY_COLORS.len()]
+                                        }
                                     } else {
                                         conf_sub_color
                                     };
@@ -1332,7 +1460,11 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     let base_fill = if is_center_node {
                                         conf_center_color
                                     } else if color_by_kind {
-                                        if let Some(kind_col) = get_symbol_kind_color(node) {
+                                        if let Some(kind_col) = if is_graphite {
+                                            get_symbol_kind_color_graphite(node)
+                                        } else {
+                                            get_symbol_kind_color(node)
+                                        } {
                                             kind_col
                                         } else {
                                             community_color

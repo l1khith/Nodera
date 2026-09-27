@@ -81,7 +81,7 @@ impl AsRef<str> for Color {
     }
 }
 
-/// Authoritative stable identifiers for Nodera's 6 built-in themes.
+/// Authoritative stable identifiers for Nodera's 7 built-in themes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ThemeId {
     #[default]
@@ -91,6 +91,7 @@ pub enum ThemeId {
     Nord,
     Dracula,
     Solarized,
+    Graphite,
 }
 
 impl ThemeId {
@@ -99,13 +100,14 @@ impl ThemeId {
     #[allow(non_upper_case_globals)]
     pub const Light: Self = Self::NoderaLight;
 
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::NoderaDark,
         Self::NoderaLight,
         Self::Midnight,
         Self::Nord,
         Self::Dracula,
         Self::Solarized,
+        Self::Graphite,
     ];
 
     pub const fn as_str(&self) -> &'static str {
@@ -116,6 +118,7 @@ impl ThemeId {
             Self::Nord => "nord",
             Self::Dracula => "dracula",
             Self::Solarized => "solarized",
+            Self::Graphite => "graphite",
         }
     }
 
@@ -127,6 +130,7 @@ impl ThemeId {
             "nord" => Self::Nord,
             "dracula" => Self::Dracula,
             "solarized" => Self::Solarized,
+            "graphite" => Self::Graphite,
             _ => Self::NoderaDark,
         }
     }
@@ -139,6 +143,7 @@ impl ThemeId {
             Self::Nord => "Nord",
             Self::Dracula => "Dracula",
             Self::Solarized => "Solarized",
+            Self::Graphite => "Graphite",
         }
     }
 
@@ -150,6 +155,7 @@ impl ThemeId {
             Self::Nord => "Cool, muted arctic palette for low visual distraction",
             Self::Dracula => "High-contrast dark palette with vibrant syntax accents",
             Self::Solarized => "Warm, low-contrast reading palette engineered for comfort",
+            Self::Graphite => "Restrained near-black workspace",
         }
     }
 
@@ -161,12 +167,13 @@ impl ThemeId {
             Self::Nord => "theme-nord",
             Self::Dracula => "theme-dracula",
             Self::Solarized => "theme-solarized",
+            Self::Graphite => "theme-graphite",
         }
     }
 
     pub const fn is_dark(&self) -> bool {
         match self {
-            Self::NoderaDark | Self::Midnight | Self::Nord | Self::Dracula => true,
+            Self::NoderaDark | Self::Midnight | Self::Nord | Self::Dracula | Self::Graphite => true,
             Self::NoderaLight | Self::Solarized => false,
         }
     }
@@ -184,7 +191,7 @@ impl ThemeId {
     }
 }
 
-pub const ALL_THEME_IDS: [ThemeId; 6] = ThemeId::ALL;
+pub const ALL_THEME_IDS: [ThemeId; 7] = ThemeId::ALL;
 
 impl Serialize for ThemeId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -649,6 +656,67 @@ impl Theme {
         }
     }
 
+    pub const fn graphite() -> Self {
+        Self {
+            id: ThemeId::Graphite,
+            name: "Graphite",
+            description: "Restrained near-black workspace",
+            is_dark: true,
+            bg_app: Color("#0D0D0D"),
+            bg_sidebar: Color("#111111"),
+            bg_sidebar_hover: Color("#1A1A1A"),
+            bg_sidebar_active: Color("#222222"),
+            bg_surface: Color("#151515"),
+            bg_surface_elevated: Color("#1C1C1C"),
+            bg_hover: Color("#1F1F1F"),
+            bg_active: Color("#262626"),
+            border: Color("#292929"),
+            border_strong: Color("#383838"),
+            border_subtle: Color("#202020"),
+            text_primary: Color("#F2F2F2"),
+            text_secondary: Color("#A1A1A1"),
+            text_muted: Color("#737373"),
+            text_disabled: Color("#555555"),
+            accent: Color("#8E95A5"),
+            accent_hover: Color("#9FA7B8"),
+            accent_pressed: Color("#727C8E"),
+            accent_secondary: Color("#9CA3AF"),
+            accent_secondary_hover: Color("#B1B7C1"),
+            accent_focus: Color("rgba(142, 149, 165, 0.25)"),
+            focus: Color("#3A3A3A"),
+            selection: Color("#2A2A2A"),
+            success: Color("#38A169"),
+            success_container: Color("#14291E"),
+            warning: Color("#D69E2E"),
+            warning_container: Color("#2D2413"),
+            danger: Color("#E53E3E"),
+            danger_hover: Color("#F56565"),
+            danger_container: Color("#2D1515"),
+            info: Color("#4A7C9B"),
+            info_container: Color("#122530"),
+            graph_node: Color("#5A6270"),
+            graph_node_current: Color("#CBD5E1"),
+            graph_node_selected: Color("#CBD5E1"),
+            graph_node_hover: Color("#8A97A8"),
+            graph_node_connected: Color("#7E8B9B"),
+            graph_node_unrelated: Color("#252830"),
+            graph_edge: Color("#292929"),
+            graph_edge_highlight: Color("#5A6270"),
+            graph_label: Color("#E0E0E0"),
+            graph_grid_dot: Color("rgba(255, 255, 255, 0.05)"),
+            editor_background: Color("#0D0D0D"),
+            editor_text: Color("#F2F2F2"),
+            code_background: Color("#161616"),
+            code_text: Color("#E5E5E5"),
+            scrollbar_thumb: Color("#3A3A3A"),
+            scrollbar_thumb_hover: Color("#4A4A4A"),
+            scrollbar_thumb_active: Color("#5A5A5A"),
+            shadow_sm: Color("0 1px 3px rgba(0, 0, 0, 0.5)"),
+            shadow_md: Color("0 4px 16px rgba(0, 0, 0, 0.65)"),
+            shadow_lg: Color("0 16px 40px rgba(0, 0, 0, 0.8)"),
+        }
+    }
+
     pub const fn from_id(id: ThemeId) -> Self {
         match id {
             ThemeId::NoderaDark => Self::nodera_dark(),
@@ -657,10 +725,11 @@ impl Theme {
             ThemeId::Nord => Self::nord(),
             ThemeId::Dracula => Self::dracula(),
             ThemeId::Solarized => Self::solarized(),
+            ThemeId::Graphite => Self::graphite(),
         }
     }
 
-    pub const fn all() -> [Self; 6] {
+    pub const fn all() -> [Self; 7] {
         [
             Self::nodera_dark(),
             Self::nodera_light(),
@@ -668,6 +737,7 @@ impl Theme {
             Self::nord(),
             Self::dracula(),
             Self::solarized(),
+            Self::graphite(),
         ]
     }
 
@@ -1080,6 +1150,70 @@ pub const BASE_CSS: &str = r#"
     --scrollbar-thumb-active: rgba(88, 110, 117, 0.48);
 }
 
+.theme-graphite {
+    --bg-app: #0D0D0D;
+    --bg-sidebar: #111111;
+    --bg-sidebar-hover: #1A1A1A;
+    --bg-sidebar-active: #222222;
+    --bg-surface: #151515;
+    --bg-surface-elevated: #1C1C1C;
+    --bg-hover: #1F1F1F;
+    --bg-active: #262626;
+    --border: #292929;
+    --border-strong: #383838;
+    --border-subtle: #202020;
+    --text-primary: #F2F2F2;
+    --text-secondary: #A1A1A1;
+    --text-muted: #737373;
+    --text-disabled: #555555;
+    --accent: #8E95A5;
+    --accent-hover: #9FA7B8;
+    --accent-pressed: #727C8E;
+    --accent-secondary: #9CA3AF;
+    --accent-secondary-hover: #B1B7C1;
+    --accent-focus: rgba(142, 149, 165, 0.25);
+    --selection: #2A2A2A;
+    --focus: #3A3A3A;
+    --success: #38A169;
+    --success-container: #14291E;
+    --warning: #D69E2E;
+    --warning-container: #2D2413;
+    --danger: #E53E3E;
+    --danger-hover: #F56565;
+    --danger-container: #2D1515;
+    --info: #4A7C9B;
+    --info-container: #122530;
+    --status-success: var(--success);
+    --status-warning: var(--warning);
+    --status-danger: var(--danger);
+    --status-info: var(--info);
+    --graph-node: #5A6270;
+    --graph-node-current: #CBD5E1;
+    --graph-node-selected: #CBD5E1;
+    --graph-node-hover: #8A97A8;
+    --graph-node-connected: #7E8B9B;
+    --graph-node-unrelated: #252830;
+    --graph-edge: #292929;
+    --graph-edge-highlight: #5A6270;
+    --graph-label: #E0E0E0;
+    --graph-grid-dot: rgba(255, 255, 255, 0.05);
+    --shadow-none: none;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.65);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.8);
+    --font-ui: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-editor: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+    --border-color: var(--border);
+    --bg-primary: var(--bg-app);
+    --bg-secondary: var(--bg-surface);
+    --bg-tertiary: var(--bg-surface-elevated);
+    --accent-color: var(--accent);
+    --scrollbar-thumb: #3A3A3A;
+    --scrollbar-thumb-hover: #4A4A4A;
+    --scrollbar-thumb-active: #5A5A5A;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;
@@ -1299,15 +1433,22 @@ input, textarea {
 }
 
 /* ==========================================================================
-   Editor & Document Scrollbar Styling (Minimal, native-feel document scrollbar)
+   Universal Subtle Scrollbar Styling (Minimal, native-feel document & UI scrollbars)
    ========================================================================== */
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*:hover {
+    scrollbar-color: var(--scrollbar-thumb-hover) transparent;
+}
 
 textarea.editor-textarea,
 .editor-textarea,
 .reading-view,
 .reading-toc {
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
     scrollbar-gutter: stable;
     overflow-x: hidden !important;
 }
@@ -1319,68 +1460,39 @@ textarea.editor-textarea,
     overflow-wrap: break-word;
 }
 
-textarea.editor-textarea:hover,
-.editor-textarea:hover,
-.reading-view:hover,
-.reading-toc:hover {
-    scrollbar-color: var(--scrollbar-thumb-hover) transparent;
-}
-
 /* WebKit / Chromium (Edge WebView2) Custom Scrollbar */
-textarea.editor-textarea::-webkit-scrollbar,
-.editor-textarea::-webkit-scrollbar,
-.reading-view::-webkit-scrollbar,
-.reading-toc::-webkit-scrollbar {
+*::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 
-textarea.editor-textarea::-webkit-scrollbar-track,
-.editor-textarea::-webkit-scrollbar-track,
-.reading-view::-webkit-scrollbar-track,
-.reading-toc::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
     background: transparent !important;
     border: none !important;
 }
 
-textarea.editor-textarea::-webkit-scrollbar-thumb,
-.editor-textarea::-webkit-scrollbar-thumb,
-.reading-view::-webkit-scrollbar-thumb,
-.reading-toc::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thumb);
     border-radius: 4px;
     transition: background-color 0.15s ease;
 }
 
-textarea.editor-textarea:hover::-webkit-scrollbar-thumb,
-.editor-textarea:hover::-webkit-scrollbar-thumb,
-.reading-view:hover::-webkit-scrollbar-thumb,
-.reading-toc:hover::-webkit-scrollbar-thumb,
-textarea.editor-textarea:focus::-webkit-scrollbar-thumb,
-.editor-textarea:focus::-webkit-scrollbar-thumb {
+*:hover::-webkit-scrollbar-thumb,
+*:focus::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thumb-hover);
 }
 
-textarea.editor-textarea::-webkit-scrollbar-thumb:hover,
-.editor-textarea::-webkit-scrollbar-thumb:hover,
-.reading-view::-webkit-scrollbar-thumb:hover,
-.reading-toc::-webkit-scrollbar-thumb:hover {
+*::-webkit-scrollbar-thumb:hover {
     background-color: var(--scrollbar-thumb-active);
 }
 
-textarea.editor-textarea::-webkit-scrollbar-button,
-.editor-textarea::-webkit-scrollbar-button,
-.reading-view::-webkit-scrollbar-button,
-.reading-toc::-webkit-scrollbar-button {
+*::-webkit-scrollbar-button {
     display: none !important;
     width: 0 !important;
     height: 0 !important;
 }
 
-textarea.editor-textarea::-webkit-scrollbar-corner,
-.editor-textarea::-webkit-scrollbar-corner,
-.reading-view::-webkit-scrollbar-corner,
-.reading-toc::-webkit-scrollbar-corner {
+*::-webkit-scrollbar-corner {
     background: transparent !important;
 }
 
@@ -1606,7 +1718,7 @@ textarea.editor-textarea::-webkit-scrollbar-corner,
 .reading-view a { color: var(--accent); text-decoration: none; }
 .reading-view a:hover { text-decoration: underline; color: var(--accent-hover); }
 .reading-view a.wikilink { color: var(--accent-secondary); font-weight: 500; border-bottom: 1px dashed var(--accent-secondary); padding-bottom: 1px; transition: color 0.12s ease, background-color 0.12s ease; }
-.reading-view a.wikilink:hover { color: var(--accent-secondary-hover); background-color: rgba(154, 75, 255, 0.15); border-radius: 2px; }
+.reading-view a.wikilink:hover { color: var(--accent-secondary-hover); background-color: var(--accent-focus); border-radius: 2px; }
 
 /* Callout blocks */
 .callout {
@@ -1719,10 +1831,10 @@ textarea.editor-textarea::-webkit-scrollbar-corner,
     pointer-events: none;
     font-size: 11px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    fill: var(--text-primary);
+    fill: var(--graph-label, var(--text-primary));
     paint-order: stroke fill;
     stroke: var(--bg-app);
-    stroke-width: 3px;
+    stroke-width: 2.5px;
     stroke-linejoin: round;
     transition: opacity 0.18s ease-out, fill 0.18s ease-out;
 }
@@ -1730,9 +1842,9 @@ textarea.editor-textarea::-webkit-scrollbar-corner,
 .graph-node-label.active {
     font-size: 12px;
     font-weight: 600;
-    fill: var(--text-primary);
+    fill: var(--graph-label, var(--text-primary));
     stroke: var(--bg-app);
-    stroke-width: 3.5px;
+    stroke-width: 3px;
 }
 
 .graph-halo-ring {
@@ -2772,9 +2884,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_all_six_themes_exist() {
+    fn test_all_seven_themes_exist() {
         let all_themes = Theme::all();
-        assert_eq!(all_themes.len(), 6);
+        assert_eq!(all_themes.len(), 7);
 
         let ids = [
             ThemeId::NoderaDark,
@@ -2783,6 +2895,7 @@ mod tests {
             ThemeId::Nord,
             ThemeId::Dracula,
             ThemeId::Solarized,
+            ThemeId::Graphite,
         ];
 
         for (theme, expected_id) in all_themes.iter().zip(ids.iter()) {
@@ -2871,6 +2984,7 @@ mod tests {
             (ThemeId::Nord, "\"nord\""),
             (ThemeId::Dracula, "\"dracula\""),
             (ThemeId::Solarized, "\"solarized\""),
+            (ThemeId::Graphite, "\"graphite\""),
         ];
 
         for (id, json_str) in cases {
@@ -2930,6 +3044,7 @@ mod tests {
         assert_eq!(ThemeId::Nord.toggle(), ThemeId::NoderaLight);
         assert_eq!(ThemeId::Dracula.toggle(), ThemeId::NoderaLight);
         assert_eq!(ThemeId::Solarized.toggle(), ThemeId::NoderaDark);
+        assert_eq!(ThemeId::Graphite.toggle(), ThemeId::NoderaLight);
     }
 
     #[test]
@@ -2940,6 +3055,7 @@ mod tests {
         assert_eq!(ThemeId::Nord.css_class(), "theme-nord");
         assert_eq!(ThemeId::Dracula.css_class(), "theme-dracula");
         assert_eq!(ThemeId::Solarized.css_class(), "theme-solarized");
+        assert_eq!(ThemeId::Graphite.css_class(), "theme-graphite");
     }
 
     #[test]

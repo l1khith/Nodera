@@ -147,7 +147,10 @@ impl GraphData {
         let total_nodes = self.nodes.len();
         let total_edges = self.edges.len();
 
-        if total_nodes <= budget.max_nodes && total_edges <= budget.max_edges && focus_node.is_none() {
+        if total_nodes <= budget.max_nodes
+            && total_edges <= budget.max_edges
+            && focus_node.is_none()
+        {
             let meta = GraphProjectionMeta {
                 total_nodes,
                 displayed_nodes: total_nodes,
@@ -161,12 +164,17 @@ impl GraphData {
         // 1. Build adjacency lookup table for fast traversal
         let mut adj: HashMap<&str, Vec<&str>> = HashMap::with_capacity(self.nodes.len());
         for edge in &self.edges {
-            adj.entry(edge.source.as_str()).or_default().push(edge.target.as_str());
-            adj.entry(edge.target.as_str()).or_default().push(edge.source.as_str());
+            adj.entry(edge.source.as_str())
+                .or_default()
+                .push(edge.target.as_str());
+            adj.entry(edge.target.as_str())
+                .or_default()
+                .push(edge.source.as_str());
         }
 
         // Map node_id -> &GraphNode
-        let node_map: HashMap<&str, &GraphNode> = self.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+        let node_map: HashMap<&str, &GraphNode> =
+            self.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
         let selected_ids: HashSet<String> = if let Some(root_id) = focus_node {
             if !node_map.contains_key(root_id) {
@@ -247,10 +255,22 @@ impl GraphData {
         // If candidate edges exceed budget, prioritize edges connecting higher-degree nodes
         if candidate_edges.len() > budget.max_edges {
             candidate_edges.sort_by(|a, b| {
-                let deg_a = node_map.get(a.source.as_str()).map(|n| n.degree).unwrap_or(0)
-                    + node_map.get(a.target.as_str()).map(|n| n.degree).unwrap_or(0);
-                let deg_b = node_map.get(b.source.as_str()).map(|n| n.degree).unwrap_or(0)
-                    + node_map.get(b.target.as_str()).map(|n| n.degree).unwrap_or(0);
+                let deg_a = node_map
+                    .get(a.source.as_str())
+                    .map(|n| n.degree)
+                    .unwrap_or(0)
+                    + node_map
+                        .get(a.target.as_str())
+                        .map(|n| n.degree)
+                        .unwrap_or(0);
+                let deg_b = node_map
+                    .get(b.source.as_str())
+                    .map(|n| n.degree)
+                    .unwrap_or(0)
+                    + node_map
+                        .get(b.target.as_str())
+                        .map(|n| n.degree)
+                        .unwrap_or(0);
                 deg_b.cmp(&deg_a)
             });
             candidate_edges.truncate(budget.max_edges);
@@ -259,7 +279,8 @@ impl GraphData {
         let mut projected_edges: Vec<GraphEdge> = candidate_edges.into_iter().cloned().collect();
         projected_edges.sort_by(|a, b| (&a.source, &a.target).cmp(&(&b.source, &b.target)));
 
-        let is_budget_capped = projected_nodes.len() < total_nodes || projected_edges.len() < total_edges;
+        let is_budget_capped =
+            projected_nodes.len() < total_nodes || projected_edges.len() < total_edges;
         let meta = GraphProjectionMeta {
             total_nodes,
             displayed_nodes: projected_nodes.len(),
@@ -783,7 +804,9 @@ impl LinkGraph {
                             continue;
                         }
                         if let Some(target_path) = resolver.resolve(trimmed) {
-                            if &target_path != note_path && included_paths.insert(target_path.clone()) {
+                            if &target_path != note_path
+                                && included_paths.insert(target_path.clone())
+                            {
                                 next_frontier.push(target_path);
                             }
                         }

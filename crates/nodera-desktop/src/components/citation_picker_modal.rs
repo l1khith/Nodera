@@ -37,7 +37,7 @@ pub fn CitationPickerModal(state: Signal<AppState>) -> Element {
                     div {
                         style: "display: flex; align-items: center; gap: 10px;",
                         div {
-                            style: "width: 32px; height: 32px; border-radius: 8px; background: rgba(91, 108, 255, 0.15); color: var(--accent); display: flex; align-items: center; justify-content: center;",
+                            style: "width: 32px; height: 32px; border-radius: 8px; background: var(--accent-focus); color: var(--accent); display: flex; align-items: center; justify-content: center;",
                             IconQuote { size: 18 }
                         }
                         div {
@@ -133,7 +133,7 @@ pub fn CitationPickerModal(state: Signal<AppState>) -> Element {
                                                 div {
                                                     style: "display: flex; align-items: center; gap: 6px; margin-bottom: 4px;",
                                                     span {
-                                                        style: "background: rgba(91, 108, 255, 0.12); color: var(--accent); font-family: monospace; font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px;",
+                                                        style: "background: var(--accent-focus); color: var(--accent); font-family: monospace; font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px;",
                                                         "@{citekey}"
                                                     }
                                                     span {

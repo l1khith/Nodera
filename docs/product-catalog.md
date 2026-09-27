@@ -206,9 +206,10 @@ Built with **Rust** and **Dioxus Desktop**, Nodera treats plain **CommonMark Mar
 | Storage & Sync | Atomic Tempfile Sync & Rollback | COMPLETE | M4 | GOOD | P0 | `nodera-core::service::save_note_atomic` |
 | Storage & Sync | File Watcher Self-Write Suppression | COMPLETE | M4 | GOOD | P0 | `nodera-desktop::watcher` |
 | Appearance & Theme | Centralized Theme Token Model | COMPLETE | M4 | GOOD | P0 | `nodera-desktop::theme::Theme`, `Color` |
-| Appearance & Theme | 6 Built-in Calibrated Themes | COMPLETE | M4 | GOOD | P0 | Nodera Dark, Light, Midnight, Nord, Dracula, Solarized |
+| Appearance & Theme | 7 Built-in Calibrated Themes | COMPLETE | M4 | GOOD | P0 | Nodera Dark, Graphite, Nodera Light, Midnight, Nord, Dracula, Solarized |
 | Appearance & Theme | Settings Appearance Theme Selector | COMPLETE | M4 | GOOD | P0 | `nodera-desktop::components::settings_modal` |
 | Appearance & Theme | Theme Persistence & Lossless Fallback | COMPLETE | M4 | GOOD | P0 | `nodera-desktop::state::AppPreferences::theme` |
+| Appearance & Theme | Graph Theme Integration & Universal Scrollbars | COMPLETE | M4 | GOOD | P0 | `nodera-desktop::theme::BASE_CSS`, `graph_view.rs` |
 
 ---
 
@@ -1058,30 +1059,31 @@ DOMAIN 18: APPEARANCE & THEME SYSTEM
 - **Capabilities**:
   - Strongly typed `Color` struct with WCAG 2.1 relative luminance and contrast ratio calculations.
   - Strongly typed `Theme` token struct with `const fn` constructors for instant zero-allocation resolution.
-  - Stable kebab-case theme identity (`nodera-dark`, `nodera-light`, `midnight`, `nord`, `dracula`, `solarized`).
+  - Stable kebab-case theme identity (`nodera-dark`, `graphite`, `nodera-light`, `midnight`, `nord`, `dracula`, `solarized`).
   - Lossy fallback deserializer ensuring unrecognized, malformed, or legacy theme strings safely default to `NoderaDark` without application panic.
 - **Dependencies**: `nodera-desktop::theme`
 - **Evidence**: `crates/nodera-desktop/src/theme.rs`, unit tests (`theme::tests`), `docs/design-system.md`
 
-### 18.2 Built-in Themes (6 Calibrated Palettes)
+### 18.2 Built-in Themes (7 Calibrated Palettes)
 - **Status**: `COMPLETE`
 - **Maturity**: M4 — Production Quality
 - **Quality**: `GOOD`
-- **Description**: Six built-in themes covering diverse ambient workspace environments:
+- **Description**: Seven built-in themes covering diverse ambient workspace environments:
   1. **Nodera Dark**: Reference design language with deep slate void canvas (`#0B0F14`), cobalt interactive focus (`#6680FF`), and relational violet (`#9A4BFF`).
-  2. **Nodera Light**: Clean, readable light workspace with high-contrast prose (`#171C23`), soft elevated cards (`#F8FAFC`), and crisp borders.
-  3. **Midnight**: Ultra-deep OLED-friendly dark workspace (`#020408`) with electric sapphire accent (`#38BDF8`) and high surface depth separation.
-  4. **Nord**: Cool, muted arctic developer palette (`#2E3440`) with frost cyan interactive accent (`#88C0D0`) and aurora purple (`#B48EAD`).
-  5. **Dracula**: High-contrast developer palette with rich dark canvas (`#21222C`/`#282A36`), vibrant purple accent (`#BD93F9`), and pink relational links (`#FF79C6`).
-  6. **Solarized**: Low-contrast warm reading palette (`#FDF6E3`) engineered for eye comfort during marathon research and writing sessions.
-- **Accessibility**: All themes pass automated WCAG 2.1 contrast ratio assertions ($\ge 4.5:1$ for body text on app and surface layers).
+  2. **Graphite**: Restrained near-black workspace with neutral dark layers (`#0D0D0D` canvas, `#111111` sidebar, `#151515` surface, `#191919`/`#1C1C1C` elevated), subtle hairline borders (`#292929`), crisp light typography (`#F2F2F2` primary, `#A1A1A1` secondary, `#737373` muted), restrained steel interactive accent (`#8E95A5`), and dark-adapted graph tokens.
+  3. **Nodera Light**: Clean, readable light workspace with high-contrast prose (`#171C23`), soft elevated cards (`#F8FAFC`), and crisp borders.
+  4. **Midnight**: Ultra-deep OLED-friendly dark workspace (`#020408`) with electric sapphire accent (`#38BDF8`) and high surface depth separation.
+  5. **Nord**: Cool, muted arctic developer palette (`#2E3440`) with frost cyan interactive accent (`#88C0D0`) and aurora purple (`#B48EAD`).
+  6. **Dracula**: High-contrast developer palette with rich dark canvas (`#21222C`/`#282A36`), vibrant purple accent (`#BD93F9`), and pink relational links (`#FF79C6`).
+  7. **Solarized**: Low-contrast warm reading palette (`#FDF6E3`) engineered for eye comfort during marathon research and writing sessions.
+- **Accessibility**: All themes pass automated WCAG 2.1 contrast ratio assertions ($\ge 4.5:1$ for body text on app and surface layers; Graphite achieves 14.9:1 body-to-canvas contrast).
 - **Evidence**: `crates/nodera-desktop/src/theme.rs`, `theme::tests::test_contrast_ratios`
 
 ### 18.3 Settings Appearance Theme UI & Token Preview Cards
 - **Status**: `COMPLETE`
 - **Maturity**: M4 — Production Quality
 - **Quality**: `GOOD`
-- **Description**: Interactive theme selection interface situated in `Settings -> Appearance -> Theme Palette`. Renders a responsive two-column grid displaying all 6 themes with selection state indicators, active badges, and live miniature preview cards constructed directly from each theme's own tokens (header, prose, hairline divider, action button, and wikilink badge). Clicking any card immediately applies the theme to the entire desktop window and persists the preference.
+- **Description**: Interactive theme selection interface situated in `Settings -> Appearance -> Theme Palette`. Renders a responsive two-column grid displaying all 7 themes with selection state indicators, active badges, and live miniature preview cards constructed directly from each theme's own tokens (header, prose, hairline divider, action button, and wikilink badge). Clicking any card immediately applies the theme to the entire desktop window, dynamically harmonizes graph presets, and persists the preference.
 - **Evidence**: `crates/nodera-desktop/src/components/settings_modal.rs`
 
 ### 18.4 Theme Persistence & Lossless Fallback
@@ -1090,6 +1092,15 @@ DOMAIN 18: APPEARANCE & THEME SYSTEM
 - **Quality**: `GOOD`
 - **Description**: Persists the user's active theme across application restarts in `preferences.json`. Supports quick toggling via dropdown button (`Ctrl` shortcut compatible) and gracefully restores user choice on launch.
 - **Evidence**: `crates/nodera-desktop/src/state.rs::AppPreferences`, `theme::tests::test_preferences_persistence_roundtrip`
+
+### 18.5 Graph Theme Integration & Universal Subtle Scrollbars
+- **Status**: `COMPLETE`
+- **Maturity**: M4 — Production Quality
+- **Quality**: `GOOD`
+- **Description**: Deep visual harmonization between application themes, SVG knowledge graphs, and desktop scrollbar chrome:
+  - **Dynamic Graph Color Harmony**: Switching to Graphite automatically aligns the graph rendering preset with custom steel/slate communities (`GRAPHITE_COMMUNITY_COLORS`), high-contrast light labels (`#E0E0E0`) with halo strokes to guarantee 100% legibility on near-black void canvases, and subtle edge lines (`#292929`).
+  - **Universal Subtle Scrollbars**: Replaces OS default white scrollbar chrome with universal webkit rules scoped to all scroll containers (`*::-webkit-scrollbar*`). Features an invisible track, subtle dark thumb (`#3A3A3A`), and responsive hover state (`#4A4A4A`), preventing jarring white scrollbars in sidebars, modals, and preview panes.
+- **Evidence**: `crates/nodera-desktop/src/theme.rs::BASE_CSS`, `crates/nodera-desktop/src/components/graph_view.rs`
 
 ---
 
