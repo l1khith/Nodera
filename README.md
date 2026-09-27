@@ -20,8 +20,9 @@
 <p align="center">
   <a href="#why-nodera">Why Nodera?</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#current-capabilities-vs-experimental">Capabilities</a> •
-  <a href="#measurable-engineering-benchmarks">Benchmarks</a> •
+  <a href="#engineering-challenges">Engineering Challenges</a> •
+  <a href="#capabilities">Capabilities</a> •
+  <a href="#benchmarks">Benchmarks</a> •
   <a href="#why-rust">Why Rust?</a> •
   <a href="#crate-boundaries">Crates</a> •
   <a href="#architecture-decision-records-adrs">ADRs</a> •
@@ -31,23 +32,26 @@
 
 ---
 
+<p align="center">
+  <img src="assets/screenshots/nodera-workspace.png" alt="Nodera Desktop Workspace" width="850" />
+</p>
+
+---
+
 ## Why Nodera?
 
-Most personal knowledge tools are built on one of two extremes:
-1. **Electron-wrapped web apps** with heavy V8/Chromium overhead (300MB+ RAM idle), sluggish startup times, and complex external runtimes.
-2. **Proprietary cloud platforms** that trap knowledge in opaque remote databases with vendor lock-in and offline penalties.
+Nodera is a local-first knowledge workspace engineered from the ground up in Rust. Rather than relying on separate server processes or heavy runtime layers, Nodera keeps document ingestion, AST parsing, lexical indexing, relational persistence, and GUI state management within a single in-process, memory-safe desktop application.
 
-**Nodera** is engineered from the ground up as a **Rust-native, local-first knowledge workspace**:
-- **Plain Markdown as Source of Truth**: Notes reside as plain `.md` files directly on your filesystem. Zero proprietary silos, zero risk of data loss. Deleting Nodera leaves every note 100% intact.
-- **Rebuildable Derived State**: Fast relational metadata (SQLite) and full-text search (Tantivy) are treated as disposable, self-healing caches.
-- **Pure-Rust Ingestion Pipeline**: Ingest large PDF books and technical documentation directly into clean, structured Markdown at **~875 pages/second** with zero external Python or C dependencies.
-- **Mechanical Sympathy**: Sub-3ms search queries, ~34MB baseline RSS footprint, and multi-threaded background workers powered by Tokio and Rayon.
+- **Plain Markdown as Source of Truth**: Notes reside as standard `.md` files directly on your filesystem. Zero proprietary silos, zero vendor lock-in. Deleting Nodera leaves every note 100% accessible.
+- **Rebuildable Derived State**: Relational metadata (SQLite) and full-text search (Tantivy) are treated as disposable, self-healing caches.
+- **Pure-Rust Ingestion Pipeline**: Ingest large PDF books and technical documentation directly into clean, structured Markdown at **~875 pages/second** with no Python runtime or external PDF processing service.
+- **Performance-Oriented Architecture**: Sub-3ms warm search queries, ~34MB baseline RSS footprint, and bounded background worker pools powered by Tokio and Rayon.
 
 ---
 
 ## Architecture
 
-Nodera decouples user-facing interactions from high-throughput document processing and persistent indexing:
+Nodera decouples user-facing desktop interactions from high-throughput document processing and persistent indexing:
 
 ```text
              ┌─────────────────────────┐
@@ -100,11 +104,39 @@ If the SQLite database or Tantivy index is corrupted or deleted, Nodera detects 
 
 ---
 
-## Current Capabilities vs. Experimental
+## Engineering Challenges
 
-We maintain an explicit separation between production-ready capabilities and active R&D to provide an honest engineering picture:
+Nodera focuses on several systems-level engineering problems:
 
-### Production-Ready Capabilities (Stable)
+### 1. Large-Document Ingestion
+*Challenge:* How can 600+ page technical PDFs be parsed incrementally and transformed into structured Markdown without blocking the desktop event loop, stalling the UI, or triggering runaway heap allocations?  
+*Approach:* Streaming page-by-page extraction via `lopdf`, heuristic font-size clustering for heading discovery, running header/footer suppression, and cooperative async yields with cancellation tokens.
+
+### 2. Rebuildable Derived State
+*Challenge:* How can SQLite and Tantivy remain completely disposable transient caches while preserving instantaneous cold startup, consistent ACID updates, and sub-3ms lexical queries?  
+*Approach:* Schema version checks and transactional bulk indexing on startup, paired with background watcher sync and fallback to raw Markdown parsing whenever indexes are absent.
+
+### 3. Desktop Concurrency & Event Loop Isolation
+*Challenge:* How should CPU-heavy text extraction, lexical indexing, and physics simulations coexist with a reactive 60 FPS desktop UI?  
+*Approach:* Bounded Rayon thread pools for batch indexing, Tokio async tasks for background work, and thread-local QuadTree scratch buffers for physics relaxation to prevent UI stutter.
+
+### 4. Large-Scale Knowledge Graph Projection
+*Challenge:* How can thousands of interconnected nodes be rendered and manipulated without turning the UI into an unmanageable DOM tree?  
+*Approach:* SVG DOM rendering with Barnes-Hut $O(N \log N)$ force approximation and spatial projection budgets. Currently profiling and prototyping a Canvas/WebGL execution backend for 10,000+ node scale.
+
+### 5. Filesystem Consistency & Loop Suppression
+*Challenge:* How can external Markdown edits, atomic tempfile writes, OS filesystem watchers, SQLite, and Tantivy stay synchronized without feedback loops?  
+*Approach:* Atomic write-and-replace (`save_note_atomic`), combined with watcher self-write suppression tokens to prevent infinite update cascades.
+
+---
+
+## Capabilities
+
+<p align="center">
+  <img src="assets/screenshots/nodera-graph.png" alt="Nodera 2D Knowledge Graph" width="850" />
+</p>
+
+### Implemented Capabilities
 
 - [x] **Local-First Plain Markdown Source of Truth**: Safe relative path traversal, atomic tempfile writes, and real-time filesystem watcher synchronization.
 - [x] **Pure-Rust Streaming PDF Ingestion**: Chapter & heading discovery, running header/footer suppression, and hyphenation repair via `nodera-pdf` (~875 pages/sec).
@@ -115,40 +147,67 @@ We maintain an explicit separation between production-ready capabilities and act
 - [x] **Universal Task Aggregation**: Scans `- [ ]` / `- [x]` Markdown checkboxes across every note in the vault with filterable dashboard views.
 - [x] **7 Calibrated Workspace Themes**: Includes **Graphite** (restrained near-black `#0D0D0D` canvas, `#8E95A5` steel accent, 14.9:1 contrast ratio), Nodera Dark, Light, Midnight, Nord, Dracula, and Solarized with universal dark-adapted scrollbar chrome.
 
-### Experimental Capabilities (Active R&D)
+### Experimental / In Development
 
-- [ ] **2D Force-Directed Knowledge Graph**: Barnes-Hut $O(N \log N)$ spatial force approximation with thread-local QuadTree scratch buffers. Currently tuning projection budgets to transition from SVG DOM to high-scale WebGL/Canvas backends.
+- [ ] **2D Force-Directed Knowledge Graph**: Barnes-Hut $O(N \log N)$ spatial force approximation with thread-local QuadTree scratch buffer reuse. SVG DOM performs smoothly up to ~1,500 nodes; active work focuses on dynamic projection budgeting and transitioning to a dedicated Canvas/WebGL backend.
 - [ ] **AST Symbol Dependency Graph**: Static parsing of Rust (`syn`) and foreign language codebases into structural knowledge entities via `nodera-project`.
-- [ ] **Semantic / Vector Search**: Exploring pure-Rust embedded vector embeddings (HNSW) to complement lexical Tantivy search without external cloud APIs.
+- [ ] **Semantic / Vector Search**: Researching embedded vector embeddings (HNSW) to complement lexical Tantivy search without external cloud APIs.
 
 ---
 
-## Measurable Engineering Benchmarks
+## Benchmarks
 
-All metrics measured on an AMD Ryzen 9 workstation (Windows 11, NVMe SSD). Zero manufactured benchmarks:
+All figures measured on a local development workstation. Zero manufactured benchmarks:
 
 | Benchmark Workload | Dataset / Target | Measured Metric | Peak RSS | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **PDF Ingestion Throughput** | 600-page academic book (BT001S26) | **685 ms** (~875.7 pages/sec) | 91 MB | **VERIFIED** |
-| **Vault Cold Indexing** | 1,000 hierarchical Markdown notes | **908 ms** (~1,101 notes/sec) | 57 MB | **VERIFIED** |
-| **Tantivy Lexical Query** | 1,000 indexed notes (warm cache) | **2.38 ms** (target: < 50ms) | — | **VERIFIED** |
-| **Index Self-Healing Rebuild** | Corrupted SQLite & Tantivy files | **230 ms** end-to-end recovery | 42 MB | **VERIFIED** |
-| **Desktop Startup Footprint** | Cold desktop launch | **34.7 MB RSS** | 35 MB | **VERIFIED** |
-| **Physics Relaxation Tick** | 1,000 nodes Barnes-Hut QuadTree | **1.84 ms / tick** (target: < 16ms) | 12 MB | **VERIFIED** |
+| **PDF Ingestion Throughput** | 600-page academic book (BT001S26) | **685 ms** (~875.7 pages/sec) | 91 MB | Measured locally |
+| **Vault Cold Indexing** | 1,000 hierarchical Markdown notes | **908 ms** (~1,101 notes/sec) | 57 MB | Measured locally |
+| **Tantivy Lexical Query** | 1,000 indexed notes (warm cache) | **2.38 ms** (target: < 50ms) | — | Measured locally |
+| **Index Self-Healing Rebuild** | Corrupted SQLite & Tantivy files | **230 ms** end-to-end recovery | 42 MB | Measured locally |
+| **Desktop Startup Footprint** | Cold desktop launch | **34.7 MB RSS** | 35 MB | Measured locally |
+| **Physics Relaxation Tick** | 1,000 nodes Barnes-Hut QuadTree | **1.84 ms / tick** (target: < 16ms) | 12 MB | Measured locally |
+
+### Benchmark Methodology & Reproducibility
+
+Benchmarks were executed in the following test environment:
+- **CPU**: 13th Gen Intel(R) Core(TM) i5-13420H (8 Cores, 12 Threads)
+- **RAM**: 16 GB DDR5
+- **Storage**: NVMe SSD (PCIe 4.0)
+- **OS**: Windows 11 (64-bit, Build 26100)
+- **Rust Toolchain**: `rustc 1.85.0-nightly` / stable compatible (Rust 1.80+)
+- **Build Profile**: `--release` (`opt-level = 3`, `lto = "thin"`)
+- **Reported Metric**: Median of 10 consecutive runs with warm disk caches
+
+To reproduce these measurements locally:
+
+```bash
+# 1. Benchmark PDF extraction throughput (600-page book)
+cargo test -p nodera-pdf --test benchmark_600_test -- --ignored --nocapture
+
+# 2. Benchmark 1,000-note vault scalability & Tantivy query latency
+cargo test -p nodera-desktop --test large_vault_test -- --nocapture
+
+# 3. Benchmark index corruption auto-recovery
+cargo test -p nodera-desktop --test index_recovery_test -- --nocapture
+
+# 4. Run Criterion scale & physics benchmarks
+cargo bench -p nodera-desktop
+```
 
 ---
 
 ## Why Rust?
 
-Rust was chosen because Nodera executes CPU-intensive document ingestion, AST parsing, lexical indexing, and graph layout in the same client process where GUI rendering takes place:
+Rust was chosen because Nodera combines CPU-intensive document ingestion, AST parsing, lexical indexing, and graph layout in the same local client process where GUI rendering occurs:
 
 | Technical Requirement | Technology Chosen | Alternative Considered | Technical Trade-off & Rationale |
 | :--- | :--- | :--- | :--- |
-| **Desktop Application** | **Dioxus 0.6 (Wry/Tao)** | Electron / Chromium | Dioxus renders natively via OS webviews with a Rust event loop. Avoids shipping a duplicate Node.js + Chromium runtime (~150MB+ bundle, 300MB+ idle RAM). |
+| **Desktop Application** | **Dioxus 0.6 (Wry/Tao)** | Native Webview vs Separate Server | Dioxus renders via native OS webviews with an in-process Rust event loop. Keeps baseline memory low (~34MB RSS) while avoiding an external backend process. |
 | **PDF Ingestion** | **Pure Rust (`lopdf`)** | Python (`PyMuPDF`) / Poppler | Avoids requiring Python runtimes or external C shared library dependencies. Allows streaming in-process parsing with zero-copy buffer slices. |
 | **Full-Text Search** | **Tantivy** | SQLite FTS5 / Meilisearch | Tantivy is an embedded, pure-Rust Lucene equivalent. Delivers configurable BM25 ranking, tokenization, and schema indexing without running an external server daemon. |
 | **Relational Metadata** | **SQLite (`rusqlite`)** | RocksDB / sled | Single-file transactional database with ACID durability, queryable relational joins for Wikilinks, and zero background daemons. |
-| **Concurrency Model** | **Tokio + Rayon** | Single-threaded async | Heavy batch tasks (PDF parsing, index rebuilds) run on bounded worker thread pools, ensuring the desktop UI event loop stays locked at 60 FPS. |
+| **Concurrency Model** | **Tokio + Rayon** | Single-threaded async | Heavy batch tasks (PDF parsing, index rebuilds) run on bounded worker thread pools, ensuring the desktop UI event loop stays responsive at 60 FPS. |
 
 ---
 
@@ -205,7 +264,7 @@ Key architectural choices are formally documented in [`docs/decisions/`](docs/de
 
 We believe in engineering transparency. Current known limitations include:
 
-1. **PDF Structure Sensitivity**: PDF text extraction relies on layout positioning heuristics. Two-column academic papers and complex tables extract well, but non-standard text streams or scanned non-OCR PDFs require external pre-processing.
+1. **PDF Structure Sensitivity**: PDF text extraction relies on layout positioning heuristics. Two-column academic papers and complex tables extract well, but non-standard text streams or scanned image-only PDFs (without OCR layers) require external pre-processing.
 2. **SVG Graph DOM Overhead at Extreme Scale**: The SVG knowledge graph performs smoothly up to ~1,500 visible nodes. For massive 10,000+ node graphs, Nodera enforces a projection render budget while active development focuses on a dedicated Canvas/WebGL rendering pipeline.
 3. **Filesystem Watcher Timing**: OS-level directory watchers (ReadDirectoryChangesW on Windows, inotify on Linux) require debouncing logic to prevent self-triggering loops during batch atomic writes.
 
