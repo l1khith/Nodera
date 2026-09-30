@@ -21,6 +21,9 @@ notify.workspace = true
 chrono.workspace = true
 serde_yaml.workspace = true
 rayon.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+thiserror.workspace = true
 
 
 

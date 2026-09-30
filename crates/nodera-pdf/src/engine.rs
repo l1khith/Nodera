@@ -40,6 +40,7 @@ impl NativePdfConverter {
 }
 
 /// Decodes PDF text string supporting UTF-16BE (with BOM) or UTF-8 / ISO-8859-1.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn decode_pdf_string(bytes: &[u8]) -> Option<String> {
     if bytes.is_empty() {
         return None;

@@ -1273,6 +1273,28 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     }
                     span { style: "color: var(--text-muted);", "•" }
                     span { style: "color: var(--text-secondary);", "{total_edges} connections" }
+                    span { style: "color: var(--text-muted);", "•" }
+                    {
+                        let (is_gpu, label) = if let Some(diag) = state.read().graphics_diagnostics.as_ref() {
+                            if diag.is_hardware_accelerated {
+                                (true, format!("⚡ GPU ({})", diag.backend))
+                            } else {
+                                (false, "⚙️ CPU Fallback".to_string())
+                            }
+                        } else {
+                            (false, "⚙️ Software".to_string())
+                        };
+                        rsx! {
+                            span {
+                                style: if is_gpu {
+                                    "background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;"
+                                } else {
+                                    "background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;"
+                                },
+                                "{label}"
+                            }
+                        }
+                    }
                     if state.read().graph_view_state.projection_meta.is_budget_capped {
                         span {
                             style: "background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;",
@@ -1280,6 +1302,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         }
                     }
                 }
+
 
                 // Hovered Node Intelligence Card
                 {

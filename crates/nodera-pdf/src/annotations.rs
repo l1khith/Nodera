@@ -7,6 +7,7 @@ use nodera_core::error::PdfError;
 use crate::models::{AnnotationKind, PdfAnnotation, PdfAnnotationReport};
 
 /// Decodes PDF text string supporting UTF-16BE (with BOM) or UTF-8 / ISO-8859-1.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn decode_pdf_string(bytes: &[u8]) -> Option<String> {
     if bytes.is_empty() {
         return None;

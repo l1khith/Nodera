@@ -96,3 +96,26 @@ Never execute:
 - shell commands from note content
 
 External process execution, if ever introduced, must be explicit and validated.
+
+## Graphics & Knowledge Graph Architecture
+
+Nodera decouples knowledge graph simulation and spatial representation from rasterization:
+
+```text
+Simulation Engine (Barnes-Hut, QuadTree)
+    ↓
+GraphScene Geometry (Packed Node & Edge Instances, Viewport)
+    ↓
+Spatial Frustum Culling (World-space AABB)
+    ↓
+GraphRenderer Interface
+    ├─ GpuGraphRenderer (wgpu v24, WGSL, Vulkan / DX12 / Metal)
+    └─ CpuGraphRenderer (Zero-crash fallback, 4-tier label LOD, Software SVG)
+```
+
+### Why a hybrid GPU/CPU renderer?
+- **Zero-Crash Portability**: Graphics drivers vary widely across Windows, Linux, and macOS. If a host system has missing or outdated GPU drivers, Nodera automatically falls back to CPU software rendering without panicking or dropping the session.
+- **Decoupled Scene Memory**: Node and edge instances are stored in packed, contiguous buffers (`GraphNodeInstance`, `GraphEdgeInstance`), bypassing DOM overhead.
+- **Non-blocking UI Thread**: Hardware enumeration and pipeline validation run off the main UI thread via Tokio worker pools.
+- **Detailed Reference**: See [docs/graphics.md](file:///c:/Users/ailik/funProjects/rustProjects/nodera/docs/graphics.md).
+

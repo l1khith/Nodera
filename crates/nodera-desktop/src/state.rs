@@ -429,6 +429,8 @@ pub struct AppPreferences {
     pub vault_recent_notes: HashMap<String, Vec<PathBuf>>,
     #[serde(default)]
     pub vault_bookmarks: HashMap<String, Vec<PathBuf>>,
+    #[serde(default)]
+    pub graphics_preference: crate::graphics::GraphicsRendererPreference,
 }
 
 impl Default for AppPreferences {
@@ -449,6 +451,7 @@ impl Default for AppPreferences {
             recent_notes: Vec::new(),
             vault_recent_notes: HashMap::new(),
             vault_bookmarks: HashMap::new(),
+            graphics_preference: crate::graphics::GraphicsRendererPreference::default(),
         }
     }
 }
@@ -828,6 +831,7 @@ pub struct AppState {
     pub context_panel_width: u32,
     pub is_resizing_sidebar: bool,
     pub is_resizing_context: bool,
+    pub graphics_diagnostics: Option<crate::graphics::GraphicsDiagnostics>,
 
     // Reading mode Table of Contents
     pub toc_headings: Vec<(usize, String)>,
@@ -1012,6 +1016,7 @@ impl Default for AppState {
             context_panel_width: context_w,
             is_resizing_sidebar: false,
             is_resizing_context: false,
+            graphics_diagnostics: None,
             toc_headings: Vec::new(),
 
             active_project: None,
@@ -1097,6 +1102,17 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Refreshes host graphics diagnostics by querying detected adapters.
+    pub fn refresh_graphics_diagnostics(&mut self) {
+        self.graphics_diagnostics = Some(crate::graphics::detect_graphics());
+    }
+
+    /// Sets graphics renderer preference and persists preferences to disk.
+    pub fn set_graphics_preference(&mut self, pref: crate::graphics::GraphicsRendererPreference) {
+        self.preferences.graphics_preference = pref;
+        self.preferences.save();
+    }
+
     /// Opens a vault directory and refreshes its file tree.
     pub fn open_vault(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let p = path.as_ref();

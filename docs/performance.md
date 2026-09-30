@@ -108,7 +108,34 @@ Platform: Windows x86_64
 | **10K Cold Vault Open** | 15.94 s | **3.18 s** | **5.01x faster** (80.1% latency drop) | Parallel link extraction + fast rebuild |
 | **10K Graph Data Generation** | ~550 ms ($O(N^2)$ scan) | **42.91 ms** | **>12x faster** ($O(N+E)$ linear scaling) | `TargetResolver` precomputed stem/path index |
 | **10K Vault Link Audit** | ~750 ms ($O(N^2)$ scan) | **59.77 ms** | **>12x faster** ($O(N+E)$ linear scaling) | `TargetResolver` precomputed stem/path index |
-| **Active Note Backlinks** | ~50 ms ($O(N^2)$ query) | **< 1.00 µs** | **>50,000x faster** ($O(1)$ instant time) | `LinkGraph` bidirectional `incoming` reverse index |
+| Active Note Backlinks | ~50 ms ($O(N^2)$ query) | **< 1.00 µs** | **>50,000x faster** ($O(1)$ instant time) | `LinkGraph` bidirectional `incoming` reverse index |
 | **Unsafe Code Count** | 0 blocks | **0 blocks** | **100% Safe Rust** | Complete algorithmic & MIMD optimization |
 | **SIMD Intrinsics Count** | 0 | **0 (Deferred)** | Compliant with Rule 12 | Exhausted algorithm + MIMD before SIMD |
+
+---
+
+## 5. Hardware-Accelerated Graphics & Spatial Culling Benchmarks
+
+Measured on: 2026-09-30  
+Build Profile: `bench` (release optimizations)  
+Platform: 13th Gen Intel Core i5-13420H (12 Threads), Windows 11 Build 26100  
+Benchmark Target: `cargo bench --bench graph_scale_benchmarks`
+
+### Spatial Frustum Culling & Viewport Pipeline
+Evaluates the sub-millisecond world-space AABB culling and GPU instance generation overhead across graph scale tiers:
+
+| Graph Scale (Nodes / Edges) | Full Graph Gen (LPA + Centrality) | Physics Step (Barnes-Hut) | Physics Frame Cap | Spatial Frustum Culling | Culling Throughput Capacity | Raw SVG Elements Culled |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **100 nodes** / 275 edges | 0.75 ms | 0.07 ms | **~15,170 FPS** | **0.95 µs / pass** | **~1,050,000 passes/sec** | 575 elements |
+| **500 nodes** / 1,475 edges | 3.84 ms | 0.63 ms | **~1,590 FPS** | **5.14 µs / pass** | **~194,500 passes/sec** | 2,975 elements |
+| **1,000 nodes** / 2,975 edges | 11.07 ms | 1.42 ms | **~703 FPS** | **10.57 µs / pass** | **~94,600 passes/sec** | 5,975 elements |
+| **2,000 nodes** / 5,975 edges | 14.72 ms | 2.90 ms | **~344 FPS** | **18.24 µs / pass** | **~54,800 passes/sec** | 11,975 elements |
+| **5,000 nodes** / 14,975 edges | 38.66 ms | 7.81 ms | **~128 FPS** | **45.17 µs / pass** | **~22,100 passes/sec** | 29,975 elements |
+| **10,000 nodes** / 29,975 edges | 79.62 ms | 15.38 ms | **~65 FPS** | **83.80 µs / pass** | **~11,900 passes/sec** | 59,975 elements |
+
+### Key Architectural Insights
+1. **Sub-100µs Culling at 10K Nodes**: At 10,000 nodes and ~30,000 edges, computing visible world-space bounds and instancing takes **83.80 µs** (less than 0.5% of a 16.6ms 60 FPS frame window).
+2. **GPU Memory Footprint**: Compact packed representation (`GraphNodeInstance` = 48 bytes, `GraphEdgeInstance` = 40 bytes) keeps the full GPU buffer for 10,000 nodes and 30,000 edges under **1.7 MB VRAM**.
+3. **Graceful Zero-Crash Fallback**: When discrete or integrated GPUs are unavailable, software rendering utilizes the exact same spatial culling and 4-tier label LOD to guarantee smooth navigation without UI thread panics.
+
 

@@ -32,6 +32,17 @@ pub fn App() -> Element {
     let mut show_more_dropdown = use_signal(|| false);
     let mut show_new_dropdown = use_signal(|| false);
 
+    use_effect(move || {
+        // Asynchronously probe system graphics adapters off UI thread on launch
+        spawn(async move {
+            let diag =
+                tokio::task::spawn_blocking(|| crate::graphics::cached_diagnostics().clone())
+                    .await
+                    .unwrap_or_default();
+            state.write().graphics_diagnostics = Some(diag);
+        });
+    });
+
     let app_state = state.read();
     let theme_class = app_state.theme.css_class();
     let sidebar_open = app_state.sidebar_open;
