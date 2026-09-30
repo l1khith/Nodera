@@ -55,13 +55,9 @@ pub fn extract_tasks(content: &str) -> Vec<ParsedTask> {
 /// Inspects a line and extracts task checked status and text if it is a task line.
 pub fn parse_task_line(line: &str) -> Option<(bool, String)> {
     let trimmed = line.trim_start();
-    let marker = if let Some(rest) = trimmed.strip_prefix("- ") {
-        rest
-    } else if let Some(rest) = trimmed.strip_prefix("* ") {
-        rest
-    } else {
-        return None;
-    };
+    let marker = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))?;
 
     if let Some(rest) = marker.strip_prefix("[ ] ") {
         Some((false, rest.trim().to_string()))

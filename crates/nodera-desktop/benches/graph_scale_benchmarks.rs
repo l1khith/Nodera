@@ -167,10 +167,70 @@ fn benchmark_tier(node_count: usize) {
     );
     if full_graph.nodes.len() > 500 {
         println!(
-            "   └─ WARNING: {} SVG DOM elements would exceed 60 FPS rendering budget!",
+            "   └─ Notice: {} raw SVG DOM elements benefit from spatial culling & GPU acceleration",
             full_graph.nodes.len() * 3 + full_graph.edges.len()
         );
     }
+
+    // 5. Spatial Frustum Culling & Graphics Pipeline Throughput
+    let instances: Vec<nodera_desktop::graphics::GraphNodeInstance> = sim_nodes
+        .iter()
+        .map(|n| nodera_desktop::graphics::GraphNodeInstance {
+            id: n.id.clone(),
+            x: n.x,
+            y: n.y,
+            radius: n.radius,
+            color_rgba: [0.5, 0.5, 0.5, 1.0],
+            label: n.label.clone(),
+            degree: n.degree,
+            centrality: n.centrality,
+            is_hovered: false,
+            is_selected: false,
+            is_dimmed: false,
+        })
+        .collect();
+
+    let edge_instances: Vec<nodera_desktop::graphics::GraphEdgeInstance> = sim_edges
+        .iter()
+        .map(|e| nodera_desktop::graphics::GraphEdgeInstance {
+            source_idx: e.source,
+            target_idx: e.target,
+            x1: sim_nodes[e.source].x,
+            y1: sim_nodes[e.source].y,
+            x2: sim_nodes[e.target].x,
+            y2: sim_nodes[e.target].y,
+            color_rgba: [0.3, 0.3, 0.3, 0.6],
+            width: 1.0,
+            is_dimmed: false,
+        })
+        .collect();
+
+    let vp = nodera_desktop::graphics::Viewport {
+        pan_x: 0.0,
+        pan_y: 0.0,
+        zoom: 1.0,
+        canvas_width: 1200.0,
+        canvas_height: 800.0,
+    };
+    let scene = nodera_desktop::graphics::GraphScene::new(instances, edge_instances, vp);
+
+    let cull_start = Instant::now();
+    let cull_iterations = 100;
+    let mut visible_nodes_count = 0;
+    for _ in 0..cull_iterations {
+        let (vis_n, _) = scene.spatial_cull(50.0);
+        visible_nodes_count = vis_n.len();
+    }
+    let cull_dur = cull_start.elapsed();
+    let avg_cull_us = (cull_dur.as_micros() as f64) / (cull_iterations as f64);
+
+    println!(
+        "   └─ Graphics Culling: {:.2} µs/pass ({} of {} visible, ~{:.0} FPS culling capacity)",
+        avg_cull_us,
+        visible_nodes_count,
+        node_count,
+        1_000_000.0 / avg_cull_us.max(0.001)
+    );
 }
 
 fn main() {

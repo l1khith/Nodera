@@ -265,7 +265,7 @@ impl TantivyIndex {
 
         // Take top 8 most frequent keywords
         let mut sorted_terms: Vec<(String, usize)> = term_freq.into_iter().collect();
-        sorted_terms.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted_terms.sort_by_key(|a| std::cmp::Reverse(a.1));
         sorted_terms.truncate(8);
 
         let query_terms: Vec<String> = sorted_terms.into_iter().map(|(t, _)| t).collect();

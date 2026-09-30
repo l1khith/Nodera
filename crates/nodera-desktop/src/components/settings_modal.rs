@@ -1,8 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::graphics::GraphicsRendererPreference;
 use crate::icons::{
-    IconClose, IconEdit, IconFile, IconFolder, IconKeyboard, IconPalette, IconRefresh, IconSearch,
-    IconSettings,
+    IconCheck, IconClose, IconEdit, IconFile, IconFolder, IconKeyboard, IconPalette, IconRefresh,
+    IconSearch, IconSettings, IconSliders,
 };
 use crate::state::AppState;
 use crate::strings::{actions, settings, tooltips};
@@ -12,6 +13,7 @@ use crate::theme::{Theme, ThemeId};
 pub enum SettingsTab {
     General,
     Appearance,
+    Graphics,
     Editor,
     PdfImport,
     Index,
@@ -93,6 +95,12 @@ pub fn SettingsModal(state: Signal<AppState>) -> Element {
                             onclick: move |_| active_tab.set(SettingsTab::Appearance),
                             IconPalette { size: 14 }
                             span { "{settings::TAB_APPEARANCE}" }
+                        }
+                        button {
+                            style: if *active_tab.read() == SettingsTab::Graphics { "display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; background-color: var(--bg-hover); font-weight: 600; text-align: left; color: var(--text-primary);" } else { "display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; text-align: left; color: var(--text-secondary);" },
+                            onclick: move |_| active_tab.set(SettingsTab::Graphics),
+                            IconSliders { size: 14 }
+                            span { "Graphics & GPU" }
                         }
                         button {
                             style: if *active_tab.read() == SettingsTab::Editor { "display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; background-color: var(--bg-hover); font-weight: 600; text-align: left; color: var(--text-primary);" } else { "display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; text-align: left; color: var(--text-secondary);" },
@@ -307,7 +315,153 @@ pub fn SettingsModal(state: Signal<AppState>) -> Element {
                                 }
                             },
 
+                            SettingsTab::Graphics => {
+                                let diag = app_state
+                                    .graphics_diagnostics
+                                    .clone()
+                                    .unwrap_or_else(|| crate::graphics::cached_diagnostics().clone());
+                                let current_pref = app_state.preferences.graphics_preference;
+                                let driver_display = if diag.driver.is_empty() {
+                                    "Native System Driver".to_string()
+                                } else {
+                                    diag.driver.clone()
+                                };
+
+                                rsx! {
+                                    div { style: "display: flex; flex-direction: column; gap: 20px;",
+                                        div {
+                                            h4 { style: "margin: 0 0 4px 0; font-size: 15px; color: var(--text-primary);", "Graphics & Hardware Acceleration" }
+                                            p { style: "margin: 0; font-size: 12px; color: var(--text-secondary);", "Configure graphics rendering backends, evaluate GPU adapters, and inspect hardware acceleration status." }
+                                        }
+
+                                        // Renderer Preference Selection
+                                        div { style: "display: flex; flex-direction: column; gap: 8px;",
+                                            label { style: "font-weight: 600; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;", "Renderer Selection" }
+                                            div { style: "display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;",
+                                                for (pref, title, desc) in [
+                                                    (GraphicsRendererPreference::Auto, "Auto (Recommended)", "Detects best GPU, automatic fallback to CPU"),
+                                                    (GraphicsRendererPreference::ForceGpu, "Force GPU", "Requires hardware-accelerated pipeline"),
+                                                    (GraphicsRendererPreference::ForceCpu, "Force CPU", "Safe zero-dependency software SVG rasterizer"),
+                                                ] {
+                                                    {
+                                                        let is_sel = current_pref == pref;
+                                                        rsx! {
+                                                            div {
+                                                                key: "{title}",
+                                                                style: format!(
+                                                                    "display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 6px; cursor: pointer; border: 1px solid {}; background-color: {}; transition: all 0.15s ease;",
+                                                                    if is_sel { "var(--accent)" } else { "var(--border)" },
+                                                                    if is_sel { "var(--bg-hover)" } else { "var(--bg-sidebar)" }
+                                                                ),
+                                                                onclick: move |_| {
+                                                                    state.write().set_graphics_preference(pref);
+                                                                },
+                                                                div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                                                    span { style: "font-weight: 600; font-size: 12px; color: var(--text-primary);", "{title}" }
+                                                                    if is_sel {
+                                                                        span { style: "color: var(--accent);", IconCheck { size: 14 } }
+                                                                    }
+                                                                }
+                                                                span { style: "font-size: 11px; color: var(--text-muted); line-height: 14px;", "{desc}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Active Adapter Status Card
+                                        div { style: "background-color: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 12px;",
+                                            div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                                div { style: "display: flex; align-items: center; gap: 8px;",
+                                                    IconSliders { size: 16 }
+                                                    span { style: "font-weight: 600; font-size: 13px; color: var(--text-primary);", "{diag.adapter_name}" }
+                                                }
+                                                if diag.is_hardware_accelerated {
+                                                    span {
+                                                        style: "display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background-color: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3);",
+                                                        "⚡ HARDWARE ACCELERATED"
+                                                    }
+                                                } else {
+                                                    span {
+                                                        style: "display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background-color: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3);",
+                                                        "⚙️ CPU SOFTWARE FALLBACK"
+                                                    }
+                                                }
+                                            }
+
+                                            div { style: "display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 12px;",
+                                                div { style: "display: flex; flex-direction: column; gap: 2px;",
+                                                    span { style: "color: var(--text-muted); font-size: 11px;", "Backend API" }
+                                                    span { style: "font-weight: 500; color: var(--text-primary);", "{diag.backend}" }
+                                                }
+                                                div { style: "display: flex; flex-direction: column; gap: 2px;",
+                                                    span { style: "color: var(--text-muted); font-size: 11px;", "Device Category" }
+                                                    span { style: "font-weight: 500; color: var(--text-primary);", "{diag.device_type}" }
+                                                }
+                                                div { style: "display: flex; flex-direction: column; gap: 2px;",
+                                                    span { style: "color: var(--text-muted); font-size: 11px;", "Driver Info" }
+                                                    span { style: "font-weight: 500; color: var(--text-primary);", "{driver_display}" }
+                                                }
+                                                div { style: "display: flex; flex-direction: column; gap: 2px;",
+                                                    span { style: "color: var(--text-muted); font-size: 11px;", "Max 2D Texture Size" }
+                                                    span { style: "font-weight: 500; color: var(--text-primary);", "{diag.max_texture_dimension_2d} × {diag.max_texture_dimension_2d} px" }
+                                                }
+                                            }
+
+                                            div { style: "font-size: 11px; color: var(--text-secondary); background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border-subtle);",
+                                                "{diag.status_message}"
+                                            }
+                                        }
+
+                                        // Discovered Adapters Enumeration
+                                        if !diag.detected_adapters.is_empty() {
+                                            div { style: "display: flex; flex-direction: column; gap: 8px;",
+                                                div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                                    label { style: "font-weight: 600; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;", "Discovered System Adapters" }
+                                                    button {
+                                                        class: "btn-action",
+                                                        style: "font-size: 11px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 4px;",
+                                                        onclick: move |_| {
+                                                            state.write().refresh_graphics_diagnostics();
+                                                        },
+                                                        IconRefresh { size: 12 }
+                                                        span { "Re-scan Hardware" }
+                                                    }
+                                                }
+                                                div { style: "border: 1px solid var(--border); border-radius: 6px; overflow: hidden;",
+                                                    table { style: "width: 100%; border-collapse: collapse; font-size: 12px;",
+                                                        tr { style: "background-color: var(--bg-sidebar); border-bottom: 1px solid var(--border); text-align: left;",
+                                                            th { style: "padding: 6px 10px;", "Adapter" }
+                                                            th { style: "padding: 6px 10px;", "Backend" }
+                                                            th { style: "padding: 6px 10px;", "Type" }
+                                                            th { style: "padding: 6px 10px; text-align: right;", "Score" }
+                                                        }
+                                                        for adapter in &diag.detected_adapters {
+                                                            tr {
+                                                                key: "{adapter.name}-{adapter.backend}",
+                                                                style: "border-bottom: 1px solid var(--border-subtle);",
+                                                                td { style: "padding: 6px 10px; display: flex; align-items: center; gap: 6px;",
+                                                                    if adapter.is_selected {
+                                                                        span { style: "color: var(--accent); font-weight: 700;", "★" }
+                                                                    }
+                                                                    span { "{adapter.name}" }
+                                                                }
+                                                                td { style: "padding: 6px 10px;", "{adapter.backend}" }
+                                                                td { style: "padding: 6px 10px; color: var(--text-secondary);", "{adapter.kind}" }
+                                                                td { style: "padding: 6px 10px; text-align: right; font-family: monospace; font-weight: 600;", "{adapter.score}" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+
                             SettingsTab::Editor => rsx! {
+
                                 div { style: "display: flex; flex-direction: column; gap: 18px;",
                                     h4 { style: "margin: 0; font-size: 15px; color: var(--text-primary);", "Editor & Typography" }
 

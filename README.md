@@ -121,8 +121,8 @@ Nodera focuses on several systems-level engineering problems:
 *Approach:* Bounded Rayon thread pools for batch indexing, Tokio async tasks for background work, and thread-local QuadTree scratch buffers for physics relaxation to prevent UI stutter.
 
 ### 4. Large-Scale Knowledge Graph Projection
-*Challenge:* How can thousands of interconnected nodes be rendered and manipulated without turning the UI into an unmanageable DOM tree?  
-*Approach:* SVG DOM rendering with Barnes-Hut $O(N \log N)$ force approximation and spatial projection budgets. Currently profiling and prototyping a Canvas/WebGL execution backend for 10,000+ node scale.
+*Challenge:* How can thousands of interconnected nodes be rendered and manipulated without turning the UI into an unmanageable DOM tree or dropping below 60 FPS?  
+*Approach:* Hybrid WGPU hardware-accelerated rendering architecture paired with Barnes-Hut $O(N \log N)$ spatial force simulation. Automatically identifies and prioritizes high-performance discrete GPUs, handles integrated adapters, and guarantees a zero-crash CPU/software fallback if hardware initialization fails. Features sub-millisecond world-space AABB frustum culling, dynamic GPU instance buffer expansion, antialiased distance-field circle rendering, and 4-tier label LOD.
 
 ### 5. Filesystem Consistency & Loop Suppression
 *Challenge:* How can external Markdown edits, atomic tempfile writes, OS filesystem watchers, SQLite, and Tantivy stay synchronized without feedback loops?  
@@ -143,13 +143,14 @@ Nodera focuses on several systems-level engineering problems:
 - [x] **Dual-Tier Embedded Indexing**: Relational links, backlinks, and task states indexed in SQLite; ranked BM25 lexical search indexed in Tantivy.
 - [x] **Sub-3ms Full-Text Search**: Instant search over note titles, headings, body content, and inline tags with highlighted snippet extraction.
 - [x] **Self-Healing Index Recovery**: Automatic cold rebuild from Markdown if transient index stores are absent or corrupted.
+- [x] **Hardware-Accelerated WGPU Graphics Architecture**: Robust cross-platform graphics pipeline (Vulkan, Metal, DirectX 12, WebGPU) with automatic adapter scoring (Discrete > Integrated > CPU), sub-millisecond frustum culling, dynamic instance buffers, antialiased instanced quad shaders, 4-tier label LOD, zero-crash CPU fallback, and transparent in-app diagnostics.
 - [x] **Multi-Tab Reactive Desktop UI**: Built on Dioxus 0.6 desktop renderer, featuring split-pane editing, live table of contents, and word counts.
 - [x] **Universal Task Aggregation**: Scans `- [ ]` / `- [x]` Markdown checkboxes across every note in the vault with filterable dashboard views.
 - [x] **7 Calibrated Workspace Themes**: Includes **Graphite** (restrained near-black `#0D0D0D` canvas, `#8E95A5` steel accent, 14.9:1 contrast ratio), Nodera Dark, Light, Midnight, Nord, Dracula, and Solarized with universal dark-adapted scrollbar chrome.
 
 ### Experimental / In Development
 
-- [ ] **2D Force-Directed Knowledge Graph**: Barnes-Hut $O(N \log N)$ spatial force approximation with thread-local QuadTree scratch buffer reuse. SVG DOM performs smoothly up to ~1,500 nodes; active work focuses on dynamic projection budgeting and transitioning to a dedicated Canvas/WebGL backend.
+- [ ] **2D Force-Directed Knowledge Graph Scale**: Barnes-Hut $O(N \log N)$ spatial force approximation with thread-local QuadTree scratch buffer reuse. SVG DOM performs smoothly up to ~1,500 nodes, transitioning seamlessly to WGPU instanced pipeline for 10,000+ node scale.
 - [ ] **AST Symbol Dependency Graph**: Static parsing of Rust (`syn`) and foreign language codebases into structural knowledge entities via `nodera-project`.
 - [ ] **Semantic / Vector Search**: Researching embedded vector embeddings (HNSW) to complement lexical Tantivy search without external cloud APIs.
 

@@ -1,6 +1,7 @@
 pub mod app;
 pub mod calendar;
 pub mod components;
+pub mod graphics;
 pub mod icons;
 pub mod logo_data;
 pub mod shortcuts;

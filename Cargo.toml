@@ -52,6 +52,9 @@ rayon = "1.10"
 aes-gcm = "0.10"
 sha2 = { version = "0.10", default-features = false }
 pbkdf2 = { version = "0.12", default-features = false, features = ["simple"] }
+wgpu = "24"
+bytemuck = { version = "1.21", features = ["derive"] }
+
 
 [profile.release]
 debug = true

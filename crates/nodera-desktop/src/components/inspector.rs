@@ -3,6 +3,7 @@ use nodera_project::{ProjectEdgeKind, ProjectNode, ProjectNodeKind};
 use std::path::Path;
 
 use crate::components::graph_view::LocalGraphView;
+use crate::graphics::GraphicsRendererPreference;
 use crate::icons::*;
 use crate::state::{
     ActiveView, AppState, GraphPalettePreset, ProjectContext, STANDARD_GRAPH_SWATCHES,
@@ -726,374 +727,465 @@ fn GraphInspector(mut state: Signal<AppState>) -> Element {
     let mut expanded_display = use_signal(|| settings.expanded_sections.display);
     let mut expanded_forces = use_signal(|| settings.expanded_sections.forces);
     let mut expanded_colors = use_signal(|| settings.expanded_sections.colors);
+    let mut expanded_graphics = use_signal(|| false);
 
     rsx! {
-        div {
-            style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background-color: var(--bg-surface); flex-shrink: 0;",
-            div { style: "display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                IconSliders { size: 13 }
-                span { "Graph Settings" }
-            }
-            div { style: "display: flex; align-items: center; gap: 4px;",
-                button {
-                    class: "btn-icon",
-                    title: graph_strings::RESTORE_DEFAULTS,
-                    onclick: move |_| {
-                        let mut s = state.write();
-                        s.preferences.graph_settings.reset_to_defaults();
-                        s.preferences.save();
-                    },
-                    IconRefresh { size: 13 }
-                }
-                button {
-                    class: "btn-icon",
-                    title: "Close Inspector",
-                    onclick: move |_| {
-                        state.write().context_panel_open = false;
-                    },
-                    IconClose { size: 13 }
-                }
-            }
-        }
-
-        div {
-            style: "flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0;",
-
-            // Section 1: Filters
-            div { style: "border-bottom: 1px solid var(--border-subtle);",
-                div {
-                    style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                    onclick: move |_| expanded_filters.toggle(),
-                    div { style: "display: flex; align-items: center; gap: 6px;",
-                        if *expanded_filters.read() {
-                            IconChevronDown { size: 12 }
-                        } else {
-                            IconChevronRight { size: 12 }
-                        }
-                        span { "{graph_strings::FILTERS}" }
-                    }
-                }
-                if *expanded_filters.read() {
-                    div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
-                        // Tags toggle
-                        div { class: "graph-toggle-row",
-                            span { "{graph_strings::TAGS}" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.filters.tags,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.filters.tags = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-
-                        // Attachments toggle
-                        div { class: "graph-toggle-row",
-                            span { "{graph_strings::ATTACHMENTS}" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.filters.attachments,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.filters.attachments = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-
-                        // Existing files only toggle
-                        div { class: "graph-toggle-row",
-                            span { "{graph_strings::EXISTING_FILES_ONLY}" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.filters.existing_files_only,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.filters.existing_files_only = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-
-                        // Orphans toggle
-                        div { class: "graph-toggle-row",
-                            span { "{graph_strings::ORPHANS}" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.filters.orphans,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.filters.orphans = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2: Groups
-            div { style: "border-bottom: 1px solid var(--border-subtle);",
-                div {
-                    style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                    onclick: move |_| expanded_groups.toggle(),
-                    div { style: "display: flex; align-items: center; gap: 6px;",
-                        if *expanded_groups.read() {
-                            IconChevronDown { size: 12 }
-                        } else {
-                            IconChevronRight { size: 12 }
-                        }
-                        span { "{graph_strings::GROUPS}" }
-                    }
-                }
-                if *expanded_groups.read() {
-                    div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
-                        div { class: "graph-toggle-row",
-                            span { "Color by Community" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.display.color_by_community,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.display.color_by_community = checked;
-                                        s.graph_color_by_community = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 3: Display
-            div { style: "border-bottom: 1px solid var(--border-subtle);",
-                div {
-                    style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                    onclick: move |_| expanded_display.toggle(),
-                    div { style: "display: flex; align-items: center; gap: 6px;",
-                        if *expanded_display.read() {
-                            IconChevronDown { size: 12 }
-                        } else {
-                            IconChevronRight { size: 12 }
-                        }
-                        span { "{graph_strings::DISPLAY}" }
-                    }
-                }
-                if *expanded_display.read() {
-                    div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
-                        // Arrows toggle
-                        div { class: "graph-toggle-row",
-                            span { "{graph_strings::ARROWS}" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.display.arrows,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.display.arrows = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-
-                        // Size by Centrality toggle
-                        div { class: "graph-toggle-row",
-                            span { "Size by Centrality" }
-                            label { class: "graph-switch",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: settings.display.centrality_sizing,
-                                    onchange: move |evt: FormEvent| {
-                                        let checked = evt.value() == "true";
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.display.centrality_sizing = checked;
-                                        s.graph_centrality_sizing = checked;
-                                        s.preferences.save();
-                                    }
-                                }
-                                span { class: "graph-switch-slider" }
-                            }
-                        }
-
-                        // Text fade slider
-                        div { class: "graph-slider-row",
-                            div { class: "graph-slider-header",
-                                span { "{graph_strings::TEXT_FADE}" }
-                                span { class: "graph-slider-val", "{settings.display.text_fade_threshold:.1}" }
-                            }
-                            input {
-                                class: "graph-slider",
-                                r#type: "range",
-                                min: "0.2",
-                                max: "2.0",
-                                step: "0.1",
-                                value: "{settings.display.text_fade_threshold}",
-                                oninput: move |evt: FormEvent| {
-                                    if let Ok(v) = evt.value().parse::<f32>() {
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.display.text_fade_threshold = v;
-                                        s.preferences.save();
-                                    }
-                                }
-                            }
-                        }
-
-                        // Node size slider
-                        div { class: "graph-slider-row",
-                            div { class: "graph-slider-header",
-                                span { "{graph_strings::NODE_SIZE}" }
-                                span { class: "graph-slider-val", "{settings.display.node_size:.1}x" }
-                            }
-                            input {
-                                class: "graph-slider",
-                                r#type: "range",
-                                min: "0.4",
-                                max: "2.5",
-                                step: "0.1",
-                                value: "{settings.display.node_size}",
-                                oninput: move |evt: FormEvent| {
-                                    if let Ok(v) = evt.value().parse::<f32>() {
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.display.node_size = v;
-                                        s.preferences.save();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 4: Forces
             div {
-                div {
-                    style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                    onclick: move |_| expanded_forces.toggle(),
-                    div { style: "display: flex; align-items: center; gap: 6px;",
-                        if *expanded_forces.read() {
-                            IconChevronDown { size: 12 }
-                        } else {
-                            IconChevronRight { size: 12 }
-                        }
-                        span { "{graph_strings::FORCES}" }
-                    }
+                style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background-color: var(--bg-surface); flex-shrink: 0;",
+                div { style: "display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                    IconSliders { size: 13 }
+                    span { "Graph Settings" }
                 }
-                if *expanded_forces.read() {
-                    div { style: "padding: 0 14px 16px 14px; display: flex; flex-direction: column; gap: 8px;",
-                        // Center force
-                        div { class: "graph-slider-row",
-                            div { class: "graph-slider-header",
-                                span { "{graph_strings::CENTER_FORCE}" }
-                                span { class: "graph-slider-val", "{settings.forces.center_force:.2}" }
-                            }
-                            input {
-                                class: "graph-slider",
-                                r#type: "range",
-                                min: "0.05",
-                                max: "2.0",
-                                step: "0.05",
-                                value: "{settings.forces.center_force}",
-                                oninput: move |evt: FormEvent| {
-                                    if let Ok(v) = evt.value().parse::<f32>() {
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.forces.center_force = v;
-                                        s.preferences.save();
-                                    }
-                                }
-                            }
-                        }
-
-                        // Repel force
-                        div { class: "graph-slider-row",
-                            div { class: "graph-slider-header",
-                                span { "{graph_strings::REPEL_FORCE}" }
-                                span { class: "graph-slider-val", "{settings.forces.repel_force:.1}" }
-                            }
-                            input {
-                                class: "graph-slider",
-                                r#type: "range",
-                                min: "10.0",
-                                max: "200.0",
-                                step: "5.0",
-                                value: "{settings.forces.repel_force}",
-                                oninput: move |evt: FormEvent| {
-                                    if let Ok(v) = evt.value().parse::<f32>() {
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.forces.repel_force = v;
-                                        s.preferences.save();
-                                    }
-                                }
-                            }
-                        }
-
-                        // Link distance
-                        div { class: "graph-slider-row",
-                            div { class: "graph-slider-header",
-                                span { "{graph_strings::LINK_DISTANCE}" }
-                                span { class: "graph-slider-val", "{settings.forces.link_distance:.0}px" }
-                            }
-                            input {
-                                class: "graph-slider",
-                                r#type: "range",
-                                min: "20.0",
-                                max: "300.0",
-                                step: "5.0",
-                                value: "{settings.forces.link_distance}",
-                                oninput: move |evt: FormEvent| {
-                                    if let Ok(v) = evt.value().parse::<f32>() {
-                                        let mut s = state.write();
-                                        s.preferences.graph_settings.forces.link_distance = v;
-                                        s.preferences.save();
-                                    }
-                                }
-                            }
-                        }
+                div { style: "display: flex; align-items: center; gap: 4px;",
+                    button {
+                        class: "btn-icon",
+                        title: graph_strings::RESTORE_DEFAULTS,
+                        onclick: move |_| {
+                            let mut s = state.write();
+                            s.preferences.graph_settings.reset_to_defaults();
+                            s.preferences.save();
+                        },
+                        IconRefresh { size: 13 }
+                    }
+                    button {
+                        class: "btn-icon",
+                        title: "Close Inspector",
+                        onclick: move |_| {
+                            state.write().context_panel_open = false;
+                        },
+                        IconClose { size: 13 }
                     }
                 }
             }
 
-            // Section 5: Colors & Palettes
-            div { style: "border-bottom: 1px solid var(--border-subtle);",
-                div {
-                    style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                    onclick: move |_| expanded_colors.toggle(),
-                    div { style: "display: flex; align-items: center; gap: 6px;",
-                        if *expanded_colors.read() {
-                            IconChevronDown { size: 12 }
-                        } else {
-                            IconChevronRight { size: 12 }
+            div {
+                style: "flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0;",
+
+                // Section 1: Filters
+                div { style: "border-bottom: 1px solid var(--border-subtle);",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                        onclick: move |_| expanded_filters.toggle(),
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            if *expanded_filters.read() {
+                                IconChevronDown { size: 12 }
+                            } else {
+                                IconChevronRight { size: 12 }
+                            }
+                            span { "{graph_strings::FILTERS}" }
                         }
-                        span { "Colors & Palettes" }
+                    }
+                    if *expanded_filters.read() {
+                        div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
+                            // Tags toggle
+                            div { class: "graph-toggle-row",
+                                span { "{graph_strings::TAGS}" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.filters.tags,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.filters.tags = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+
+                            // Attachments toggle
+                            div { class: "graph-toggle-row",
+                                span { "{graph_strings::ATTACHMENTS}" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.filters.attachments,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.filters.attachments = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+
+                            // Existing files only toggle
+                            div { class: "graph-toggle-row",
+                                span { "{graph_strings::EXISTING_FILES_ONLY}" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.filters.existing_files_only,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.filters.existing_files_only = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+
+                            // Orphans toggle
+                            div { class: "graph-toggle-row",
+                                span { "{graph_strings::ORPHANS}" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.filters.orphans,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.filters.orphans = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+                        }
                     }
                 }
-                if *expanded_colors.read() {
-                    div { style: "padding: 0 14px 16px 14px;",
-                        GraphColorControls { state }
+
+                // Section 2: Groups
+                div { style: "border-bottom: 1px solid var(--border-subtle);",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                        onclick: move |_| expanded_groups.toggle(),
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            if *expanded_groups.read() {
+                                IconChevronDown { size: 12 }
+                            } else {
+                                IconChevronRight { size: 12 }
+                            }
+                            span { "{graph_strings::GROUPS}" }
+                        }
+                    }
+                    if *expanded_groups.read() {
+                        div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
+                            div { class: "graph-toggle-row",
+                                span { "Color by Community" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.display.color_by_community,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.display.color_by_community = checked;
+                                            s.graph_color_by_community = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 3: Display
+                div { style: "border-bottom: 1px solid var(--border-subtle);",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                        onclick: move |_| expanded_display.toggle(),
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            if *expanded_display.read() {
+                                IconChevronDown { size: 12 }
+                            } else {
+                                IconChevronRight { size: 12 }
+                            }
+                            span { "{graph_strings::DISPLAY}" }
+                        }
+                    }
+                    if *expanded_display.read() {
+                        div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 8px;",
+                            // Arrows toggle
+                            div { class: "graph-toggle-row",
+                                span { "{graph_strings::ARROWS}" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.display.arrows,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.display.arrows = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+
+                            // Size by Centrality toggle
+                            div { class: "graph-toggle-row",
+                                span { "Size by Centrality" }
+                                label { class: "graph-switch",
+                                    input {
+                                        r#type: "checkbox",
+                                        checked: settings.display.centrality_sizing,
+                                        onchange: move |evt: FormEvent| {
+                                            let checked = evt.value() == "true";
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.display.centrality_sizing = checked;
+                                            s.graph_centrality_sizing = checked;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                    span { class: "graph-switch-slider" }
+                                }
+                            }
+
+                            // Text fade slider
+                            div { class: "graph-slider-row",
+                                div { class: "graph-slider-header",
+                                    span { "{graph_strings::TEXT_FADE}" }
+                                    span { class: "graph-slider-val", "{settings.display.text_fade_threshold:.1}" }
+                                }
+                                input {
+                                    class: "graph-slider",
+                                    r#type: "range",
+                                    min: "0.2",
+                                    max: "2.0",
+                                    step: "0.1",
+                                    value: "{settings.display.text_fade_threshold}",
+                                    oninput: move |evt: FormEvent| {
+                                        if let Ok(v) = evt.value().parse::<f32>() {
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.display.text_fade_threshold = v;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Node size slider
+                            div { class: "graph-slider-row",
+                                div { class: "graph-slider-header",
+                                    span { "{graph_strings::NODE_SIZE}" }
+                                    span { class: "graph-slider-val", "{settings.display.node_size:.1}x" }
+                                }
+                                input {
+                                    class: "graph-slider",
+                                    r#type: "range",
+                                    min: "0.4",
+                                    max: "2.5",
+                                    step: "0.1",
+                                    value: "{settings.display.node_size}",
+                                    oninput: move |evt: FormEvent| {
+                                        if let Ok(v) = evt.value().parse::<f32>() {
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.display.node_size = v;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 4: Forces
+                div {
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                        onclick: move |_| expanded_forces.toggle(),
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            if *expanded_forces.read() {
+                                IconChevronDown { size: 12 }
+                            } else {
+                                IconChevronRight { size: 12 }
+                            }
+                            span { "{graph_strings::FORCES}" }
+                        }
+                    }
+                    if *expanded_forces.read() {
+                        div { style: "padding: 0 14px 16px 14px; display: flex; flex-direction: column; gap: 8px;",
+                            // Center force
+                            div { class: "graph-slider-row",
+                                div { class: "graph-slider-header",
+                                    span { "{graph_strings::CENTER_FORCE}" }
+                                    span { class: "graph-slider-val", "{settings.forces.center_force:.2}" }
+                                }
+                                input {
+                                    class: "graph-slider",
+                                    r#type: "range",
+                                    min: "0.05",
+                                    max: "2.0",
+                                    step: "0.05",
+                                    value: "{settings.forces.center_force}",
+                                    oninput: move |evt: FormEvent| {
+                                        if let Ok(v) = evt.value().parse::<f32>() {
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.forces.center_force = v;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Repel force
+                            div { class: "graph-slider-row",
+                                div { class: "graph-slider-header",
+                                    span { "{graph_strings::REPEL_FORCE}" }
+                                    span { class: "graph-slider-val", "{settings.forces.repel_force:.1}" }
+                                }
+                                input {
+                                    class: "graph-slider",
+                                    r#type: "range",
+                                    min: "10.0",
+                                    max: "200.0",
+                                    step: "5.0",
+                                    value: "{settings.forces.repel_force}",
+                                    oninput: move |evt: FormEvent| {
+                                        if let Ok(v) = evt.value().parse::<f32>() {
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.forces.repel_force = v;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Link distance
+                            div { class: "graph-slider-row",
+                                div { class: "graph-slider-header",
+                                    span { "{graph_strings::LINK_DISTANCE}" }
+                                    span { class: "graph-slider-val", "{settings.forces.link_distance:.0}px" }
+                                }
+                                input {
+                                    class: "graph-slider",
+                                    r#type: "range",
+                                    min: "20.0",
+                                    max: "300.0",
+                                    step: "5.0",
+                                    value: "{settings.forces.link_distance}",
+                                    oninput: move |evt: FormEvent| {
+                                        if let Ok(v) = evt.value().parse::<f32>() {
+                                            let mut s = state.write();
+                                            s.preferences.graph_settings.forces.link_distance = v;
+                                            s.preferences.save();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 5: Colors & Palettes
+                div { style: "border-bottom: 1px solid var(--border-subtle);",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                        onclick: move |_| expanded_colors.toggle(),
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            if *expanded_colors.read() {
+                                IconChevronDown { size: 12 }
+                            } else {
+                                IconChevronRight { size: 12 }
+                            }
+                            span { "Colors & Palettes" }
+                        }
+                    }
+                    if *expanded_colors.read() {
+                        div { style: "padding: 0 14px 16px 14px;",
+                            GraphColorControls { state }
+                        }
+                    }
+                }
+
+                // Section 6: Graphics & GPU Hardware Acceleration
+                div { style: "border-bottom: 1px solid var(--border-subtle);",
+                    div {
+                        style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; user-select: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
+                        onclick: move |_| expanded_graphics.toggle(),
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            if *expanded_graphics.read() {
+                                IconChevronDown { size: 12 }
+                            } else {
+                                IconChevronRight { size: 12 }
+                            }
+                            span { "Graphics & GPU" }
+                        }
+                        {
+                            let is_hw = app_state.graphics_diagnostics.as_ref().map(|d| d.is_hardware_accelerated).unwrap_or(false);
+                            if is_hw {
+                                rsx! {
+                                    span { style: "font-size: 10px; font-weight: 700; color: #22c55e;", "GPU" }
+                                }
+                            } else {
+                                rsx! {
+                                    span { style: "font-size: 10px; font-weight: 600; color: var(--text-muted);", "CPU" }
+                                }
+                            }
+                        }
+                    }
+                    if *expanded_graphics.read() {
+                        {
+                            let diag = app_state.graphics_diagnostics.clone().unwrap_or_else(|| crate::graphics::cached_diagnostics().clone());
+                            let current_pref = app_state.preferences.graphics_preference;
+                            rsx! {
+                                div { style: "padding: 0 14px 16px 14px; display: flex; flex-direction: column; gap: 10px; font-size: 12px;",
+                                    div { style: "display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface); padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);",
+                                        div { style: "display: flex; flex-direction: column; gap: 2px;",
+                                            span { style: "font-weight: 600; font-size: 11px; color: var(--text-primary);", "{diag.adapter_name}" }
+                                            span { style: "font-size: 10px; color: var(--text-muted);", "{diag.backend} • {diag.device_type}" }
+                                        }
+                                        if diag.is_hardware_accelerated {
+                                            span { style: "font-size: 9px; font-weight: 700; background: rgba(34, 197, 94, 0.15); color: #22c55e; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(34, 197, 94, 0.3);", "ACTIVE" }
+                                        } else {
+                                            span { style: "font-size: 9px; font-weight: 600; background: rgba(234, 179, 8, 0.15); color: #eab308; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(234, 179, 8, 0.3);", "FALLBACK" }
+                                        }
+                                    }
+
+                                    div { style: "display: flex; flex-direction: column; gap: 4px;",
+                                        span { style: "font-size: 11px; color: var(--text-secondary);", "Preference:" }
+                                        div { style: "display: flex; gap: 4px;",
+                                            for (pref, label) in [
+                                                (GraphicsRendererPreference::Auto, "Auto"),
+                                                (GraphicsRendererPreference::ForceGpu, "GPU"),
+                                                (GraphicsRendererPreference::ForceCpu, "CPU"),
+                                            ] {
+                                                {
+                                                    let is_sel = current_pref == pref;
+                                                    rsx! {
+                                                        button {
+                                                            key: "{label}",
+                                                            style: format!(
+                                                                "flex: 1; padding: 4px 6px; font-size: 11px; font-weight: 600; border-radius: 4px; border: 1px solid {}; background: {}; color: {}; cursor: pointer; transition: all 0.15s ease;",
+                                                                if is_sel { "var(--accent)" } else { "var(--border)" },
+                                                                if is_sel { "var(--accent)" } else { "var(--bg-surface)" },
+                                                                if is_sel { "#ffffff" } else { "var(--text-secondary)" }
+                                                            ),
+                                                            onclick: move |_| {
+                                                                state.write().set_graphics_preference(pref);
+                                                            },
+                                                            "{label}"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                button {
+                                    class: "btn-action",
+                                    style: "width: 100%; font-size: 11px; padding: 5px 8px; justify-content: center; margin-top: 2px;",
+                                    onclick: move |_| {
+                                        let mut s = state.write();
+                                        s.show_settings_modal = true;
+                                    },
+                                    IconSliders { size: 12 }
+                                    span { "Open Full Diagnostics" }
+                                }
+                            }
+                        }
                     }
                 }
             }
