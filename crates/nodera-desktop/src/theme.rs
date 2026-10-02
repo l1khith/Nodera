@@ -294,60 +294,60 @@ impl Theme {
         Self {
             id: ThemeId::NoderaDark,
             name: "Nodera Dark",
-            description: "Reference dark workspace with cobalt & relational violet",
+            description: "Technical dark workspace with cyan & cobalt knowledge graph",
             is_dark: true,
-            bg_app: Color("#0B0F14"),
-            bg_sidebar: Color("#11161D"),
-            bg_sidebar_hover: Color("#202533"),
-            bg_sidebar_active: Color("#252A3A"),
-            bg_surface: Color("#141720"),
-            bg_surface_elevated: Color("#161D26"),
-            bg_hover: Color("#202533"),
-            bg_active: Color("#252A3A"),
-            border: Color("#28313C"),
-            border_strong: Color("#383F4F"),
-            border_subtle: Color("#1E232F"),
-            text_primary: Color("#DEE2ED"),
-            text_secondary: Color("#C5C5D6"),
-            text_muted: Color("#8E90A0"),
-            text_disabled: Color("#444654"),
-            accent: Color("#6680FF"),
-            accent_hover: Color("#7182FF"),
-            accent_pressed: Color("#4A55E8"),
-            accent_secondary: Color("#9A4BFF"),
-            accent_secondary_hover: Color("#AC68FF"),
-            accent_focus: Color("rgba(102, 128, 255, 0.25)"),
-            focus: Color("#6680FF"),
-            selection: Color("#252A3A"),
-            success: Color("#35B875"),
-            success_container: Color("#163527"),
-            warning: Color("#E3A93B"),
-            warning_container: Color("#392C16"),
-            danger: Color("#E45B63"),
-            danger_hover: Color("#F06A72"),
-            danger_container: Color("#391A1D"),
-            info: Color("#4FA3E3"),
-            info_container: Color("#172E40"),
-            graph_node: Color("#6680FF"),
-            graph_node_current: Color("#9A4BFF"),
-            graph_node_selected: Color("#9A4BFF"),
-            graph_node_hover: Color("#7182FF"),
-            graph_node_connected: Color("#7182FF"),
-            graph_node_unrelated: Color("#444A5B"),
-            graph_edge: Color("#444A5B"),
-            graph_edge_highlight: Color("#7182FF"),
-            graph_label: Color("#DEE2ED"),
-            graph_grid_dot: Color("rgba(255, 255, 255, 0.08)"),
-            editor_background: Color("#0B0F14"),
-            editor_text: Color("#DEE2ED"),
-            code_background: Color("#161D26"),
-            code_text: Color("#DEE2ED"),
-            scrollbar_thumb: Color("rgba(255, 255, 255, 0.09)"),
-            scrollbar_thumb_hover: Color("rgba(255, 255, 255, 0.22)"),
-            scrollbar_thumb_active: Color("rgba(255, 255, 255, 0.36)"),
-            shadow_sm: Color("0 1px 3px rgba(0, 0, 0, 0.2)"),
-            shadow_md: Color("0 4px 16px rgba(0, 0, 0, 0.28)"),
-            shadow_lg: Color("0 16px 40px rgba(0, 0, 0, 0.45)"),
+            bg_app: Color("#0B0C0E"),
+            bg_sidebar: Color("#101216"),
+            bg_sidebar_hover: Color("#15171C"),
+            bg_sidebar_active: Color("#1E222A"),
+            bg_surface: Color("#101216"),
+            bg_surface_elevated: Color("#15171C"),
+            bg_hover: Color("#15171C"),
+            bg_active: Color("#1E222A"),
+            border: Color("#22252B"),
+            border_strong: Color("#2E333C"),
+            border_subtle: Color("#181A20"),
+            text_primary: Color("#E7E9ED"),
+            text_secondary: Color("#9499A3"),
+            text_muted: Color("#626873"),
+            text_disabled: Color("#404550"),
+            accent: Color("#7C9CFF"),
+            accent_hover: Color("#92ACFF"),
+            accent_pressed: Color("#6687EB"),
+            accent_secondary: Color("#38BDF8"),
+            accent_secondary_hover: Color("#7DD3FC"),
+            accent_focus: Color("rgba(124, 156, 255, 0.20)"),
+            focus: Color("#7C9CFF"),
+            selection: Color("rgba(124, 156, 255, 0.22)"),
+            success: Color("#34D399"),
+            success_container: Color("#132E22"),
+            warning: Color("#FBBF24"),
+            warning_container: Color("#362B14"),
+            danger: Color("#F87171"),
+            danger_hover: Color("#EF4444"),
+            danger_container: Color("#361717"),
+            info: Color("#38BDF8"),
+            info_container: Color("#132B3B"),
+            graph_node: Color("#38BDF8"),
+            graph_node_current: Color("#7C9CFF"),
+            graph_node_selected: Color("#7C9CFF"),
+            graph_node_hover: Color("#BAE6FD"),
+            graph_node_connected: Color("#0284C7"),
+            graph_node_unrelated: Color("#22252B"),
+            graph_edge: Color("rgba(124, 156, 255, 0.12)"),
+            graph_edge_highlight: Color("rgba(56, 189, 248, 0.80)"),
+            graph_label: Color("#E7E9ED"),
+            graph_grid_dot: Color("rgba(231, 233, 237, 0.05)"),
+            editor_background: Color("#0B0C0E"),
+            editor_text: Color("#E7E9ED"),
+            code_background: Color("#15171C"),
+            code_text: Color("#E7E9ED"),
+            scrollbar_thumb: Color("rgba(231, 233, 237, 0.10)"),
+            scrollbar_thumb_hover: Color("rgba(231, 233, 237, 0.22)"),
+            scrollbar_thumb_active: Color("rgba(231, 233, 237, 0.36)"),
+            shadow_sm: Color("0 1px 3px rgba(0, 0, 0, 0.3)"),
+            shadow_md: Color("0 4px 16px rgba(0, 0, 0, 0.4)"),
+            shadow_lg: Color("0 16px 40px rgba(0, 0, 0, 0.6)"),
         }
     }
 
@@ -767,67 +767,103 @@ pub const BASE_CSS: &str = r#"
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root, .theme-dark, .theme-nodera-dark {
-    --bg-app: #0B0F14;
-    --bg-sidebar: #11161D;
-    --bg-sidebar-hover: #202533;
-    --bg-sidebar-active: #252A3A;
-    --bg-surface: #141720;
-    --bg-surface-elevated: #161D26;
-    --bg-hover: #202533;
-    --bg-active: #252A3A;
-    --border: #28313C;
-    --border-strong: #383F4F;
-    --border-subtle: #1E232F;
-    --text-primary: #DEE2ED;
-    --text-secondary: #C5C5D6;
-    --text-muted: #8E90A0;
-    --text-disabled: #444654;
-    --accent: #6680FF;
-    --accent-hover: #7182FF;
-    --accent-pressed: #4A55E8;
-    --accent-secondary: #9A4BFF;
-    --accent-secondary-hover: #AC68FF;
-    --accent-focus: rgba(102, 128, 255, 0.25);
-    --selection: #252A3A;
-    --focus: #6680FF;
-    --success: #35B875;
-    --success-container: #163527;
-    --warning: #E3A93B;
-    --warning-container: #392C16;
-    --danger: #E45B63;
-    --danger-hover: #F06A72;
-    --danger-container: #391A1D;
-    --info: #4FA3E3;
-    --info-container: #172E40;
+    --bg-app: #0B0C0E;
+    --bg-sidebar: #101216;
+    --bg-sidebar-hover: #15171C;
+    --bg-sidebar-active: #1E222A;
+    --bg-surface: #101216;
+    --bg-surface-elevated: #15171C;
+    --bg-hover: #15171C;
+    --bg-active: #1E222A;
+    --border: #22252B;
+    --border-strong: #2E333C;
+    --border-subtle: #181A20;
+    --text-primary: #E7E9ED;
+    --text-secondary: #9499A3;
+    --text-muted: #626873;
+    --text-disabled: #404550;
+    --accent: #7C9CFF;
+    --accent-hover: #92ACFF;
+    --accent-pressed: #6687EB;
+    --accent-secondary: #38BDF8;
+    --accent-secondary-hover: #7DD3FC;
+    --accent-focus: rgba(124, 156, 255, 0.20);
+    --selection: rgba(124, 156, 255, 0.22);
+    --focus: #7C9CFF;
+    --success: #34D399;
+    --success-container: #132E22;
+    --warning: #FBBF24;
+    --warning-container: #362B14;
+    --danger: #F87171;
+    --danger-hover: #EF4444;
+    --danger-container: #361717;
+    --info: #38BDF8;
+    --info-container: #132B3B;
     --status-success: var(--success);
     --status-warning: var(--warning);
     --status-danger: var(--danger);
     --status-info: var(--info);
-    --graph-node: #6680FF;
-    --graph-node-current: #9A4BFF;
-    --graph-node-selected: #9A4BFF;
-    --graph-node-hover: #7182FF;
-    --graph-node-connected: #7182FF;
-    --graph-node-unrelated: #444A5B;
-    --graph-edge: #444A5B;
-    --graph-edge-highlight: #7182FF;
-    --graph-label: #DEE2ED;
-    --graph-grid-dot: rgba(255, 255, 255, 0.08);
+    
+    /* Semantic Knowledge Graph */
+    --graph-node: #38BDF8;
+    --graph-node-concept: #818CF8;
+    --graph-node-topic: #34D399;
+    --graph-node-ref: #94A3B8;
+    --graph-node-current: #7C9CFF;
+    --graph-node-selected: #7C9CFF;
+    --graph-node-hover: #BAE6FD;
+    --graph-node-connected: #0284C7;
+    --graph-node-unrelated: #22252B;
+    --graph-edge: rgba(124, 156, 255, 0.12);
+    --graph-edge-highlight: rgba(56, 189, 248, 0.80);
+    --graph-label: #E7E9ED;
+    --graph-grid-dot: rgba(231, 233, 237, 0.05);
+
+    /* Spacing Scale */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+
+    /* Radius Scale */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+
+    /* Typography Hierarchy */
+    --font-size-display: 22px;
+    --line-height-display: 28px;
+    --font-size-heading: 16px;
+    --line-height-heading: 22px;
+    --font-size-section: 11px;
+    --line-height-section: 16px;
+    --font-size-body: 13px;
+    --line-height-body: 20px;
+    --font-size-metadata: 12px;
+    --line-height-metadata: 16px;
+    --font-size-caption: 11px;
+    --line-height-caption: 14px;
+    --font-size-code: 12px;
+    --line-height-code: 18px;
+
     --shadow-none: none;
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.28);
-    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.45);
-    --font-ui: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    --font-editor: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --font-ui: Geist, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-editor: Geist, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
     --border-color: var(--border);
     --bg-primary: var(--bg-app);
     --bg-secondary: var(--bg-surface);
     --bg-tertiary: var(--bg-surface-elevated);
     --accent-color: var(--accent);
-    --scrollbar-thumb: rgba(255, 255, 255, 0.09);
-    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
-    --scrollbar-thumb-active: rgba(255, 255, 255, 0.36);
+    --scrollbar-thumb: rgba(231, 233, 237, 0.10);
+    --scrollbar-thumb-hover: rgba(231, 233, 237, 0.22);
+    --scrollbar-thumb-active: rgba(231, 233, 237, 0.36);
 }
 
 .theme-light, .theme-nodera-light {
@@ -2876,6 +2912,441 @@ input:checked + .graph-switch-slider:before {
 .calendar-day-cell:focus-visible {
     outline: 2px solid var(--focus) !important;
     outline-offset: 1px;
+}
+
+/* ==========================================================================
+   Nodera Knowledge Surface Redesign: Technical Desktop Aesthetic
+   ========================================================================== */
+
+/* App Shell */
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    overflow: hidden;
+    user-select: none;
+}
+
+/* Minimalist Technical Top Bar */
+.top-bar-technical {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 38px;
+    background-color: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border);
+    padding: 0 var(--space-3);
+    gap: var(--space-3);
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.top-bar-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
+.top-bar-workspace-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--font-size-caption);
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    padding: 2px var(--space-2);
+    background-color: var(--bg-surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+/* Unified Navigation Sidebar */
+.nav-sidebar {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background-color: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.nav-section-title {
+    font-size: var(--font-size-section);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    padding: var(--space-3) var(--space-3) var(--space-1) var(--space-3);
+}
+
+.nav-item-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 6px var(--space-3);
+    margin: 1px var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-body);
+    font-weight: 400;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-align: left;
+    width: calc(100% - 16px);
+    transition: background-color 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+
+.nav-item-btn:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.nav-item-btn.active {
+    background-color: var(--bg-active);
+    color: var(--text-primary);
+    font-weight: 500;
+    border-color: var(--border-strong);
+    border-left: 2px solid var(--accent);
+}
+
+.nav-badge-pill {
+    margin-left: auto;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-surface-elevated);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+}
+
+/* Knowledge Surface Center Zone */
+.knowledge-surface {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--bg-app);
+    overflow: hidden;
+    position: relative;
+}
+
+/* Document Workspace sitting directly on surface */
+.doc-surface-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    background-color: var(--bg-app);
+    padding: var(--space-6) var(--space-8);
+}
+
+.doc-breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-metadata);
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    margin-bottom: var(--space-3);
+}
+
+.doc-breadcrumbs span.sep {
+    color: var(--border-strong);
+}
+
+.doc-surface-title {
+    font-size: var(--font-size-display);
+    line-height: var(--line-height-display);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
+    letter-spacing: -0.02em;
+}
+
+.doc-meta-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) 0 var(--space-4) 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-6);
+    font-size: var(--font-size-metadata);
+    color: var(--text-secondary);
+}
+
+.doc-meta-stats {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
+.doc-knowledge-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 4px var(--space-3);
+    background-color: var(--bg-surface-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+
+.doc-knowledge-btn:hover {
+    background-color: var(--accent-focus);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+/* Split Knowledge Workspace */
+.split-knowledge-container {
+    flex: 1;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.split-knowledge-doc {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 320px;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+}
+
+.split-knowledge-graph {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 320px;
+    overflow: hidden;
+    background-color: var(--bg-surface);
+    position: relative;
+}
+
+/* Graph Technical HUD */
+.graph-hud-bar {
+    position: absolute;
+    top: var(--space-3);
+    left: var(--space-3);
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    background-color: rgba(16, 18, 22, 0.92);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    z-index: 20;
+    box-shadow: var(--shadow-sm);
+}
+
+.graph-hud-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+.graph-hud-btn:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.graph-hud-btn.active {
+    background-color: var(--accent-focus);
+    color: var(--accent);
+}
+
+.graph-lod-chip {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    padding: 2px 6px;
+    border-left: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* High-Density Telemetry Status Bar */
+.telemetry-statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 24px;
+    background-color: var(--bg-sidebar);
+    border-top: 1px solid var(--border);
+    padding: 0 var(--space-3);
+    font-size: var(--font-size-caption);
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.telemetry-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.telemetry-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.telemetry-dot.online {
+    background-color: var(--accent);
+}
+
+.telemetry-dot.ready {
+    background-color: var(--success);
+}
+
+.telemetry-dot.busy {
+    background-color: var(--warning);
+}
+
+/* Technical Context Panel & Intelligence Surfaces */
+.context-panel-tabs {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    background-color: var(--bg-surface);
+    padding: 0 var(--space-2);
+    gap: 2px;
+    height: 32px;
+    flex-shrink: 0;
+}
+
+.context-tab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0 var(--space-3);
+    cursor: pointer;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.12s ease;
+}
+
+.context-tab-btn:hover {
+    color: var(--text-primary);
+}
+
+.context-tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.node-intel-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    font-family: var(--font-mono);
+}
+
+.node-intel-metric-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-2) var(--space-3);
+    background-color: var(--bg-surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    flex: 1;
+}
+
+.node-intel-metric-val {
+    font-size: 15px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.node-intel-metric-lbl {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.intel-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+.intel-list-item:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border);
+}
+
+.intel-badge-count {
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    background: var(--bg-surface-elevated);
+    padding: 1px 6px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+
+.intel-section-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
 }
 "#;
 

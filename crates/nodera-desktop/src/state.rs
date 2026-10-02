@@ -551,6 +551,7 @@ use std::sync::{Arc, Mutex};
 pub enum ActiveView {
     #[default]
     Editor,
+    SplitKnowledge,
     Today,
     Tasks,
     ReviewQueue,
@@ -558,11 +559,31 @@ pub enum ActiveView {
     Graph,
 }
 
+/// Semantic category for an item in the Command Palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaletteCategory {
+    #[default]
+    Document,
+    Concept,
+    Command,
+}
+
+impl PaletteCategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Document => "Documents",
+            Self::Concept => "Concepts",
+            Self::Command => "Commands",
+        }
+    }
+}
+
 /// Action item displayed inside the Command Palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandPaletteItem {
     pub title: String,
     pub description: String,
+    pub category: PaletteCategory,
     pub action: PaletteAction,
 }
 
@@ -570,6 +591,7 @@ pub struct CommandPaletteItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteAction {
     OpenNote(PathBuf),
+    FocusGraphNode(String),
     OpenDailyNote,
     CreateNote,
     CreateTypedNote {
@@ -3037,7 +3059,7 @@ impl AppState {
         let q = self.command_palette_query.trim().to_lowercase();
         let mut items = Vec::new();
 
-        // 1. Note jumping items
+        // 1. Note jumping items (Documents)
         for entry in &self.entries {
             if let VaultEntry::Note(summary) = entry {
                 if q.is_empty()
@@ -3051,7 +3073,36 @@ impl AppState {
                     items.push(CommandPaletteItem {
                         title: summary.title.clone(),
                         description: format!("Note · {}", summary.relative_path.display()),
+                        category: PaletteCategory::Document,
                         action: PaletteAction::OpenNote(summary.relative_path.clone()),
+                    });
+                }
+            }
+        }
+
+        // 2. Knowledge Concepts & Topics
+        let graph_data = self.get_full_graph_data();
+        let mut seen_concepts = std::collections::HashSet::new();
+        for node in &graph_data.nodes {
+            let is_concept = node.id.starts_with("concept:")
+                || node.id.starts_with("sym:")
+                || node.is_tag
+                || node.id.starts_with('#');
+            if is_concept {
+                let clean_label = node.label.trim_start_matches('#');
+                if clean_label.is_empty() {
+                    continue;
+                }
+                if seen_concepts.insert(clean_label.to_lowercase())
+                    && (q.is_empty()
+                        || clean_label.to_lowercase().contains(&q)
+                        || node.id.to_lowercase().contains(&q))
+                {
+                    items.push(CommandPaletteItem {
+                        title: clean_label.to_string(),
+                        description: format!("Concept · {} connections", node.degree),
+                        category: PaletteCategory::Concept,
+                        action: PaletteAction::FocusGraphNode(node.id.clone()),
                     });
                 }
             }
@@ -3063,6 +3114,11 @@ impl AppState {
                 palette::SWITCH_TO_EDITOR.0,
                 palette::SWITCH_TO_EDITOR.1,
                 PaletteAction::SwitchView(ActiveView::Editor),
+            ),
+            (
+                "Split Knowledge View",
+                "Document + Knowledge Graph side-by-side",
+                PaletteAction::SwitchView(ActiveView::SplitKnowledge),
             ),
             (
                 palette::SWITCH_TO_TODAY.0,
@@ -3212,6 +3268,7 @@ impl AppState {
                 items.push(CommandPaletteItem {
                     title: title.to_string(),
                     description: desc.to_string(),
+                    category: PaletteCategory::Command,
                     action,
                 });
             }
@@ -3225,6 +3282,7 @@ impl AppState {
                 items.push(CommandPaletteItem {
                     title: cmd.name,
                     description: cmd.description,
+                    category: PaletteCategory::Command,
                     action: PaletteAction::ExecutePluginCommand(cmd.command_id),
                 });
             }
@@ -3242,6 +3300,10 @@ impl AppState {
             PaletteAction::OpenNote(path) => {
                 self.active_view = ActiveView::Editor;
                 self.select_note(&path)?;
+            }
+            PaletteAction::FocusGraphNode(node_id) => {
+                self.active_view = ActiveView::Graph;
+                self.focus_graph_node(&node_id);
             }
             PaletteAction::OpenDailyNote => {
                 self.open_or_create_daily_note()?;
@@ -3481,6 +3543,15 @@ impl AppState {
             Ok(())
         } else {
             self.select_note(path)
+        }
+    }
+
+    /// Selects and focuses camera on a specific graph node.
+    pub fn focus_graph_node(&mut self, node_id: &str) {
+        self.graph_view_state.selected_node_id = Some(node_id.to_string());
+        if let Some(&(x, y)) = self.graph_view_state.positions.get(node_id) {
+            self.graph_view_state.pan_x = -x * self.graph_view_state.zoom;
+            self.graph_view_state.pan_y = -y * self.graph_view_state.zoom;
         }
     }
 
@@ -4238,7 +4309,7 @@ impl AppState {
         self.status_message = "Layout reset to default".to_string();
     }
 
-    /// Cycles through active view modes: Editor -> Today -> Tasks -> ReviewQueue -> Library -> Graph -> Editor.
+    /// Cycles through active view modes: Editor -> Today -> Tasks -> ReviewQueue -> Library -> Graph -> SplitKnowledge -> Editor.
     pub fn cycle_view(&mut self) {
         self.active_view = match self.active_view {
             ActiveView::Editor => ActiveView::Today,
@@ -4246,8 +4317,18 @@ impl AppState {
             ActiveView::Tasks => ActiveView::ReviewQueue,
             ActiveView::ReviewQueue => ActiveView::Library,
             ActiveView::Library => ActiveView::Graph,
-            ActiveView::Graph => ActiveView::Editor,
+            ActiveView::Graph => ActiveView::SplitKnowledge,
+            ActiveView::SplitKnowledge => ActiveView::Editor,
         };
+    }
+
+    /// Toggles between Editor and Split Knowledge workspace mode.
+    pub fn toggle_split_knowledge(&mut self) {
+        if self.active_view == ActiveView::SplitKnowledge {
+            self.active_view = ActiveView::Editor;
+        } else {
+            self.active_view = ActiveView::SplitKnowledge;
+        }
     }
 
     /// Opens the Settings modal.
