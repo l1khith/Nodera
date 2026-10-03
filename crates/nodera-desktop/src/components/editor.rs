@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use crate::icons::{
     IconBook, IconBookmark, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconColumns,
-    IconEdit, IconFile, IconLink, IconList, IconNotes, IconPanelRight, IconPin, IconPlus,
+    IconEdit, IconFile, IconGraph, IconLink, IconList, IconNotes, IconPanelRight, IconPin, IconPlus,
     IconQuote, IconTemplate,
 };
 use crate::state::{AppState, SplitDirection};
@@ -61,9 +61,15 @@ pub fn Editor(state: Signal<AppState>) -> Element {
         String::new()
     };
 
-    // Stats
+    // Stats & Knowledge Metrics
     let words_count = content.split_whitespace().count();
     let chars_count = content.chars().count();
+    let outgoing_links = app_state.get_current_outgoing_links();
+    let backlinks = app_state.get_current_backlinks();
+    let total_connections = outgoing_links.len() + backlinks.len();
+    let frontmatter = app_state.get_active_frontmatter();
+    let tags_count = frontmatter.as_ref().map(|f| f.tags.len()).unwrap_or(0);
+    let concepts_count = outgoing_links.len() + tags_count;
 
     rsx! {
         main { class: "pane-center",
@@ -405,12 +411,55 @@ pub fn Editor(state: Signal<AppState>) -> Element {
                 } else {
                     // Single-pane Content Surface
                     div {
-                        style: "flex: 1; display: flex; overflow: hidden; background-color: var(--bg-app); position: relative;",
+                        class: "doc-surface-container",
+
+                        // Breadcrumb Navigation
+                        div { class: "doc-breadcrumbs",
+                            {
+                                let components: Vec<&str> = note_path.split(['/', '\\']).collect();
+                                let total = components.len();
+                                rsx! {
+                                    for (i, seg) in components.iter().enumerate() {
+                                        if i > 0 {
+                                            span { class: "sep", "/" }
+                                        }
+                                        if i + 1 == total {
+                                            span { class: "breadcrumb-active", "{note_title}" }
+                                        } else {
+                                            span { class: "breadcrumb-segment", "{seg}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Document Title directly on surface
+                        h1 { class: "doc-surface-title", "{note_title}" }
+
+                        // Document Knowledge Metadata Banner
+                        div { class: "doc-meta-banner",
+                            div { class: "doc-meta-stats",
+                                span { "{words_count} words" }
+                                span { "·" }
+                                span { "{concepts_count} concepts" }
+                                span { "·" }
+                                span { "{total_connections} connections" }
+                            }
+                            button {
+                                class: "doc-knowledge-btn",
+                                title: "Transition to Knowledge Graph context",
+                                onclick: move |_| {
+                                    state.write().toggle_split_knowledge();
+                                },
+                                IconGraph { size: 13 }
+                                span { "Open Knowledge" }
+                            }
+                        }
 
                         if !is_reading_mode {
                             textarea {
                                 class: "editor-textarea",
-                                style: format!("flex: 1; width: 100%; border: none; padding: 24px 32px; font-family: var(--font-editor); font-size: {}px; line-height: 26px; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
+                                style: format!("flex: 1; width: 100%; border: none; padding: 0; font-family: var(--font-editor); font-size: {}px; line-height: 26px; resize: none; background: transparent; outline: none; color: var(--text-primary);", app_state.preferences.editor_font_size),
                                 value: "{content}",
                                 placeholder: placeholders::TYPE_MARKDOWN,
                                 oninput: move |evt| {

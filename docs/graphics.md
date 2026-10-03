@@ -1,7 +1,7 @@
 # Nodera Hardware-Accelerated Graphics Architecture
 
 **Document Version**: 1.0.0  
-**Current Release**: Nodera v0.6.0  
+**Current Release**: Nodera v0.6.1  
 **Maintainer**: Nodera Graphics & Core Architecture Working Group  
 
 ---

@@ -39,7 +39,7 @@ impl ProjectRegistry {
             return PathBuf::from(custom);
         }
 
-        if cfg!(test) || std::env::var_os("NODERA_TEST").is_some() {
+        if cfg!(test) || std::env::var_os("NODERA_TEST").is_some() || Self::is_test_runner() {
             return std::env::temp_dir().join("nodera_test_projects_registry.json");
         }
 
@@ -50,6 +50,17 @@ impl ProjectRegistry {
             .unwrap_or_else(|| PathBuf::from("."));
 
         base_dir.join(".nodera").join("projects_registry.json")
+    }
+
+    fn is_test_runner() -> bool {
+        if let Ok(exe) = std::env::current_exe() {
+            let path_str = exe.to_string_lossy().to_lowercase();
+            if path_str.contains("deps") || path_str.contains("-test") || path_str.contains("_test")
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Loads the project registry.

@@ -4,7 +4,8 @@ use tracing::info;
 use crate::components::{
     CitationPickerModal, CommandPalette, Dialogs, Editor, ErrorDialog, GraphView, Inspector,
     LibraryView, PdfAnnotationModal, PdfImportModal, QuickCaptureModal, ReviewQueueView,
-    SettingsModal, Sidebar, StatusBar, TaskView, TodayView, VaultHealthModal,
+    SettingsModal, Sidebar, SplitKnowledgeWorkspace, StatusBar, TaskView, TodayView,
+    VaultHealthModal,
 };
 use crate::icons::*;
 use crate::state::{ActiveView, AppState};
@@ -48,6 +49,15 @@ pub fn App() -> Element {
     let sidebar_open = app_state.sidebar_open;
     let context_open = app_state.context_panel_open;
     let has_vault = app_state.vault_service.is_some();
+    let view_indicator = match app_state.active_view {
+        ActiveView::Editor => "DOCUMENT",
+        ActiveView::SplitKnowledge => "SPLIT KNOWLEDGE",
+        ActiveView::Graph => "KNOWLEDGE GRAPH",
+        ActiveView::Today => "TODAY",
+        ActiveView::Tasks => "TASKS",
+        ActiveView::ReviewQueue => "REVIEW",
+        ActiveView::Library => "LIBRARY",
+    };
 
     rsx! {
         style { "{BASE_CSS}" }
@@ -61,7 +71,7 @@ pub fn App() -> Element {
             },
 
             // Top App Bar
-            header { class: "top-bar",
+            header { class: "top-bar top-bar-technical",
                 div { class: "top-bar-left",
                     button {
                         class: "btn-icon",
@@ -70,13 +80,15 @@ pub fn App() -> Element {
                             let mut s = state.write();
                             s.sidebar_open = !s.sidebar_open;
                         },
-                        IconMenu { size: 16 }
+                        IconMenu { size: 15 }
                     }
                     div {
-                        style: "display: inline-flex; align-items: center;",
+                        class: "top-bar-brand",
                         title: "{app_strings::BRAND_TITLE}",
-                        IconNoderaLogo { size: 22 }
+                        IconNoderaLogo { size: 18 }
+                        span { "Nodera" }
                     }
+                    div { class: "top-bar-workspace-indicator", "{view_indicator}" }
 
                     // [ Vault ▾ ] Selector Dropdown
                     div { style: "position: relative; display: inline-flex;",
@@ -325,6 +337,16 @@ pub fn App() -> Element {
                             IconImport { size: 13 }
                             span { "Import" }
                         }
+                        button {
+                            class: if app_state.active_view == ActiveView::SplitKnowledge { "btn-action active-toggle" } else { "btn-action" },
+                            style: if app_state.active_view == ActiveView::SplitKnowledge { "color: var(--accent); border-color: var(--accent);" } else { "" },
+                            title: "Toggle Split Knowledge Workspace",
+                            onclick: move |_| {
+                                state.write().toggle_split_knowledge();
+                            },
+                            IconColumns { size: 13 }
+                            span { "Split" }
+                        }
 
                         // ⋯ More Dropdown
                         div { style: "position: relative; display: inline-flex;",
@@ -440,9 +462,10 @@ pub fn App() -> Element {
                     }
                 }
 
-                // Center pane: Markdown Editor, Today View, Global Tasks View, Review Queue, Library View, or Graph View
+                // Center pane: Markdown Editor, Split Knowledge, Today View, Global Tasks View, Review Queue, Library View, or Graph View
                 match app_state.active_view {
                     ActiveView::Editor => rsx! { Editor { state } },
+                    ActiveView::SplitKnowledge => rsx! { SplitKnowledgeWorkspace { state } },
                     ActiveView::Today => rsx! { TodayView { state } },
                     ActiveView::Tasks => rsx! { TaskView { state } },
                     ActiveView::ReviewQueue => rsx! { ReviewQueueView { state } },

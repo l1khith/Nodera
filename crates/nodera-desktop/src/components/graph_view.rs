@@ -96,6 +96,28 @@ pub fn get_symbol_kind_color(node: &SimNode) -> Option<&'static str> {
     }
 }
 
+/// Semantic kind of a graph node determining its geometric shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticNodeKind {
+    Document,
+    Concept,
+    Topic,
+    Reference,
+}
+
+/// Classifies a simulation node into its semantic geometry kind.
+pub fn get_node_semantic_kind(node: &SimNode) -> SemanticNodeKind {
+    if node.is_unresolved || node.label.starts_with('@') || node.id.starts_with("ref:") {
+        SemanticNodeKind::Reference
+    } else if node.is_tag || node.id.starts_with('#') || node.label.starts_with('#') {
+        SemanticNodeKind::Topic
+    } else if node.id.starts_with("sym:") || node.id.starts_with("concept:") || node.label.starts_with("concept:") || node.label.starts_with("sym:") {
+        SemanticNodeKind::Concept
+    } else {
+        SemanticNodeKind::Document
+    }
+}
+
 /// Node in the 2D physics simulation canvas
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimNode {
@@ -1560,6 +1582,40 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     };
 
                                     let font_weight = if is_selected || is_hovered || is_current { "600" } else { "400" };
+                                    let semantic_kind = get_node_semantic_kind(node);
+                                    let concept_hr = (node_radius + 5.0) * 1.25;
+                                    let topic_hr = (node_radius + 4.0) * 0.95;
+                                    let concept_dr = node_radius * 1.25;
+                                    let topic_dr = node_radius * 0.90;
+
+                                    let concept_halo_points = format!(
+                                        "{},{} {},{} {},{} {},{}",
+                                        node.x, node.y - concept_hr,
+                                        node.x + concept_hr, node.y,
+                                        node.x, node.y + concept_hr,
+                                        node.x - concept_hr, node.y
+                                    );
+                                    let topic_halo_points = format!(
+                                        "{},{} {},{} {},{} {},{}",
+                                        node.x, node.y - topic_hr,
+                                        node.x + topic_hr, node.y,
+                                        node.x, node.y + topic_hr,
+                                        node.x - topic_hr, node.y
+                                    );
+                                    let concept_points = format!(
+                                        "{},{} {},{} {},{} {},{}",
+                                        node.x, node.y - concept_dr,
+                                        node.x + concept_dr, node.y,
+                                        node.x, node.y + concept_dr,
+                                        node.x - concept_dr, node.y
+                                    );
+                                    let topic_points = format!(
+                                        "{},{} {},{} {},{} {},{}",
+                                        node.x, node.y - topic_dr,
+                                        node.x + topic_dr, node.y,
+                                        node.x, node.y + topic_dr,
+                                        node.x - topic_dr, node.y
+                                    );
 
                                     rsx! {
                                         g {
@@ -1614,29 +1670,102 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                                     let _ = s.open_graph_node_document(&node_id_dbl, &path_dbl);
                                                 }
                                             },
-                                            // Selection halo ring
+
+                                            // Selection halo ring/diamond
                                             if is_selected {
-                                                circle {
-                                                    class: "graph-halo-ring",
-                                                    cx: "{node.x}",
-                                                    cy: "{node.y}",
-                                                    r: "{node_radius + 6.0}",
-                                                    fill: "none",
-                                                    stroke: "{conf_selected_color}",
-                                                    stroke_width: "2.5",
-                                                    stroke_dasharray: "4 3",
-                                                    opacity: "0.95",
+                                                match semantic_kind {
+                                                    SemanticNodeKind::Concept => rsx! {
+                                                        polygon {
+                                                            class: "graph-halo-ring",
+                                                            points: "{concept_halo_points}",
+                                                            fill: "none",
+                                                            stroke: "{conf_selected_color}",
+                                                            stroke_width: "2.5",
+                                                            stroke_dasharray: "4 3",
+                                                            opacity: "0.95",
+                                                        }
+                                                    },
+                                                    SemanticNodeKind::Topic => rsx! {
+                                                        polygon {
+                                                            class: "graph-halo-ring",
+                                                            points: "{topic_halo_points}",
+                                                            fill: "none",
+                                                            stroke: "{conf_selected_color}",
+                                                            stroke_width: "2.5",
+                                                            stroke_dasharray: "4 3",
+                                                            opacity: "0.95",
+                                                        }
+                                                    },
+                                                    SemanticNodeKind::Document | SemanticNodeKind::Reference => rsx! {
+                                                        circle {
+                                                            class: "graph-halo-ring",
+                                                            cx: "{node.x}",
+                                                            cy: "{node.y}",
+                                                            r: "{node_radius + 6.0}",
+                                                            fill: "none",
+                                                            stroke: "{conf_selected_color}",
+                                                            stroke_width: "2.5",
+                                                            stroke_dasharray: "4 3",
+                                                            opacity: "0.95",
+                                                        }
+                                                    },
                                                 }
                                             }
-                                            circle {
-                                                class: "graph-node-circle",
-                                                cx: "{node.x}",
-                                                cy: "{node.y}",
-                                                r: "{node_radius}",
-                                                fill: "{node_color}",
-                                                stroke: "{stroke_color}",
-                                                stroke_width: "{stroke_width}",
-                                                stroke_dasharray: "{stroke_dash}",
+
+                                            // Distinct Semantic Geometry Shapes:
+                                            // Document = Solid Circle
+                                            // Concept = Diamond (polygon)
+                                            // Topic = Small Diamond (polygon)
+                                            // Reference = Dashed Outlined Circle
+                                            match semantic_kind {
+                                                SemanticNodeKind::Concept => rsx! {
+                                                    polygon {
+                                                        class: "graph-node-diamond",
+                                                        points: "{concept_points}",
+                                                        fill: "{node_color}",
+                                                        stroke: "{stroke_color}",
+                                                        stroke_width: "{stroke_width}",
+                                                        stroke_dasharray: "{stroke_dash}",
+                                                    }
+                                                },
+                                                SemanticNodeKind::Topic => rsx! {
+                                                    polygon {
+                                                        class: "graph-node-topic-diamond",
+                                                        points: "{topic_points}",
+                                                        fill: "{node_color}",
+                                                        stroke: "{stroke_color}",
+                                                        stroke_width: "{stroke_width}",
+                                                        stroke_dasharray: "{stroke_dash}",
+                                                    }
+                                                },
+                                                SemanticNodeKind::Reference => {
+                                                    rsx! {
+                                                        circle {
+                                                            class: "graph-node-ref-circle",
+                                                            cx: "{node.x}",
+                                                            cy: "{node.y}",
+                                                            r: "{node_radius}",
+                                                            fill: "transparent",
+                                                            stroke: "{stroke_color}",
+                                                            stroke_width: "{stroke_width}",
+                                                            stroke_dasharray: "3 3",
+                                                        }
+                                                    }
+                                                }
+                                                SemanticNodeKind::Document => {
+                                                    rsx! {
+                                                        circle {
+                                                            class: "graph-node-circle",
+                                                            cx: "{node.x}",
+                                                            cy: "{node.y}",
+                                                            r: "{node_radius}",
+                                                            fill: "{node_color}",
+                                                            stroke: "{stroke_color}",
+                                                            stroke_width: "{stroke_width}",
+                                                            stroke_dasharray: "{stroke_dash}",
+                                                        }
+                                                    }
+                                                }
                                             }
                                             if show_label {
                                                 text {

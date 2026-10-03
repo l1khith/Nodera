@@ -1,8 +1,8 @@
 # Nodera Product Catalog
 
 **Document Status**: Authoritative Engineering & Product Capability Inventory  
-**Current Release**: v0.6.0  
-**Last Updated**: 2026-09-24  
+**Current Release**: v0.6.1  
+**Last Updated**: 2026-10-03  
 **Maintainer**: Nodera Core Architecture & Product Working Group  
 
 ---

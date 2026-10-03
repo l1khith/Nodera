@@ -10,11 +10,20 @@ use crate::state::{
 };
 use crate::strings::{app as app_strings, empty_states, graph as graph_strings, nav};
 
+/// Active tab in the Context Panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectorTab {
+    Context,
+    Outline,
+    Graph,
+}
+
 /// Unified Contextual Right Inspector surface.
 ///
-/// Dispatches contextually between Note Inspector (Outline, Properties, Links, Related, Local Graph),
-/// External Project Inspector (Symbol AST metadata, signatures, file references),
-/// and Graph Inspector (Filters, Groups, Display, Forces).
+/// Dispatches contextually between Note Context (Properties, Links, Mentions, Related, Local Graph),
+/// Document Outline (Table of Contents),
+/// Graph Intelligence (Selected Node details or Graph Controls / Settings),
+/// and Workspace Intelligence (when no note or node is active).
 #[component]
 pub fn Inspector(mut state: Signal<AppState>) -> Element {
     let app_state = state.read();
@@ -24,19 +33,87 @@ pub fn Inspector(mut state: Signal<AppState>) -> Element {
 
     let is_graph_mode = app_state.active_view == ActiveView::Graph;
     let panel_width = app_state.context_panel_width;
+    let has_selected_node = app_state.graph_view_state.selected_node_id.is_some();
+    let has_active_note = app_state.active_note.is_some();
+
+    let mut active_tab = use_signal(|| {
+        if is_graph_mode || has_selected_node {
+            InspectorTab::Graph
+        } else {
+            InspectorTab::Context
+        }
+    });
 
     rsx! {
         aside {
             class: "pane-context",
-            style: "width: {panel_width}px; flex-shrink: 0;",
-            if is_graph_mode {
-                if app_state.active_project.is_some() {
-                    ProjectInspector { state }
-                } else {
-                    GraphInspector { state }
+            style: "width: {panel_width}px; flex-shrink: 0; display: flex; flex-direction: column; height: 100%; border-left: 1px solid var(--border); background-color: var(--bg-surface);",
+
+            // Technical Tab Header Row
+            div { class: "context-panel-tabs",
+                button {
+                    class: if *active_tab.read() == InspectorTab::Context { "context-tab-btn active" } else { "context-tab-btn" },
+                    onclick: move |_| active_tab.set(InspectorTab::Context),
+                    IconNotes { size: 12 }
+                    span { "Context" }
                 }
-            } else {
-                NoteInspector { state }
+                button {
+                    class: if *active_tab.read() == InspectorTab::Outline { "context-tab-btn active" } else { "context-tab-btn" },
+                    onclick: move |_| active_tab.set(InspectorTab::Outline),
+                    IconList { size: 12 }
+                    span { "Outline" }
+                    if !app_state.toc_headings.is_empty() {
+                        span { class: "intel-badge-count", "{app_state.toc_headings.len()}" }
+                    }
+                }
+                button {
+                    class: if *active_tab.read() == InspectorTab::Graph { "context-tab-btn active" } else { "context-tab-btn" },
+                    onclick: move |_| active_tab.set(InspectorTab::Graph),
+                    IconGraph { size: 12 }
+                    span { if has_selected_node { "Node" } else { "Graph" } }
+                    if has_selected_node {
+                        span { style: "width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block;" }
+                    }
+                }
+                div { style: "margin-left: auto; display: flex; align-items: center;",
+                    button {
+                        class: "btn-icon",
+                        title: "Close Inspector (Ctrl+I)",
+                        onclick: move |_| {
+                            state.write().context_panel_open = false;
+                        },
+                        IconClose { size: 12 }
+                    }
+                }
+            }
+
+            // Tab Content Body
+            div { style: "flex: 1; overflow-y: auto; display: flex; flex-direction: column;",
+                match *active_tab.read() {
+                    InspectorTab::Context => {
+                        if has_active_note {
+                            rsx! { NoteInspector { state } }
+                        } else {
+                            rsx! { WorkspaceOverviewInspector { state } }
+                        }
+                    }
+                    InspectorTab::Outline => {
+                        if has_active_note {
+                            rsx! { NoteOutlineInspector { state } }
+                        } else {
+                            rsx! { WorkspaceOverviewInspector { state } }
+                        }
+                    }
+                    InspectorTab::Graph => {
+                        if app_state.active_project.is_some() {
+                            rsx! { ProjectInspector { state } }
+                        } else if let Some(node_id) = &app_state.graph_view_state.selected_node_id {
+                            rsx! { VaultNodeInspector { state, node_id: node_id.clone() } }
+                        } else {
+                            rsx! { GraphInspector { state } }
+                        }
+                    }
+                }
             }
         }
     }
@@ -105,22 +182,6 @@ fn NoteInspector(mut state: Signal<AppState>) -> Element {
     let toc_headings = app_state.toc_headings.clone();
 
     rsx! {
-        div {
-            style: "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background-color: var(--bg-surface); flex-shrink: 0;",
-            div { style: "display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);",
-                IconPanelRight { size: 13 }
-                span { "{app_strings::CONTEXT_PANEL_TITLE}" }
-            }
-            button {
-                class: "btn-icon",
-                title: "Close Inspector (Ctrl+I)",
-                onclick: move |_| {
-                    state.write().context_panel_open = false;
-                },
-                IconClose { size: 13 }
-            }
-        }
-
         div {
             style: "flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0;",
 
@@ -1934,6 +1995,505 @@ fn GraphColorControls(mut state: Signal<AppState>) -> Element {
                     s.preferences.save();
                 },
                 "Reset Colors to Default"
+            }
+        }
+    }
+}
+
+/// Selected Knowledge Graph Node Intelligence Inspector.
+#[component]
+fn VaultNodeInspector(mut state: Signal<AppState>, node_id: String) -> Element {
+    let app_state = state.read();
+    let graph_data = app_state.get_full_graph_data();
+
+    // Find the node in the current graph dataset
+    let target_node = graph_data
+        .nodes
+        .iter()
+        .find(|n| n.id == node_id || n.label == node_id || n.path.to_string_lossy() == node_id)
+        .cloned();
+
+    let node = match target_node {
+        Some(n) => n,
+        None => {
+            let nid = node_id.clone();
+            return rsx! {
+                div { style: "padding: 16px; color: var(--text-muted); font-size: 12px; display: flex; flex-direction: column; gap: 8px;",
+                    div { style: "font-weight: 600; color: var(--text-secondary);", "Node not in current index" }
+                    div { style: "font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);", "{nid}" }
+                    button {
+                        class: "btn-action",
+                        style: "margin-top: 8px; width: fit-content; font-size: 11px; padding: 4px 8px;",
+                        onclick: move |_| {
+                            state.write().graph_view_state.selected_node_id = None;
+                        },
+                        "Deselect Node"
+                    }
+                }
+            };
+        }
+    };
+
+    // Determine semantic kind
+    let (kind_label, kind_bg, kind_fg) = if node.is_unresolved
+        || node.id.starts_with("ref:")
+        || node.label.starts_with('@')
+    {
+        ("REFERENCE", "rgba(100, 116, 139, 0.15)", "#94a3b8")
+    } else if node.is_tag || node.id.starts_with('#') || node.label.starts_with('#') {
+        ("TOPIC", "rgba(245, 158, 11, 0.15)", "#fbbf24")
+    } else if node.id.starts_with("sym:")
+        || node.id.starts_with("concept:")
+        || node.label.starts_with("concept:")
+        || node.label.starts_with("sym:")
+    {
+        ("CONCEPT", "rgba(56, 189, 248, 0.15)", "#38bdf8")
+    } else {
+        ("DOCUMENT", "rgba(124, 156, 255, 0.15)", "#7c9cff")
+    };
+
+    // Find neighbor edges and classify neighbors
+    let mut connected_documents: Vec<(String, String, std::path::PathBuf)> = Vec::new();
+    let mut related_concepts: Vec<(String, String)> = Vec::new();
+
+    for edge in &graph_data.edges {
+        let neighbor_id = if edge.source == node.id {
+            Some(&edge.target)
+        } else if edge.target == node.id {
+            Some(&edge.source)
+        } else {
+            None
+        };
+
+        if let Some(nid) = neighbor_id {
+            if let Some(neighbor) = graph_data.nodes.iter().find(|n| &n.id == nid) {
+                let n_is_concept = neighbor.id.starts_with("concept:")
+                    || neighbor.id.starts_with("sym:")
+                    || neighbor.is_tag
+                    || neighbor.id.starts_with('#');
+                if n_is_concept {
+                    if !related_concepts.iter().any(|(id, _)| id == &neighbor.id) {
+                        related_concepts.push((neighbor.id.clone(), neighbor.label.clone()));
+                    }
+                } else {
+                    if !connected_documents.iter().any(|(id, _, _)| id == &neighbor.id) {
+                        connected_documents.push((
+                            neighbor.id.clone(),
+                            neighbor.label.clone(),
+                            neighbor.path.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    let is_document = kind_label == "DOCUMENT";
+    let node_path = node.path.clone();
+    let node_id_for_open = node.id.clone();
+    let node_id_for_focus = node.id.clone();
+
+    let mut show_docs = use_signal(|| true);
+    let mut show_concepts = use_signal(|| true);
+    let mut show_meta = use_signal(|| false);
+
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: 0;",
+            // Header card
+            div { style: "padding: 14px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 10px;",
+                div { style: "display: flex; align-items: center; justify-content: space-between;",
+                    span {
+                        class: "node-intel-badge",
+                        style: "background: {kind_bg}; color: {kind_fg};",
+                        "{kind_label}"
+                    }
+                    div { style: "display: flex; align-items: center; gap: 4px;",
+                        button {
+                            class: "btn-icon",
+                            title: "Focus in graph",
+                            onclick: move |_| {
+                                state.write().focus_graph_node(&node_id_for_focus);
+                            },
+                            IconCrosshair { size: 12 }
+                        }
+                        button {
+                            class: "btn-icon",
+                            title: "Deselect node",
+                            onclick: move |_| {
+                                state.write().graph_view_state.selected_node_id = None;
+                            },
+                            IconClose { size: 12 }
+                        }
+                    }
+                }
+
+                // Node Title / Label
+                div {
+                    style: "font-size: 15px; font-weight: 700; color: var(--text-primary); line-height: 1.3; word-break: break-word;",
+                    "{node.label}"
+                }
+
+                // Quick Action (if document)
+                if is_document {
+                    button {
+                        class: "btn-action btn-primary",
+                        style: "width: 100%; justify-content: center; font-size: 11px; padding: 6px 10px; display: flex; align-items: center; gap: 6px;",
+                        onclick: {
+                            let p = node_path.clone();
+                            let nid = node_id_for_open.clone();
+                            move |_| {
+                                let _ = state.write().open_graph_node_document(&nid, &p);
+                            }
+                        },
+                        IconFile { size: 12 }
+                        span { "Open Document" }
+                    }
+                }
+            }
+
+            // High-Density Telemetry Metrics
+            div { style: "display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle);",
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{node.degree}" }
+                    span { class: "node-intel-metric-lbl", "Connections" }
+                }
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{connected_documents.len()}" }
+                    span { class: "node-intel-metric-lbl", "Documents" }
+                }
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{related_concepts.len()}" }
+                    span { class: "node-intel-metric-lbl", "Concepts" }
+                }
+            }
+
+            // Section: Connected Documents
+            div { style: "border-bottom: 1px solid var(--border-subtle);",
+                div {
+                    class: "intel-section-hdr",
+                    onclick: move |_| show_docs.toggle(),
+                    div { style: "display: flex; align-items: center; gap: 6px;",
+                        if *show_docs.read() { IconChevronDown { size: 12 } } else { IconChevronRight { size: 12 } }
+                        span { "Connected Documents" }
+                    }
+                    span { class: "intel-badge-count", "{connected_documents.len()}" }
+                }
+                if *show_docs.read() {
+                    div { style: "padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 2px;",
+                        if connected_documents.is_empty() {
+                            p { style: "font-size: 11px; color: var(--text-muted); font-style: italic; margin: 4px 8px;", "No connected documents" }
+                        } else {
+                            for (doc_id, doc_label, doc_p) in connected_documents.iter() {
+                                {
+                                    let id_c = doc_id.clone();
+                                    let path_c = doc_p.clone();
+                                    let label_c = doc_label.clone();
+                                    let id_click = id_c.clone();
+                                    let path_click = path_c.clone();
+                                    rsx! {
+                                        div {
+                                            key: "{id_c}",
+                                            class: "intel-list-item",
+                                            title: "Open {label_c}",
+                                            onclick: move |_| {
+                                                let _ = state.write().open_graph_node_document(&id_click, &path_click);
+                                            },
+                                            div { style: "display: flex; align-items: center; gap: 6px; overflow: hidden;",
+                                                IconFile { size: 12 }
+                                                span { style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{label_c}" }
+                                            }
+                                            IconExternalLink { size: 11 }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section: Related Concepts
+            div { style: "border-bottom: 1px solid var(--border-subtle);",
+                div {
+                    class: "intel-section-hdr",
+                    onclick: move |_| show_concepts.toggle(),
+                    div { style: "display: flex; align-items: center; gap: 6px;",
+                        if *show_concepts.read() { IconChevronDown { size: 12 } } else { IconChevronRight { size: 12 } }
+                        span { "Related Concepts" }
+                    }
+                    span { class: "intel-badge-count", "{related_concepts.len()}" }
+                }
+                if *show_concepts.read() {
+                    div { style: "padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 2px;",
+                        if related_concepts.is_empty() {
+                            p { style: "font-size: 11px; color: var(--text-muted); font-style: italic; margin: 4px 8px;", "No related concepts" }
+                        } else {
+                            for (c_id, c_label) in related_concepts.iter() {
+                                {
+                                    let cid = c_id.clone();
+                                    let clabel = c_label.clone();
+                                    let cid_click = cid.clone();
+                                    rsx! {
+                                        div {
+                                            key: "{cid}",
+                                            class: "intel-list-item",
+                                            title: "Select & focus {clabel}",
+                                            onclick: move |_| {
+                                                state.write().focus_graph_node(&cid_click);
+                                            },
+                                            div { style: "display: flex; align-items: center; gap: 6px; overflow: hidden;",
+                                                span { style: "color: var(--accent); font-weight: 700; font-size: 11px;", "◆" }
+                                                span { style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{clabel}" }
+                                            }
+                                            IconChevronRight { size: 11 }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section: Metadata
+            div { style: "border-bottom: 1px solid var(--border-subtle);",
+                div {
+                    class: "intel-section-hdr",
+                    onclick: move |_| show_meta.toggle(),
+                    div { style: "display: flex; align-items: center; gap: 6px;",
+                        if *show_meta.read() { IconChevronDown { size: 12 } } else { IconChevronRight { size: 12 } }
+                        span { "Metadata" }
+                    }
+                }
+                if *show_meta.read() {
+                    div { style: "padding: 0 14px 12px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 11px;",
+                        div { style: "display: flex; justify-content: space-between;",
+                            span { style: "color: var(--text-muted);", "Node ID" }
+                            span { style: "color: var(--text-primary); font-family: var(--font-mono); font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis;", "{node.id}" }
+                        }
+                        div { style: "display: flex; justify-content: space-between;",
+                            span { style: "color: var(--text-muted);", "Centrality" }
+                            span { style: "color: var(--text-primary); font-family: var(--font-mono);", "{node.centrality}" }
+                        }
+                        div { style: "display: flex; justify-content: space-between;",
+                            span { style: "color: var(--text-muted);", "In / Out Degree" }
+                            span { style: "color: var(--text-primary); font-family: var(--font-mono);", "{node.in_degree} in · {node.out_degree} out" }
+                        }
+                        div { style: "display: flex; justify-content: space-between;",
+                            span { style: "color: var(--text-muted);", "Community Cluster" }
+                            span { style: "color: var(--text-primary); font-family: var(--font-mono);", "#{node.community_id}" }
+                        }
+                        if !node.path.as_os_str().is_empty() {
+                            div { style: "display: flex; flex-direction: column; gap: 2px; margin-top: 4px;",
+                                span { style: "color: var(--text-muted);", "Path" }
+                                span { style: "color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; word-break: break-all;", "{node.path.display()}" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Workspace Intelligence Overview Inspector when no document is active.
+#[component]
+fn WorkspaceOverviewInspector(mut state: Signal<AppState>) -> Element {
+    let app_state = state.read();
+    let graph_data = app_state.get_full_graph_data();
+
+    let total_docs = app_state
+        .entries
+        .iter()
+        .filter(|e| matches!(e, nodera_core::VaultEntry::Note(_)))
+        .count();
+
+    let total_nodes = graph_data.nodes.len();
+    let total_edges = graph_data.edges.len();
+
+    let orphan_count = graph_data
+        .nodes
+        .iter()
+        .filter(|n| n.degree == 0 && !n.is_unresolved)
+        .count();
+
+    let density_pct = if total_nodes > 1 {
+        let max_edges = (total_nodes * (total_nodes - 1)) / 2;
+        if max_edges > 0 {
+            format!("{:.1}%", (total_edges as f64 / max_edges as f64) * 100.0)
+        } else {
+            "0.0%".to_string()
+        }
+    } else {
+        "0.0%".to_string()
+    };
+
+    let vault_name = app_state
+        .vault_path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Nodera Vault".to_string());
+
+    let recent_notes = app_state.preferences.recent_notes.clone();
+
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: 0;",
+            // Header
+            div { style: "padding: 14px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 4px;",
+                div { style: "display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent);",
+                    IconVault { size: 13 }
+                    span { "Workspace Intelligence" }
+                }
+                div { style: "font-size: 14px; font-weight: 600; color: var(--text-primary);",
+                    "{vault_name}"
+                }
+            }
+
+            // High Density Telemetry Cards
+            div { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle);",
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{total_docs}" }
+                    span { class: "node-intel-metric-lbl", "Documents" }
+                }
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{total_nodes}" }
+                    span { class: "node-intel-metric-lbl", "Total Nodes" }
+                }
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{total_edges}" }
+                    span { class: "node-intel-metric-lbl", "Connections" }
+                }
+                div { class: "node-intel-metric-card",
+                    span { class: "node-intel-metric-val", "{density_pct}" }
+                    span { class: "node-intel-metric-lbl", "Graph Density" }
+                }
+            }
+
+            // Orphan notes telemetry
+            div { style: "padding: 8px 14px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; font-size: 11px;",
+                span { style: "color: var(--text-secondary);", "Orphan Notes (0 links)" }
+                span { class: "intel-badge-count", "{orphan_count}" }
+            }
+
+            // Recent Notes
+            div { style: "border-bottom: 1px solid var(--border-subtle);",
+                div { class: "intel-section-hdr",
+                    div { style: "display: flex; align-items: center; gap: 6px;",
+                        IconNotes { size: 12 }
+                        span { "Recent Documents" }
+                    }
+                    span { class: "intel-badge-count", "{recent_notes.len().min(8)}" }
+                }
+                div { style: "padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 2px;",
+                    if recent_notes.is_empty() {
+                        p { style: "font-size: 11px; color: var(--text-muted); font-style: italic; margin: 4px 8px;", "No recent documents" }
+                    } else {
+                        for p in recent_notes.iter().take(8) {
+                            {
+                                let path_c = p.clone();
+                                let path_click = path_c.clone();
+                                let title_str = path_c
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("Untitled")
+                                    .to_string();
+                                rsx! {
+                                    div {
+                                        key: "{path_c.display()}",
+                                        class: "intel-list-item",
+                                        title: "Open {path_c.display()}",
+                                        onclick: move |_| {
+                                            let _ = state.write().select_note(&path_click);
+                                        },
+                                        div { style: "display: flex; align-items: center; gap: 6px; overflow: hidden;",
+                                            IconFile { size: 12 }
+                                            span { style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{title_str}" }
+                                        }
+                                        IconChevronRight { size: 11 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Quick Actions
+            div { style: "padding: 14px; display: flex; flex-direction: column; gap: 6px;",
+                span { style: "font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);", "Workspace Actions" }
+                div { style: "display: flex; gap: 6px;",
+                    button {
+                        class: "btn-action btn-primary",
+                        style: "flex: 1; justify-content: center; font-size: 11px; padding: 5px 8px;",
+                        onclick: move |_| {
+                            state.write().show_new_note_dialog = true;
+                        },
+                        "+ New Note"
+                    }
+                    button {
+                        class: "btn-action",
+                        style: "flex: 1; justify-content: center; font-size: 11px; padding: 5px 8px;",
+                        onclick: move |_| {
+                            state.write().active_view = ActiveView::Graph;
+                        },
+                        "Open Graph"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Dedicated Document Outline (Table of Contents) Inspector.
+#[component]
+fn NoteOutlineInspector(state: Signal<AppState>) -> Element {
+    let app_state = state.read();
+    let toc_headings = app_state.toc_headings.clone();
+
+    let doc_title = app_state
+        .active_note
+        .as_ref()
+        .map(|n| n.title.clone())
+        .unwrap_or_else(|| "Current Note".to_string());
+
+    rsx! {
+        div { style: "display: flex; flex-direction: column; gap: 0;",
+            // Outline Header
+            div { style: "padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between;",
+                div { style: "display: flex; flex-direction: column; gap: 2px;",
+                    span { style: "font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);", "Document Outline" }
+                    span { style: "font-size: 13px; font-weight: 600; color: var(--text-primary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{doc_title}" }
+                }
+                span { class: "intel-badge-count", "{toc_headings.len()} sections" }
+            }
+
+            // Headings List
+            div { style: "padding: 10px 14px; display: flex; flex-direction: column; gap: 3px;",
+                if toc_headings.is_empty() {
+                    div { style: "padding: 16px 8px; text-align: center; color: var(--text-muted); font-size: 12px;",
+                        p { style: "margin: 0 0 6px 0; font-weight: 500;", "No headings found" }
+                        p { style: "margin: 0; font-size: 11px; color: var(--text-disabled);", "Add # Headings in markdown to generate an outline." }
+                    }
+                } else {
+                    for (idx, (lvl, h_text)) in toc_headings.iter().enumerate() {
+                        {
+                            let indent = (*lvl).saturating_sub(1) * 12;
+                            let text_str = h_text.clone();
+                            rsx! {
+                                div {
+                                    key: "out_{idx}_{text_str}",
+                                    style: "padding-left: {indent}px; padding-top: 4px; padding-bottom: 4px; font-size: 12px; color: var(--text-primary); line-height: 1.4; display: flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); transition: background 0.1s ease; cursor: pointer;",
+                                    span {
+                                        style: "font-size: 9px; font-family: var(--font-mono); font-weight: 700; color: var(--accent); background: var(--accent-focus); padding: 1px 4px; border-radius: 2px;",
+                                        "H{lvl}"
+                                    }
+                                    span { style: "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;", "{text_str}" }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

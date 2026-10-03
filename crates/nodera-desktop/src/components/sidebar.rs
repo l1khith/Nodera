@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use crate::icons::*;
 use crate::state::AppState;
-use crate::strings::{actions, app as app_strings, empty_states, nav, placeholders};
+use crate::strings::{actions, empty_states, nav, placeholders};
 
 #[derive(Clone, PartialEq, Eq)]
 enum ContextMenuTarget {
@@ -72,90 +72,110 @@ pub fn Sidebar(state: Signal<AppState>) -> Element {
 
     rsx! {
     aside { class: "pane-sidebar",
-        // Workspace navigation header
-        div {
-            style: "padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;",
-            span {
-                style: "font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);",
-                "{app_strings::WORKSPACE}"
-            }
-        }
-
-        // Navigation items: Notes, Tasks, Library
-        div {
-            style: "padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 2px;",
+        // KNOWLEDGE SECTION
+        div { class: "nav-section-title", "Knowledge" }
+        div { style: "display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px 4px;",
             button {
-                style: if app_state.active_view == crate::state::ActiveView::Editor { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
+                class: if app_state.active_view == crate::state::ActiveView::Editor { "nav-item-btn active" } else { "nav-item-btn" },
                 onclick: move |_| {
                     let mut s = state.write();
                     s.active_view = crate::state::ActiveView::Editor;
                 },
-                IconNotes { size: 15 }
+                IconNotes { size: 14 }
                 span { "{nav::NOTES}" }
             }
             button {
-                style: if app_state.active_view == crate::state::ActiveView::Today { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
-                onclick: move |_| {
-                    let mut s = state.write();
-                    s.active_view = crate::state::ActiveView::Today;
-                },
-                IconCalendar { size: 15 }
-                span { "{nav::TODAY}" }
-            }
-            button {
-                style: if app_state.active_view == crate::state::ActiveView::Tasks { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
-                onclick: move |_| {
-                    let mut s = state.write();
-                    s.active_view = crate::state::ActiveView::Tasks;
-                },
-                IconTasks { size: 15 }
-                span { "{nav::TASKS}" }
-            }
-            button {
-                style: if app_state.active_view == crate::state::ActiveView::ReviewQueue { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
-                onclick: move |_| {
-                    let mut s = state.write();
-                    s.active_view = crate::state::ActiveView::ReviewQueue;
-                },
-                IconReviewQueue { size: 15 }
-                span { "Review Queue" }
-            }
-            button {
-                style: if app_state.active_view == crate::state::ActiveView::Library { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
-                onclick: move |_| {
-                    let mut s = state.write();
-                    s.active_view = crate::state::ActiveView::Library;
-                },
-                IconLibrary { size: 15 }
-                span { "{nav::LIBRARY}" }
-            }
-            button {
-                style: if app_state.active_view == crate::state::ActiveView::Graph { "padding: 5px 8px; border-radius: 4px; background-color: var(--bg-hover); font-weight: 600; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: var(--text-primary);" } else { "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;" },
+                class: if app_state.active_view == crate::state::ActiveView::Graph { "nav-item-btn active" } else { "nav-item-btn" },
                 onclick: move |_| {
                     let mut s = state.write();
                     s.active_view = crate::state::ActiveView::Graph;
                 },
-                IconGraph { size: 15 }
+                IconGraph { size: 14 }
                 span { "{nav::GRAPH}" }
             }
             button {
-                style: "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;",
+                class: if app_state.active_view == crate::state::ActiveView::SplitKnowledge { "nav-item-btn active" } else { "nav-item-btn" },
                 onclick: move |_| {
                     let mut s = state.write();
-                    s.show_trash_modal = true;
+                    s.active_view = crate::state::ActiveView::SplitKnowledge;
                 },
-                IconTrash { size: 15 }
-                span { "Trash Bin" }
+                IconColumns { size: 14 }
+                span { "Split Knowledge" }
             }
             button {
-                style: "padding: 5px 8px; border-radius: 4px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;",
+                class: if app_state.active_view == crate::state::ActiveView::Library { "nav-item-btn active" } else { "nav-item-btn" },
+                onclick: move |_| {
+                    let mut s = state.write();
+                    s.active_view = crate::state::ActiveView::Library;
+                },
+                IconLibrary { size: 14 }
+                span { "{nav::LIBRARY}" }
+            }
+        }
+
+        // WORKSPACE SECTION
+        div { class: "nav-section-title", "Workspace" }
+        div { style: "display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px 4px;",
+            button {
+                class: if app_state.active_view == crate::state::ActiveView::Today { "nav-item-btn active" } else { "nav-item-btn" },
+                onclick: move |_| {
+                    let mut s = state.write();
+                    s.active_view = crate::state::ActiveView::Today;
+                },
+                IconCalendar { size: 14 }
+                span { "{nav::TODAY}" }
+            }
+            button {
+                class: if app_state.active_view == crate::state::ActiveView::Tasks { "nav-item-btn active" } else { "nav-item-btn" },
+                onclick: move |_| {
+                    let mut s = state.write();
+                    s.active_view = crate::state::ActiveView::Tasks;
+                },
+                IconTasks { size: 14 }
+                span { "{nav::TASKS}" }
+            }
+            button {
+                class: if app_state.active_view == crate::state::ActiveView::ReviewQueue { "nav-item-btn active" } else { "nav-item-btn" },
+                onclick: move |_| {
+                    let mut s = state.write();
+                    s.active_view = crate::state::ActiveView::ReviewQueue;
+                },
+                IconReviewQueue { size: 14 }
+                span { "Review Queue" }
+            }
+        }
+
+        // SYSTEM SECTION
+        div { class: "nav-section-title", "System" }
+        div { style: "display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px 4px; border-bottom: 1px solid var(--border-subtle);",
+            button {
+                class: "nav-item-btn",
+                title: "Search notes or commands (Ctrl+P)",
+                onclick: move |_| {
+                    state.write().show_command_palette = true;
+                },
+                IconSearch { size: 14 }
+                span { "Search / Commands" }
+            }
+            button {
+                class: "nav-item-btn",
                 title: "Check broken links & orphan notes",
                 onclick: move |_| {
                     let mut s = state.write();
                     s.show_vault_health_modal = true;
                 },
-                IconActivity { size: 15 }
+                IconActivity { size: 14 }
                 span { "Vault Health" }
+            }
+            button {
+                class: "nav-item-btn",
+                title: "Trash Bin",
+                onclick: move |_| {
+                    let mut s = state.write();
+                    s.show_trash_modal = true;
+                },
+                IconTrash { size: 14 }
+                span { "Trash Bin" }
             }
         }
 
