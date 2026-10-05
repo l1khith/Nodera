@@ -4,9 +4,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::icons::*;
-use crate::state::{ActiveView, AppState, GraphForcesSettings};
+use crate::state::{
+    ActiveView, AppState, GraphDisplaySettings, GraphFilterSettings, GraphForcesSettings,
+    GraphSettings,
+};
 use crate::strings::{actions, empty_states, graph as graph_strings, placeholders};
 use crate::theme::ThemeId;
+use nodera_core::VaultEntry;
 use nodera_markdown::GraphData;
 
 pub const COMMUNITY_COLORS: [&str; 12] = [
@@ -145,13 +149,74 @@ pub struct SimEdge {
     pub target: usize,
 }
 
-/// Simulation lifecycle states for CPU conservation and smooth convergence
+/// Explicit simulation lifecycle state machine for energy conservation and stability
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationState {
+    Idle,
+    Initializing,
+    Running,
+    Settling,
+    Settled,
+    Dragging,
+}
+
+impl SimulationState {
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self,
+            Self::Initializing | Self::Running | Self::Settling | Self::Dragging
+        )
+    }
+
+    pub fn is_settled(&self) -> bool {
+        matches!(self, Self::Settled | Self::Idle)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "IDLE",
+            Self::Initializing => "INITIALIZING",
+            Self::Running => "RUNNING",
+            Self::Settling => "SETTLING",
+            Self::Settled => "SETTLED",
+            Self::Dragging => "DRAGGING",
+        }
+    }
+}
+
+/// Simulation lifecycle states for CPU conservation and smooth convergence (compatibility layer)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SimulationPhase {
     Initializing,
     Running { alpha: f32 },
     Settling { alpha: f32, energy: f32 },
     Idle,
+}
+
+/// Real-time metrics for physics simulation convergence and debug instrumentation
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SimulationMetrics {
+    pub state: SimulationState,
+    pub ticks: usize,
+    pub alpha: f32,
+    pub max_velocity: f32,
+    pub max_displacement: f32,
+    pub mean_energy: f32,
+    pub stabilization_time_ms: f64,
+}
+
+impl Default for SimulationMetrics {
+    fn default() -> Self {
+        Self {
+            state: SimulationState::Idle,
+            ticks: 0,
+            alpha: 0.0,
+            max_velocity: 0.0,
+            max_displacement: 0.0,
+            mean_energy: 0.0,
+            stabilization_time_ms: 0.0,
+        }
+    }
 }
 
 /// Initializes simulation nodes with deterministic golden-spiral positions using default forces.
@@ -250,23 +315,36 @@ pub fn init_or_update_simulation(
     }
 
     // Relaxation steps:
-    // If all or most nodes were already positioned, run only a small local relaxation (~8 steps)
-    // so spatial memory is preserved and positions don't drift.
-    // If nodes are mostly new, run pre-warm relaxation steps for clean layout.
-    let total_steps = if preserved_count > 0 && preserved_count * 2 >= n {
+    // If all nodes were already preserved in existing_positions:
+    // Exactly 0 steps. Graph is ALREADY settled; preserve spatial memory with zero drift.
+    // If most nodes were already positioned (incremental addition): run 2 gentle steps.
+    // If nodes are mostly new/cold-start: run pre-warm relaxation (180 steps).
+    let total_steps = if preserved_count == n {
+        0
+    } else if preserved_count > 0 && preserved_count * 2 >= n {
         2
     } else {
         180
     };
 
-    for step in 0..total_steps {
-        let alpha = (1.0 - (step as f32 / total_steps as f32)).max(0.03);
-        let eff_alpha = if preserved_count > 0 && preserved_count * 2 >= n {
-            alpha * 0.15
-        } else {
-            alpha
-        };
-        step_simulation_with_forces(&mut nodes, &edges, (cx, cy), None, eff_alpha, forces);
+    if total_steps > 0 {
+        for step in 0..total_steps {
+            let alpha = (1.0 - (step as f32 / total_steps as f32)).max(0.005);
+            let eff_alpha = if preserved_count > 0 && preserved_count * 2 >= n {
+                alpha * 0.10
+            } else {
+                alpha
+            };
+            step_simulation_with_forces(&mut nodes, &edges, (cx, cy), None, eff_alpha, forces);
+        }
+    }
+
+    // Zero out velocity when fully preserved or after pre-warm stabilization
+    if preserved_count == n || total_steps > 0 {
+        for node in &mut nodes {
+            node.vx = 0.0;
+            node.vy = 0.0;
+        }
     }
 
     (nodes, edges)
@@ -550,19 +628,20 @@ impl QuadTreeNode {
     }
 }
 
-/// Executes one physics tick with Coulomb repulsion, Hooke spring attraction, center gravity, and collision clearance.
-/// Returns the mean kinetic energy of all moving nodes.
-pub fn step_simulation_with_forces(
+/// Detailed physics simulation tick with Coulomb repulsion, Hooke spring attraction,
+/// center gravity, collision clearance, and hard velocity deadband cutoff.
+/// Returns `(mean_kinetic_energy, max_speed, max_displacement)`.
+pub fn step_simulation_tick_detailed(
     nodes: &mut [SimNode],
     edges: &[SimEdge],
     center: (f32, f32),
     dragged_idx: Option<usize>,
     alpha: f32,
     forces: &GraphForcesSettings,
-) -> f32 {
+) -> (f32, f32, f32) {
     let n = nodes.len();
     if n == 0 {
-        return 0.0;
+        return (0.0, 0.0, 0.0);
     }
 
     let k_rep = 475.0 * forces.repel_force.max(0.1);
@@ -690,11 +769,14 @@ pub fn step_simulation_with_forces(
         fy[i] += dy * k_center;
     }
 
-    // 4. Update velocity and position with cooling alpha and kinetic energy tracking
+    // 4. Update velocity and position with cooling alpha, deadband cutoff, and kinetic energy tracking
     let max_force = (20.0 * alpha + 2.0).min(30.0);
     let max_v = (15.0 * alpha + 1.2).min(24.0);
 
     let mut total_kinetic_energy = 0.0f32;
+    let mut max_speed = 0.0f32;
+    let mut max_disp = 0.0f32;
+
     for i in 0..n {
         if Some(i) == dragged_idx {
             nodes[i].vx = 0.0;
@@ -705,13 +787,84 @@ pub fn step_simulation_with_forces(
         nodes[i].vy = (nodes[i].vy + fy[i].clamp(-max_force, max_force) * alpha) * damping;
 
         let speed_sq = nodes[i].vx * nodes[i].vx + nodes[i].vy * nodes[i].vy;
-        total_kinetic_energy += speed_sq;
 
-        nodes[i].x += nodes[i].vx.clamp(-max_v, max_v);
-        nodes[i].y += nodes[i].vy.clamp(-max_v, max_v);
+        // VELOCITY DEADBAND:
+        // Sub-pixel jitter (< 0.01 px/frame or alpha < 0.003) is clamped directly to zero.
+        // This ensures the physics loop enters a true zero-velocity static rest state.
+        if speed_sq < 0.0001 || alpha < 0.003 {
+            nodes[i].vx = 0.0;
+            nodes[i].vy = 0.0;
+        } else {
+            let speed = speed_sq.sqrt();
+            if speed > max_speed {
+                max_speed = speed;
+            }
+            total_kinetic_energy += speed_sq;
+
+            let dx = nodes[i].vx.clamp(-max_v, max_v);
+            let dy = nodes[i].vy.clamp(-max_v, max_v);
+            let disp = (dx * dx + dy * dy).sqrt();
+            if disp > max_disp {
+                max_disp = disp;
+            }
+            nodes[i].x += dx;
+            nodes[i].y += dy;
+        }
     }
 
-    total_kinetic_energy / (n as f32)
+    let mean_energy = total_kinetic_energy / (n as f32);
+    (mean_energy, max_speed, max_disp)
+}
+
+/// Executes one physics tick with Coulomb repulsion, Hooke spring attraction, center gravity, and collision clearance.
+/// Returns the mean kinetic energy of all moving nodes.
+pub fn step_simulation_with_forces(
+    nodes: &mut [SimNode],
+    edges: &[SimEdge],
+    center: (f32, f32),
+    dragged_idx: Option<usize>,
+    alpha: f32,
+    forces: &GraphForcesSettings,
+) -> f32 {
+    let (mean_energy, _, _) =
+        step_simulation_tick_detailed(nodes, edges, center, dragged_idx, alpha, forces);
+    mean_energy
+}
+
+/// Fingerprint of graph topology and simulation-affecting settings.
+/// Used to completely break reactive loops caused by viewport, selection, or panel updates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphTopologySignature {
+    pub project_name: Option<String>,
+    pub note_count: usize,
+    pub notes_hash: u64,
+    pub filters: GraphFilterSettings,
+    pub forces: GraphForcesSettings,
+    pub display: GraphDisplaySettings,
+}
+
+pub fn compute_graph_topology_sig(
+    app_state: &AppState,
+    settings: &GraphSettings,
+) -> GraphTopologySignature {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let project_name = app_state.active_project.as_ref().map(|p| p.name.clone());
+    let mut note_count = 0usize;
+    for e in &app_state.entries {
+        if let VaultEntry::Note(s) = e {
+            note_count += 1;
+            s.relative_path.hash(&mut hasher);
+        }
+    }
+    GraphTopologySignature {
+        project_name,
+        note_count,
+        notes_hash: hasher.finish(),
+        filters: settings.filters.clone(),
+        forces: settings.forces.clone(),
+        display: settings.display.clone(),
+    }
 }
 
 /// Global 2D Knowledge Graph View with Interactive Controls Panel
@@ -755,6 +908,16 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         .as_ref()
         .and_then(|id| init_nodes.iter().position(|n| &n.id == id));
 
+    let all_preserved = !init_nodes.is_empty()
+        && init_nodes
+            .iter()
+            .all(|n| saved_positions.contains_key(&n.id));
+    let initial_sim_state = if all_preserved {
+        SimulationState::Settled
+    } else {
+        SimulationState::Idle
+    };
+
     let mut nodes_state = use_signal(|| init_nodes);
     let mut edges_state = use_signal(|| init_edges);
 
@@ -770,22 +933,31 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
     let mut last_click = use_signal(|| None::<(usize, Instant)>);
     let mut search_query = use_signal(|| current_settings.filters.search_query.clone());
     let sim_generation = use_signal(|| 0u64);
-    let sim_phase = use_signal(|| SimulationPhase::Idle);
+    let mut sim_state = use_signal(|| initial_sim_state);
+    let sim_metrics = use_signal(SimulationMetrics::default);
+    let mut sim_phase = use_signal(|| SimulationPhase::Idle);
+    let mut last_topology_sig = use_signal(|| {
+        Some(compute_graph_topology_sig(&app_state, &current_settings))
+    });
 
-    /// Smooth settling coroutine that runs at 60fps and transitions to Idle (0% CPU)
-    fn start_settling_simulation(
+    /// Obsidian-style cooling simulation coroutine that relaxes node positions
+    /// until equilibrium is reached and transitions to Settled/Idle (0% CPU).
+    #[allow(clippy::too_many_arguments)]
+    fn start_cooling_simulation(
         mut state: Signal<AppState>,
         mut nodes_state: Signal<Vec<SimNode>>,
         edges_state: Signal<Vec<SimEdge>>,
-        _dragged_node: Signal<Option<usize>>,
         mut sim_generation: Signal<u64>,
+        mut sim_state: Signal<SimulationState>,
+        mut sim_metrics: Signal<SimulationMetrics>,
         mut sim_phase: Signal<SimulationPhase>,
         start_alpha: f32,
     ) {
         let forces = state.read().preferences.graph_settings.forces.clone();
         let animate = state.read().preferences.graph_settings.display.animate;
         if !animate {
-            *sim_phase.write() = SimulationPhase::Idle;
+            sim_state.set(SimulationState::Settled);
+            sim_phase.set(SimulationPhase::Idle);
             let pos_list = nodes_state
                 .read()
                 .iter()
@@ -796,21 +968,29 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
         }
 
         let gen = *sim_generation.read() + 1;
-        *sim_generation.write() = gen;
-        *sim_phase.write() = SimulationPhase::Settling {
+        sim_generation.set(gen);
+        sim_state.set(SimulationState::Settling);
+        sim_phase.set(SimulationPhase::Settling {
             alpha: start_alpha,
             energy: 0.05,
-        };
+        });
 
         let nodes_to_relax = nodes_state.read().clone();
         let edges_to_relax = edges_state.read().clone();
 
         spawn(async move {
+            let start_time = Instant::now();
             let res = tokio::task::spawn_blocking(move || {
                 let mut current_nodes = nodes_to_relax;
                 let mut alpha = start_alpha;
-                for _step in 0..25 {
-                    let energy = step_simulation_with_forces(
+                let mut total_ticks = 0usize;
+                let mut last_energy = 0.0f32;
+                let mut last_speed = 0.0f32;
+                let mut last_disp = 0.0f32;
+
+                for _step in 0..40 {
+                    total_ticks += 1;
+                    let (energy, max_speed, max_disp) = step_simulation_tick_detailed(
                         &mut current_nodes,
                         &edges_to_relax,
                         (500.0, 350.0),
@@ -818,12 +998,24 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                         alpha,
                         &forces,
                     );
+                    last_energy = energy;
+                    last_speed = max_speed;
+                    last_disp = max_disp;
                     alpha *= 0.88;
-                    if alpha < 0.008 || energy < 0.005 {
+
+                    // Convergence criteria: alpha below deadband threshold or velocities sub-pixel
+                    if alpha < 0.003 || (max_speed < 0.008 && max_disp < 0.01) {
                         break;
                     }
                 }
-                current_nodes
+
+                // Zero out velocities on settled nodes
+                for n in current_nodes.iter_mut() {
+                    n.vx = 0.0;
+                    n.vy = 0.0;
+                }
+
+                (current_nodes, total_ticks, alpha, last_speed, last_disp, last_energy)
             })
             .await;
 
@@ -831,9 +1023,19 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                 return;
             }
 
-            if let Ok(relaxed_nodes) = res {
+            if let Ok((relaxed_nodes, ticks, final_alpha, max_v, max_d, mean_e)) = res {
                 nodes_state.set(relaxed_nodes);
-                *sim_phase.write() = SimulationPhase::Idle;
+                sim_state.set(SimulationState::Settled);
+                sim_phase.set(SimulationPhase::Idle);
+                sim_metrics.set(SimulationMetrics {
+                    state: SimulationState::Settled,
+                    ticks,
+                    alpha: final_alpha,
+                    max_velocity: max_v,
+                    max_displacement: max_d,
+                    mean_energy: mean_e,
+                    stabilization_time_ms: start_time.elapsed().as_secs_f64() * 1000.0,
+                });
                 let pos_list = nodes_state
                     .read()
                     .iter()
@@ -857,23 +1059,41 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
 
     // When filters, vault entries, or graph settings change, recompute simulation with projection budget
     use_effect(move || {
-        let s = state.read().preferences.graph_settings.clone();
-        let (current_graph, meta) = state.read().get_projected_graph_data_with_settings(&s);
+        let app = state.read();
+        let s = app.preferences.graph_settings.clone();
+        let current_sig = compute_graph_topology_sig(&app, &s);
+        if *last_topology_sig.read() == Some(current_sig.clone()) {
+            return;
+        }
+        last_topology_sig.set(Some(current_sig));
+
+        let (current_graph, meta) = app.get_projected_graph_data_with_settings(&s);
+        drop(app);
+
         state.write().graph_view_state.projection_meta = meta;
         let saved_pos = state.read().graph_view_state.positions.clone();
         let (n, e) =
             init_or_update_simulation(&current_graph, 1000.0, 700.0, &s.forces, &saved_pos);
+        let n_len = n.len();
+        let all_pres = n_len > 0 && n.iter().all(|node| saved_pos.contains_key(&node.id));
         nodes_state.set(n);
         edges_state.set(e);
-        start_settling_simulation(
-            state,
-            nodes_state,
-            edges_state,
-            dragged_node,
-            sim_generation,
-            sim_phase,
-            0.15,
-        );
+
+        if !all_pres {
+            start_cooling_simulation(
+                state,
+                nodes_state,
+                edges_state,
+                sim_generation,
+                sim_state,
+                sim_metrics,
+                sim_phase,
+                0.15,
+            );
+        } else {
+            sim_state.set(SimulationState::Settled);
+            sim_phase.set(SimulationPhase::Idle);
+        }
     });
 
     if total_notes == 0 {
@@ -1072,12 +1292,13 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                     is_panning.set(false);
                     let had_drag = dragged_node.write().take().is_some();
                     if had_drag {
-                        start_settling_simulation(
+                        start_cooling_simulation(
                             state,
                             nodes_state,
                             edges_state,
-                            dragged_node,
                             sim_generation,
+                            sim_state,
+                            sim_metrics,
                             sim_phase,
                             0.12,
                         );
@@ -1257,12 +1478,13 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                             let (n, e) = init_simulation_with_forces(&current_graph, 1000.0, 700.0, &s.forces);
                             nodes_state.set(n);
                             edges_state.set(e);
-                            start_settling_simulation(
+                            start_cooling_simulation(
                                 state,
                                 nodes_state,
                                 edges_state,
-                                dragged_node,
                                 sim_generation,
+                                sim_state,
+                                sim_metrics,
                                 sim_phase,
                                 0.25,
                             );
@@ -1314,6 +1536,26 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                     "background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;"
                                 },
                                 "{label}"
+                            }
+                        }
+                    }
+                    span { style: "color: var(--text-muted);", "•" }
+                    {
+                        let current_sim_state = *sim_state.read();
+                        let is_settled = current_sim_state.is_settled();
+                        let badge_text = if is_settled {
+                            "🟢 PHYSICS: IDLE (SETTLED)".to_string()
+                        } else {
+                            format!("🟠 PHYSICS: {}", current_sim_state.as_str())
+                        };
+                        rsx! {
+                            span {
+                                style: if is_settled {
+                                    "background: rgba(34, 197, 94, 0.12); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.25); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;"
+                                } else {
+                                    "background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;"
+                                },
+                                "{badge_text}"
                             }
                         }
                     }
@@ -1625,6 +1867,7 @@ pub fn GraphView(state: Signal<AppState>) -> Element {
                                             onmousedown: move |evt: MouseEvent| {
                                                 evt.stop_propagation();
                                                 dragged_node.set(Some(idx));
+                                                sim_state.set(SimulationState::Dragging);
                                             },
                                             onmouseenter: move |_| {
                                                 hovered_node.set(Some(idx));
@@ -1812,10 +2055,24 @@ pub fn LocalGraphView(state: Signal<AppState>) -> Element {
 
     let mut hovered = use_signal(|| None::<usize>);
 
-    // Re-sync when active note or depth changes
+    let initial_active_note = app_state
+        .active_note
+        .as_ref()
+        .map(|n| n.relative_path.clone());
+    let mut last_local_sig = use_signal(|| Some((initial_active_note, current_depth, node_count)));
+
+    // Re-sync only when active note or depth or local topology changes
     use_effect(move || {
+        let app = state.read();
         let current_d = *depth.read();
-        let current_local = state.read().get_local_graph_data(current_d);
+        let active_path = app.active_note.as_ref().map(|n| n.relative_path.clone());
+        let current_local = app.get_local_graph_data(current_d);
+        let n_count = current_local.nodes.len();
+        let sig = (active_path, current_d, n_count);
+        if *last_local_sig.read() == Some(sig.clone()) {
+            return;
+        }
+        last_local_sig.set(Some(sig));
         let (n, e) = init_simulation(&current_local, 260.0, 200.0);
         nodes_state.set(n);
         edges_state.set(e);
