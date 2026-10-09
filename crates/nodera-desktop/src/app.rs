@@ -44,6 +44,57 @@ pub fn App() -> Element {
         });
     });
 
+    let mut watcher_active_task: Signal<Option<Task>> = use_signal(|| None);
+
+    use_effect(move || {
+        let vault_opt = state.read().vault_path.clone();
+
+        // Cancel previous watcher task if any
+        if let Some(prev) = watcher_active_task.take() {
+            prev.cancel();
+        }
+
+        if let Some(vault_path) = vault_opt {
+            match crate::watcher::VaultWatcher::start(vault_path.clone()) {
+                Ok((watcher, mut rx, suppressor)) => {
+                    info!(
+                        vault = %vault_path.display(),
+                        "Connected filesystem watcher to desktop application lifecycle"
+                    );
+                    state.write().write_suppressor = suppressor;
+
+                    let task = spawn(async move {
+                        let _watcher = watcher;
+                        let debounce_duration = std::time::Duration::from_millis(150);
+
+                        while let Some(batch) =
+                            crate::watcher::next_debounced_batch(&mut rx, debounce_duration).await
+                        {
+                            let coalesced = crate::watcher::coalesce_events(batch);
+                            if !coalesced.is_empty() {
+                                let mut s = state.write();
+                                if let Err(e) = s.apply_watcher_events(&coalesced) {
+                                    tracing::error!(
+                                        "Failed to apply filesystem watcher events: {e}"
+                                    );
+                                }
+                            }
+                        }
+                        info!("Filesystem watcher loop terminated cleanly");
+                    });
+
+                    watcher_active_task.set(Some(task));
+                }
+                Err(e) => {
+                    tracing::error!(
+                        vault = %vault_path.display(),
+                        "Failed to start filesystem watcher: {e}"
+                    );
+                }
+            }
+        }
+    });
+
     let app_state = state.read();
     let theme_class = app_state.theme.css_class();
     let sidebar_open = app_state.sidebar_open;

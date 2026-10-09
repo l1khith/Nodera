@@ -499,6 +499,29 @@ impl LinkGraph {
         }
     }
 
+    /// Renames a note in the link graph from `old_path` to `new_path`.
+    ///
+    /// Preserves or updates outgoing wikilinks under `new_path`,
+    /// cleans up `old_path` from incoming and outgoing indices, and synchronizes
+    /// the incoming reverse index across `all_paths`.
+    pub fn rename_note(
+        &mut self,
+        old_path: &Path,
+        new_path: PathBuf,
+        new_links: Option<Vec<Wikilink>>,
+        all_paths: &[PathBuf],
+    ) {
+        let links = match new_links {
+            Some(l) => {
+                self.outgoing.remove(old_path);
+                l
+            }
+            None => self.outgoing.remove(old_path).unwrap_or_default(),
+        };
+        self.outgoing.insert(new_path, links);
+        self.reindex(all_paths);
+    }
+
     /// Returns all outgoing links from a specific note.
     pub fn get_outgoing_links(&self, source_path: &Path) -> &[Wikilink] {
         self.outgoing
@@ -1950,6 +1973,81 @@ mod tests {
         graph.remove_note(&path_c);
         let backlinks_b_after_delete = graph.get_backlinks(&path_b, &paths);
         assert!(backlinks_b_after_delete.is_empty());
+    }
+
+    #[test]
+    fn test_link_graph_rename_note_preserves_relationships() {
+        let path_a = PathBuf::from("NoteA.md");
+        let path_b = PathBuf::from("NoteB.md");
+        let path_c = PathBuf::from("NoteC.md");
+        let paths = vec![path_a.clone(), path_b.clone(), path_c.clone()];
+
+        // Note A links to Note B; Note B links to Note C
+        let link_to_b = Wikilink {
+            raw: "[[NoteB]]".to_string(),
+            target: "NoteB".to_string(),
+            display_text: None,
+            start: 0,
+            end: 9,
+        };
+        let link_to_c = Wikilink {
+            raw: "[[NoteC]]".to_string(),
+            target: "NoteC".to_string(),
+            display_text: None,
+            start: 0,
+            end: 9,
+        };
+
+        let note_links = vec![
+            (path_a.clone(), vec![link_to_b]),
+            (path_b.clone(), vec![link_to_c.clone()]),
+        ];
+
+        let mut graph = LinkGraph::build(&paths, note_links);
+
+        // Pre-rename assertions
+        assert_eq!(graph.get_outgoing_links(&path_b), &[link_to_c.clone()]);
+        assert_eq!(graph.get_backlinks(&path_b, &paths), vec![path_a.clone()]);
+        assert_eq!(graph.get_backlinks(&path_c, &paths), vec![path_b.clone()]);
+
+        // Rename Note B -> NoteB_Renamed.md
+        let path_b_renamed = PathBuf::from("NoteB_Renamed.md");
+        let paths_after_rename = vec![path_a.clone(), path_b_renamed.clone(), path_c.clone()];
+
+        graph.rename_note(&path_b, path_b_renamed.clone(), None, &paths_after_rename);
+
+        // Old path outgoing links are cleared, new path has the links
+        assert!(graph.get_outgoing_links(&path_b).is_empty());
+        assert_eq!(graph.get_outgoing_links(&path_b_renamed), &[link_to_c]);
+
+        // Note C backlink is updated: now points from NoteB_Renamed, not NoteB
+        assert_eq!(
+            graph.get_backlinks(&path_c, &paths_after_rename),
+            vec![path_b_renamed.clone()]
+        );
+
+        // Old Note B has no backlinks
+        assert!(graph.get_backlinks(&path_b, &paths_after_rename).is_empty());
+
+        // Now update Note A's link to point to NoteB_Renamed
+        let link_to_b_renamed = Wikilink {
+            raw: "[[NoteB_Renamed]]".to_string(),
+            target: "NoteB_Renamed".to_string(),
+            display_text: None,
+            start: 0,
+            end: 17,
+        };
+        graph.update_note_links_with_paths(
+            path_a.clone(),
+            vec![link_to_b_renamed],
+            &paths_after_rename,
+        );
+
+        // NoteB_Renamed now has backlink from Note A
+        assert_eq!(
+            graph.get_backlinks(&path_b_renamed, &paths_after_rename),
+            vec![path_a]
+        );
     }
 
     #[test]

@@ -847,6 +847,7 @@ pub struct AppState {
 
     pub preferences: AppPreferences,
     pub link_graph: LinkGraph,
+    pub write_suppressor: crate::watcher::WriteSuppressor,
 
     // Layout configuration
     pub sidebar_width: u32,
@@ -1065,6 +1066,7 @@ impl Default for AppState {
 
             preferences: prefs,
             link_graph: LinkGraph::new(),
+            write_suppressor: crate::watcher::WriteSuppressor::new(),
 
             show_new_note_dialog: false,
             show_delete_confirm_dialog: false,
@@ -1327,6 +1329,15 @@ impl AppState {
             self.entries = service.list_entries()?;
         }
         Ok(())
+    }
+
+    /// Suppresses filesystem watcher events for the given vault-relative path for 1500ms.
+    pub fn suppress_path(&self, rel_path: impl AsRef<Path>) {
+        if let Some(vault_path) = &self.vault_path {
+            let full = vault_path.join(rel_path.as_ref());
+            self.write_suppressor
+                .suppress(&full, std::time::Duration::from_millis(1500));
+        }
     }
 
     /// Toggles expansion state of a folder.
@@ -2322,6 +2333,7 @@ impl AppState {
     pub fn save_active_note(&mut self) -> Result<()> {
         if let (Some(service), Some(note)) = (&self.vault_service, &self.active_note) {
             let rel_path = note.relative_path.clone();
+            self.suppress_path(&rel_path);
             let updated = service.write_note(&rel_path, &self.editor_content)?;
             if let Ok(parsed) = parse_document(&self.editor_content) {
                 let paths = self.note_paths();
@@ -2358,6 +2370,10 @@ impl AppState {
                 let _ = idx.remove_note(rel);
             }
         }
+        let _ = self.refresh_entries();
+        let paths = self.note_paths();
+        self.link_graph.reindex(&paths);
+
         let rel_buf = rel.to_path_buf();
         self.open_tabs.retain(|t| t.relative_path != rel_buf);
         self.nav_history.retain(|p| p != &rel_buf);
@@ -2400,6 +2416,7 @@ impl AppState {
     pub fn trash_note(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
         let rel = rel_path.as_ref();
         if let Some(service) = &self.vault_service {
+            self.suppress_path(rel);
             service.trash_note(rel)?;
             self.cleanup_closed_or_deleted_note(rel);
             self.status_message = format!("Moved '{}' to Trash", rel.display());
@@ -2417,6 +2434,7 @@ impl AppState {
     pub fn delete_note_permanently(&mut self, rel_path: impl AsRef<Path>) -> Result<()> {
         let rel = rel_path.as_ref();
         if let Some(service) = &self.vault_service {
+            self.suppress_path(rel);
             service.delete_note(rel)?;
             self.cleanup_closed_or_deleted_note(rel);
             self.status_message = format!("Permanently deleted '{}'", rel.display());
@@ -3042,8 +3060,41 @@ impl AppState {
         Ok(())
     }
 
+    /// Rebuilds the in-memory link graph from current vault markdown notes.
+    pub fn rebuild_link_graph(&mut self) -> Result<()> {
+        let service = match &self.vault_service {
+            Some(s) => s.clone(),
+            None => return Ok(()),
+        };
+        self.refresh_entries()?;
+        let entries = service.list_entries()?;
+        let note_links: Vec<(PathBuf, Vec<nodera_markdown::Wikilink>)> = entries
+            .par_iter()
+            .filter_map(|entry| {
+                if let VaultEntry::Note(summary) = entry {
+                    if let Ok(note) = service.read_note(&summary.relative_path) {
+                        if let Ok(parsed) = parse_document(&note.content) {
+                            return Some((summary.relative_path.clone(), parsed.wikilinks));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+        let note_paths: Vec<PathBuf> = entries
+            .iter()
+            .filter_map(|e| match e {
+                VaultEntry::Note(s) => Some(s.relative_path.clone()),
+                _ => None,
+            })
+            .collect();
+        self.link_graph = LinkGraph::build(&note_paths, note_links);
+        Ok(())
+    }
+
     /// Rebuilds the entire vault derived index from source Markdown files.
     pub fn rebuild_vault_index(&mut self) -> Result<usize> {
+        self.rebuild_link_graph()?;
         if let (Some(service), Some(index_arc)) = (&self.vault_service, &self.vault_index) {
             if let Ok(mut idx) = index_arc.lock() {
                 let count = idx.rebuild(service)?;
@@ -3753,8 +3804,9 @@ impl AppState {
         if let Some(service) = &self.vault_service {
             let folder_str = folder.and_then(|p| p.to_str());
             let note = service.create_note(folder_str, &resolved_title, Some(content))?;
-            self.editor_content = content.to_string();
             let rel = note.relative_path.clone();
+            self.suppress_path(&rel);
+            self.editor_content = content.to_string();
             let title_str = note.title.clone();
             self.active_note = Some(note.clone());
             self.active_view = ActiveView::Editor;
@@ -3793,10 +3845,12 @@ impl AppState {
             self.refresh_entries()?;
             self.record_recent_note(&rel);
 
-            // Index new note
-            if let Some(index_arc) = &self.vault_index {
-                if let Ok(mut idx) = index_arc.lock() {
-                    if let Ok(parsed) = parse_document(content) {
+            // Index new note in SQLite, Tantivy, and in-memory LinkGraph
+            let paths = self.note_paths();
+            if let Ok(parsed) = parse_document(content) {
+                self.link_graph.update_note_links_with_paths(rel.clone(), parsed.wikilinks.clone(), &paths);
+                if let Some(index_arc) = &self.vault_index {
+                    if let Ok(mut idx) = index_arc.lock() {
                         let _ = idx.index_note(&note, &parsed);
                     }
                 }
@@ -4082,11 +4136,13 @@ impl AppState {
         }
     }
 
-    /// Renames a note on disk and updates active note if open.
+    /// Renames a note on disk and updates active note, link graph, and indices.
     pub fn rename_note(&mut self, rel_path: impl AsRef<Path>, new_title: &str) -> Result<()> {
         let rel = rel_path.as_ref();
         if let Some(service) = &self.vault_service {
+            self.suppress_path(rel);
             let renamed = service.rename_note(rel, new_title)?;
+            self.suppress_path(&renamed.relative_path);
             if let Some(index_arc) = &self.vault_index {
                 if let Ok(mut idx) = index_arc.lock() {
                     let _ = idx.remove_note(rel);
@@ -4096,39 +4152,40 @@ impl AppState {
                 }
             }
             let old_buf = rel.to_path_buf();
+            let new_buf = renamed.relative_path.clone();
             for tab in &mut self.open_tabs {
                 if tab.relative_path == old_buf {
-                    tab.relative_path = renamed.relative_path.clone();
+                    tab.relative_path = new_buf.clone();
                     tab.title = renamed.title.clone();
                 }
             }
             for p in &mut self.nav_history {
                 if *p == old_buf {
-                    *p = renamed.relative_path.clone();
+                    *p = new_buf.clone();
                 }
             }
             for b in &mut self.preferences.bookmarks {
                 if *b == old_buf {
-                    *b = renamed.relative_path.clone();
+                    *b = new_buf.clone();
                 }
             }
             for r in &mut self.preferences.recent_notes {
                 if *r == old_buf {
-                    *r = renamed.relative_path.clone();
+                    *r = new_buf.clone();
                 }
             }
             if let Some(key) = self.current_vault_key() {
                 if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
                     for b in list {
                         if *b == old_buf {
-                            *b = renamed.relative_path.clone();
+                            *b = new_buf.clone();
                         }
                     }
                 }
                 if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
                     for r in list {
                         if *r == old_buf {
-                            *r = renamed.relative_path.clone();
+                            *r = new_buf.clone();
                         }
                     }
                 }
@@ -4136,12 +4193,307 @@ impl AppState {
             self.preferences.save();
             if let Some(active) = &self.active_note {
                 if active.relative_path == rel {
-                    self.active_note = Some(renamed);
+                    self.active_note = Some(renamed.clone());
                 }
             }
             self.status_message = format!("Renamed to '{new_title}'");
             self.refresh_entries()?;
+            let paths = self.note_paths();
+            let parsed_links = parse_document(&renamed.content).ok().map(|p| p.wikilinks);
+            self.link_graph
+                .rename_note(&old_buf, new_buf, parsed_links, &paths);
         }
+        Ok(())
+    }
+
+    /// Moves a note to a new target folder on disk and updates active note, link graph, and indices.
+    pub fn move_note(
+        &mut self,
+        rel_path: impl AsRef<Path>,
+        target_folder: impl AsRef<Path>,
+    ) -> Result<()> {
+        let rel = rel_path.as_ref();
+        let target = target_folder.as_ref();
+        if let Some(service) = &self.vault_service {
+            self.suppress_path(rel);
+            let moved = service.move_note(rel, target)?;
+            self.suppress_path(&moved.relative_path);
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    let _ = idx.remove_note(rel);
+                    if let Ok(parsed) = parse_document(&moved.content) {
+                        let _ = idx.index_note(&moved, &parsed);
+                    }
+                }
+            }
+            let old_buf = rel.to_path_buf();
+            let new_buf = moved.relative_path.clone();
+            for tab in &mut self.open_tabs {
+                if tab.relative_path == old_buf {
+                    tab.relative_path = new_buf.clone();
+                    tab.title = moved.title.clone();
+                }
+            }
+            for p in &mut self.nav_history {
+                if *p == old_buf {
+                    *p = new_buf.clone();
+                }
+            }
+            for b in &mut self.preferences.bookmarks {
+                if *b == old_buf {
+                    *b = new_buf.clone();
+                }
+            }
+            for r in &mut self.preferences.recent_notes {
+                if *r == old_buf {
+                    *r = new_buf.clone();
+                }
+            }
+            if let Some(key) = self.current_vault_key() {
+                if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
+                    for b in list {
+                        if *b == old_buf {
+                            *b = new_buf.clone();
+                        }
+                    }
+                }
+                if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                    for r in list {
+                        if *r == old_buf {
+                            *r = new_buf.clone();
+                        }
+                    }
+                }
+            }
+            self.preferences.save();
+            if let Some(active) = &self.active_note {
+                if active.relative_path == rel {
+                    self.active_note = Some(moved.clone());
+                }
+            }
+            let target_str = target.to_string_lossy();
+            self.status_message = format!("Moved to '{target_str}'");
+            self.refresh_entries()?;
+            let paths = self.note_paths();
+            let parsed_links = parse_document(&moved.content).ok().map(|p| p.wikilinks);
+            self.link_graph
+                .rename_note(&old_buf, new_buf, parsed_links, &paths);
+        }
+        Ok(())
+    }
+
+    /// Handles an external deletion of a note or file.
+    fn handle_external_delete(&mut self, rel_path: &Path) -> Result<()> {
+        self.cleanup_closed_or_deleted_note(rel_path);
+        Ok(())
+    }
+
+    /// Handles an external rename of a note from `old_rel` to `new_rel`.
+    fn handle_external_rename(&mut self, old_rel: &Path, new_rel: &Path) -> Result<()> {
+        if let Some(service) = &self.vault_service {
+            if let Some(index_arc) = &self.vault_index {
+                if let Ok(mut idx) = index_arc.lock() {
+                    let _ = idx.remove_note(old_rel);
+                    if let Ok(note) = service.read_note(new_rel) {
+                        if let Ok(parsed) = parse_document(&note.content) {
+                            let _ = idx.index_note(&note, &parsed);
+                        }
+                    }
+                }
+            }
+        }
+
+        let old_buf = old_rel.to_path_buf();
+        let new_buf = new_rel.to_path_buf();
+
+        for tab in &mut self.open_tabs {
+            if tab.relative_path == old_buf {
+                tab.relative_path = new_buf.clone();
+                if let Some(stem) = new_buf.file_stem().and_then(|s| s.to_str()) {
+                    tab.title = stem.to_string();
+                }
+            }
+        }
+        for p in &mut self.nav_history {
+            if *p == old_buf {
+                *p = new_buf.clone();
+            }
+        }
+        for b in &mut self.preferences.bookmarks {
+            if *b == old_buf {
+                *b = new_buf.clone();
+            }
+        }
+        for r in &mut self.preferences.recent_notes {
+            if *r == old_buf {
+                *r = new_buf.clone();
+            }
+        }
+        if let Some(key) = self.current_vault_key() {
+            if let Some(list) = self.preferences.vault_bookmarks.get_mut(&key) {
+                for b in list {
+                    if *b == old_buf {
+                        *b = new_buf.clone();
+                    }
+                }
+            }
+            if let Some(list) = self.preferences.vault_recent_notes.get_mut(&key) {
+                for r in list {
+                    if *r == old_buf {
+                        *r = new_buf.clone();
+                    }
+                }
+            }
+        }
+        self.preferences.save();
+
+        if let Some(active) = &self.active_note {
+            if active.relative_path == old_rel {
+                if let Some(service) = &self.vault_service {
+                    if let Ok(new_note) = service.read_note(new_rel) {
+                        self.active_note = Some(new_note.clone());
+                        if !self.is_dirty {
+                            self.editor_content = new_note.content;
+                            self.update_toc_headings();
+                        }
+                    }
+                }
+            }
+        }
+
+        self.refresh_entries()?;
+        let paths = self.note_paths();
+        let new_links = self
+            .vault_service
+            .as_ref()
+            .and_then(|s| s.read_note(new_rel).ok())
+            .and_then(|n| parse_document(&n.content).ok())
+            .map(|p| p.wikilinks);
+
+        self.link_graph
+            .rename_note(&old_buf, new_buf, new_links, &paths);
+        Ok(())
+    }
+
+    /// Applies external filesystem events received from the VaultWatcher.
+    pub fn apply_watcher_events(&mut self, events: &[crate::watcher::WatcherEvent]) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let vault_root = match &self.vault_path {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        let service = match &self.vault_service {
+            Some(s) => s.clone(),
+            None => return Ok(()),
+        };
+
+        let mut entries_changed = false;
+        let mut links_changed = false;
+
+        for event in events {
+            match event {
+                crate::watcher::WatcherEvent::Created(abs_path)
+                | crate::watcher::WatcherEvent::Modified(abs_path) => {
+                    let rel_path = match abs_path.strip_prefix(&vault_root) {
+                        Ok(p) => p.to_path_buf(),
+                        Err(_) => abs_path.clone(),
+                    };
+
+                    if abs_path.is_dir() {
+                        entries_changed = true;
+                        continue;
+                    }
+
+                    if rel_path.extension().and_then(|e| e.to_str()) != Some("md") {
+                        continue;
+                    }
+
+                    // If file does not exist on disk, handle as deletion/moved-away
+                    if !abs_path.exists() {
+                        self.handle_external_delete(&rel_path)?;
+                        entries_changed = true;
+                        links_changed = true;
+                        continue;
+                    }
+
+                    if let Ok(note) = service.read_note(&rel_path) {
+                        if let Ok(parsed) = parse_document(&note.content) {
+                            if let Some(index_arc) = &self.vault_index {
+                                if let Ok(mut idx) = index_arc.lock() {
+                                    let _ = idx.index_note(&note, &parsed);
+                                }
+                            }
+
+                            // If this is the active note open in the editor:
+                            if let Some(active) = &self.active_note {
+                                if active.relative_path == rel_path {
+                                    if !self.is_dirty {
+                                        self.active_note = Some(note.clone());
+                                        self.editor_content = note.content.clone();
+                                        self.update_toc_headings();
+                                    } else {
+                                        self.status_message =
+                                            "External note modification detected".to_string();
+                                    }
+                                }
+                            }
+
+                            // Update tab titles if note title changed
+                            for tab in &mut self.open_tabs {
+                                if tab.relative_path == rel_path {
+                                    tab.title = note.title.clone();
+                                }
+                            }
+
+                            let paths = self.note_paths();
+                            self.link_graph.update_note_links_with_paths(
+                                rel_path.clone(),
+                                parsed.wikilinks,
+                                &paths,
+                            );
+                            links_changed = true;
+                            entries_changed = true;
+                        }
+                    }
+                }
+                crate::watcher::WatcherEvent::Deleted(abs_path) => {
+                    let rel_path = match abs_path.strip_prefix(&vault_root) {
+                        Ok(p) => p.to_path_buf(),
+                        Err(_) => abs_path.clone(),
+                    };
+
+                    self.handle_external_delete(&rel_path)?;
+                    entries_changed = true;
+                    links_changed = true;
+                }
+                crate::watcher::WatcherEvent::Renamed { old_path, new_path } => {
+                    let old_rel = match old_path.strip_prefix(&vault_root) {
+                        Ok(p) => p.to_path_buf(),
+                        Err(_) => old_path.clone(),
+                    };
+                    let new_rel = match new_path.strip_prefix(&vault_root) {
+                        Ok(p) => p.to_path_buf(),
+                        Err(_) => new_path.clone(),
+                    };
+
+                    self.handle_external_rename(&old_rel, &new_rel)?;
+                    entries_changed = true;
+                    links_changed = true;
+                }
+            }
+        }
+
+        if entries_changed {
+            self.refresh_entries()?;
+        }
+        if links_changed {
+            let paths = self.note_paths();
+            self.link_graph.reindex(&paths);
+        }
+
         Ok(())
     }
 

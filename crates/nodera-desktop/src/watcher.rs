@@ -12,10 +12,14 @@ pub enum WatcherEvent {
     Created(PathBuf),
     Modified(PathBuf),
     Deleted(PathBuf),
+    Renamed {
+        old_path: PathBuf,
+        new_path: PathBuf,
+    },
 }
 
 /// Thread-safe suppression map to avoid reacting to Nodera's own writes.
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct WriteSuppressor {
     suppressed: Arc<Mutex<HashMap<PathBuf, Instant>>>,
 }
@@ -95,6 +99,47 @@ impl VaultWatcher {
         suppressor: &WriteSuppressor,
         tx: &UnboundedSender<WatcherEvent>,
     ) {
+        use notify::event::{ModifyKind, RenameMode};
+
+        // Check if event is a rename with Both paths
+        if let EventKind::Modify(ModifyKind::Name(RenameMode::Both)) = event.kind {
+            if event.paths.len() >= 2 {
+                let old_p = &event.paths[0];
+                let new_p = &event.paths[1];
+
+                // Skip internal .nodera metadata folder
+                let is_internal = old_p.components().any(|c| c.as_os_str() == ".nodera")
+                    || new_p.components().any(|c| c.as_os_str() == ".nodera");
+                if is_internal {
+                    return;
+                }
+
+                // Check suppression
+                if suppressor.is_suppressed(old_p) || suppressor.is_suppressed(new_p) {
+                    debug!(
+                        "Suppressed self-rename event from {} to {}",
+                        old_p.display(),
+                        new_p.display()
+                    );
+                    return;
+                }
+
+                let is_md_or_dir = |p: &Path| {
+                    p.extension().and_then(|ext| ext.to_str()) == Some("md")
+                        || p.is_dir()
+                        || (p.extension().is_none() && !p.is_file())
+                };
+
+                if is_md_or_dir(old_p) || is_md_or_dir(new_p) {
+                    let _ = tx.send(WatcherEvent::Renamed {
+                        old_path: old_p.clone(),
+                        new_path: new_p.clone(),
+                    });
+                    return;
+                }
+            }
+        }
+
         for path in event.paths {
             // Skip internal .nodera metadata folder
             if path.components().any(|c| c.as_os_str() == ".nodera") {
@@ -133,6 +178,90 @@ impl VaultWatcher {
     pub fn suppressor(&self) -> &WriteSuppressor {
         &self.suppressor
     }
+}
+
+/// Coalesces a slice of raw watcher events over a debounce window into a minimal, deduplicated sequence.
+pub fn coalesce_events(events: Vec<WatcherEvent>) -> Vec<WatcherEvent> {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum PathState {
+        Created,
+        Modified,
+        Deleted,
+    }
+
+    let mut state_map: HashMap<PathBuf, PathState> = HashMap::new();
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+
+    for event in events {
+        match event {
+            WatcherEvent::Created(path) => match state_map.get(&path) {
+                Some(PathState::Deleted) => {
+                    state_map.insert(path, PathState::Modified);
+                }
+                _ => {
+                    state_map.insert(path, PathState::Created);
+                }
+            },
+            WatcherEvent::Modified(path) => match state_map.get(&path) {
+                Some(PathState::Created) => {
+                    // Keep as Created so the new file gets fully ingested
+                }
+                _ => {
+                    state_map.insert(path, PathState::Modified);
+                }
+            },
+            WatcherEvent::Deleted(path) => match state_map.get(&path) {
+                Some(PathState::Created) => {
+                    // Created and deleted within same debounce window -> ignore scratch file
+                    state_map.remove(&path);
+                }
+                _ => {
+                    state_map.insert(path, PathState::Deleted);
+                }
+            },
+            WatcherEvent::Renamed { old_path, new_path } => {
+                renames.push((old_path, new_path));
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    for (old_path, new_path) in renames {
+        result.push(WatcherEvent::Renamed { old_path, new_path });
+    }
+    for (path, state) in state_map {
+        match state {
+            PathState::Created => result.push(WatcherEvent::Created(path)),
+            PathState::Modified => result.push(WatcherEvent::Modified(path)),
+            PathState::Deleted => result.push(WatcherEvent::Deleted(path)),
+        }
+    }
+    result
+}
+
+/// Receives a burst of watcher events within a debounce time window, returning a batched vector of events.
+pub async fn next_debounced_batch(
+    rx: &mut UnboundedReceiver<WatcherEvent>,
+    debounce_duration: Duration,
+) -> Option<Vec<WatcherEvent>> {
+    let first = rx.recv().await?;
+    let mut batch = vec![first];
+
+    loop {
+        tokio::select! {
+            evt = rx.recv() => {
+                match evt {
+                    Some(e) => batch.push(e),
+                    None => break,
+                }
+            }
+            _ = tokio::time::sleep(debounce_duration) => {
+                break;
+            }
+        }
+    }
+
+    Some(batch)
 }
 
 #[cfg(test)]
@@ -193,5 +322,54 @@ mod tests {
         );
         let received = event.unwrap();
         assert!(received.is_some());
+    }
+
+    #[test]
+    fn test_coalesce_duplicate_modify_events() {
+        let p1 = PathBuf::from("Note1.md");
+        let p2 = PathBuf::from("Note2.md");
+
+        let events = vec![
+            WatcherEvent::Modified(p1.clone()),
+            WatcherEvent::Modified(p1.clone()),
+            WatcherEvent::Modified(p1.clone()),
+            WatcherEvent::Created(p2.clone()),
+            WatcherEvent::Modified(p2.clone()),
+        ];
+
+        let coalesced = coalesce_events(events);
+        assert_eq!(coalesced.len(), 2);
+        assert!(coalesced.contains(&WatcherEvent::Modified(p1)));
+        assert!(coalesced.contains(&WatcherEvent::Created(p2)));
+    }
+
+    #[test]
+    fn test_coalesce_created_and_deleted_transient_file() {
+        let p = PathBuf::from("scratch.tmp.md");
+        let events = vec![
+            WatcherEvent::Created(p.clone()),
+            WatcherEvent::Modified(p.clone()),
+            WatcherEvent::Deleted(p.clone()),
+        ];
+
+        let coalesced = coalesce_events(events);
+        assert!(coalesced.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_next_debounced_batch() {
+        let (tx, mut rx) = unbounded_channel();
+        let p = PathBuf::from("Note.md");
+
+        tx.send(WatcherEvent::Created(p.clone())).unwrap();
+        tx.send(WatcherEvent::Modified(p.clone())).unwrap();
+
+        let batch = next_debounced_batch(&mut rx, Duration::from_millis(50))
+            .await
+            .unwrap();
+
+        assert_eq!(batch.len(), 2);
+        let coalesced = coalesce_events(batch);
+        assert_eq!(coalesced, vec![WatcherEvent::Created(p)]);
     }
 }
